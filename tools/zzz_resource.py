@@ -89,6 +89,7 @@ def cmd_check(ui: Ui, as_json: bool = False) -> int:
         print(f"  调律界面：{bot[:90]}")
         m.go_to("世界")
     emit("zzz_resource", data=_data, enabled=as_json)
+    _write_cache(_data)
     return 0
 
 
@@ -127,6 +128,32 @@ def cmd_wait(ui: Ui, need: int, timeout_min: int) -> int:
             return 1
         # 一次等 5 分钟再查
         time.sleep(300)
+
+
+def _write_cache(data: dict) -> None:
+    """把电量/母盘写进 state/resource_cache.json，供 --offline 模式读。
+
+    只写读到的值，读不到的不写（避免把 None 当成 0）。
+    """
+    import datetime
+    import json
+    out = {}
+    b = data.get("battery")
+    if isinstance(b, (int, float)) and b >= 0:
+        out["battery"] = int(b)
+    m = data.get("mother_discs")
+    if isinstance(m, (int, float)) and m >= 0:
+        out["mother"] = int(m)
+    if not out:
+        return
+    out["ts"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        d = BASE / "state"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "resource_cache.json").write_text(
+            json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def main() -> int:

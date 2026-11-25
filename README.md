@@ -212,7 +212,8 @@ python tools/check_config.py
 **跑之前建议先用计划模式看一眼**（不动游戏，10 秒出结果）：
 
 ```bash
-python tools/zzz_disc_daily.py 佩洛伊斯      # 只出计划
+python tools/zzz_disc_daily.py 佩洛伊斯            # 出计划（会读一次游戏）
+python tools/zzz_disc_daily.py 佩洛伊斯 --offline  # 秒出，只读缓存
 python tools/zzz_daily.py 佩洛伊斯 --run    # 真跑
 ```
 

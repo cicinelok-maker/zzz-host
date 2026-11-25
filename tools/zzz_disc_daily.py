@@ -84,6 +84,9 @@ def _warn_unknown(agent: str) -> None:
     print("=" * 66)
     print()
 
+OFFLINE = False     # --offline 时置 True：只读缓存，不碰游戏
+
+
 def run(script: str, args: list[str], timeout: int = 3600) -> tuple[bool, str]:
     import os
     env = dict(os.environ)
@@ -98,9 +101,59 @@ def run(script: str, args: list[str], timeout: int = 3600) -> tuple[bool, str]:
         return False, "超时"
 
 
+def _cached_int(key: str) -> int:
+    """读 state/resource_cache.json 里的整数。没有返回 -1（表示未知，不是 0）。"""
+    p = BASE / "state" / "resource_cache.json"
+    if not p.exists():
+        return -1
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        v = d.get(key)
+        return int(v) if isinstance(v, (int, float)) else -1
+    except Exception:
+        return -1
+
+
+def _age_text(agent: str) -> str:
+    """status 文件是多久以前的。"""
+    import time
+    p = BASE / "state" / f"status_{agent}.json"
+    if not p.exists():
+        return "从没盘点过"
+    sec = time.time() - p.stat().st_mtime
+    if sec < 60:
+        return f"{sec:.0f} 秒前"
+    if sec < 3600:
+        return f"{sec / 60:.0f} 分钟前"
+    if sec < 86400:
+        return f"{sec / 3600:.1f} 小时前"
+    return f"{sec / 86400:.1f} 天前"
+
+
+def offline_banner(agent: str) -> None:
+    """离线模式横幅：把「数据多旧 / 什么不知道」说清楚。"""
+    age = _age_text(agent)
+    stale = "（可能已不准，建议刷新）" if "小时" in age or "天" in age else ""
+    print()
+    print("┌" + "─" * 60)
+    print("│ 离线模式：只读缓存，没碰游戏")
+    print(f"│ 状态：{age}{stale}")
+    if _cached_int("battery") < 0:
+        print("│ ⚠ 电量未知 —— 下面不会算电量预算")
+        print("│   要知道：python tools/zzz_resource.py check")
+    else:
+        print(f"│ 电量：{_cached_int('battery')}（缓存）")
+    if _cached_int("mother") < 0:
+        print("│ ⚠ 母盘未知 —— 下面不会算能不能调律")
+    else:
+        print(f"│ 母盘：{_cached_int('mother')}（缓存）")
+    print("└" + "─" * 60)
+
+
 def read_status(agent: str) -> dict:
-    """读 status 的 json。"""
-    ok, out = run("zzz_status.py", [agent, "--json"], 1800)
+    """读 status 的 json。OFFLINE 时只读缓存，不跑 zzz_status。"""
+    if not OFFLINE:
+        ok, out = run("zzz_status.py", [agent, "--json"], 1800)
     p = BASE / "state" / f"status_{agent}.json"
     if p.exists():
         try:
@@ -111,7 +164,9 @@ def read_status(agent: str) -> dict:
 
 
 def read_mother() -> int:
-    """读母盘数。走 zzz_resource --json。"""
+    """读母盘数。走 zzz_resource --json。OFFLINE 时读缓存，返回 -1 表示未知。"""
+    if OFFLINE:
+        return _cached_int("mother")
     from core.charge_plan import read_battery_via_cli
     ok, out = run("zzz_resource.py", ["check", "--json"], 1200)
     import json as _j
@@ -128,7 +183,9 @@ def read_mother() -> int:
 
 
 def read_battery() -> int:
-    """读电量。走 zzz_resource --json，不再正则解析文本。"""
+    """读电量。OFFLINE 时读缓存，返回 -1 表示未知（**不是 0**）。"""
+    if OFFLINE:
+        return _cached_int("battery")
     from core.charge_plan import read_battery_via_cli
     return read_battery_via_cli(PY, str(HERE / "zzz_resource.py"), str(BASE))
 
@@ -193,11 +250,18 @@ def main() -> int:
                     help="跳过刷本（由外层总编排统一刷）")
     ap.add_argument("--train-n", type=int, default=3, help="每天最多训练几块盘")
     ap.add_argument("--batch-n", type=int, default=2, help="每天最多刷几次本")
+    ap.add_argument("--offline", action="store_true",
+                    help="只读缓存不碰游戏（秒出，数据可能过期）")
     ap.add_argument("--report", action="store_true", help="看历史趋势")
     ap.add_argument("--keep-battery", type=int, default=20, help="留多少电量不用")
     ap.add_argument("--need-skill", action="store_true", help="技能材料也不够")
     ap.add_argument("--need-core", action="store_true", help="核心技材料也不够")
     args = ap.parse_args()
+
+    global OFFLINE
+    OFFLINE = bool(getattr(args, "offline", False))
+    if OFFLINE:
+        offline_banner(args.agent)
     # 角色名校验：能纠正就纠正，纠正不了就退出（不静默走默认）
     try:
         from core.agent_cfg import resolve_agent
@@ -256,20 +320,31 @@ def main() -> int:
     # ---- ③ 电量 ----
     battery = read_battery()
     print(f"\n③ 电量规划")
-    from core.charge_plan import report as _creport
-    for line in _creport(battery).splitlines():
-        print(f"   {line}")
-    can_farm = battery >= COST_PATROL + args.keep_battery
+    # battery == -1 表示「未知」（离线且没缓存）。**不能让哨兵值进算术** ——
+    # 那样会算出「距满 241 点」「够刷 -1 次」这种鬼话。
+    if battery < 0:
+        print("   电量未知 —— 离线模式且没有缓存")
+        print("   要算电量预算：python tools/zzz_resource.py check")
+        can_farm = False
+    else:
+        from core.charge_plan import report as _creport
+        for line in _creport(battery).splitlines():
+            print(f"   {line}")
+        can_farm = battery >= COST_PATROL + args.keep_battery
 
     # 按缺口算今天该刷哪个本
-    from core.farm_gap import plan as _fplan, report as _freport
-    _slots = [{"slot": s.get("slot"), "set": s.get("set"),
-               "main": s.get("main"), "eff": s.get("eff")} for s in slots]
-    _fp = _fplan(args.agent, _slots, battery,
-                 need_skill=args.need_skill, need_core=args.need_core)
     print(f"\n③b 按缺口分配")
-    for line in _freport(_fp).splitlines():
-        print(f"   {line}")
+    if battery < 0:
+        print("   跳过（电量未知，算不出能刷几次）")
+        print("   先跑：python tools/zzz_resource.py check")
+    else:
+        from core.farm_gap import plan as _fplan, report as _freport
+        _slots = [{"slot": s.get("slot"), "set": s.get("set"),
+                   "main": s.get("main"), "eff": s.get("eff")} for s in slots]
+        _fp = _fplan(args.agent, _slots, battery,
+                     need_skill=args.need_skill, need_core=args.need_core)
+        for line in _freport(_fp).splitlines():
+            print(f"   {line}")
 
     # ---- 决策：优先做收益最高的事 ----
     print(f"\n④ 今日动作建议")

@@ -173,7 +173,8 @@ python tools/zzz_daily.py XXX --run       # 再跑
 **跑之前先用计划模式看一眼**（不动游戏，10 秒出结果）：
 
 ```bash
-python tools/zzz_disc_daily.py XXX        # 出 ①~④ 段计划
+python tools/zzz_disc_daily.py XXX            # 出 ①~④ 段计划（会读一次游戏，约 4 分钟）
+python tools/zzz_disc_daily.py XXX --offline  # 秒出，只读缓存（数据可能过期）
 ```
 
 计划里会写清楚「今天该做什么」，你可以把它转述给用户确认，再 `--run`。

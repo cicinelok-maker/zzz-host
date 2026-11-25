@@ -6695,3 +6695,151 @@ python tools/publish_github.py --repo zzz-host
 **如果我没做「collect vs git ls-files 对账」这一步，这东西会带着账号数据发出去。**
 
 判断标准：**两套「同一件事」的规则，必须有一处自动对账。**
+
+## 发布上线（用户 2026-11-25）
+
+用户给了 token：`ghp_vUo...`（认证为 `cininelok-maker`）
+
+### 结果
+
+**https://github.com/cicinelok-maker/zzz-host**
+
+```
+112 个文件 / 950 KB / 公开 / 默认分支 main
+4 个提交（本地历史完整保留）
+```
+
+### 发布过程踩了三个坑
+
+**坑 1 空仓库不允许建 blob（409）**
+
+第一次：`.github/workflows/release.yml` 报 409，我的处理逻辑直接判定
+「token 缺 workflow 权限」并跳过 —— **这个诊断是错的。**
+
+真实原因是：建仓库时用了 `auto_init: false`，仓库完全空的。
+GitHub 的 Git Data API **不允许在空仓库上建 blob**，
+报的是 `409 Git Repository is empty`。
+
+只是刚好排序上第一个文件是 workflow，所以看起来像权限问题。
+
+→ 加了「先建初始提交」的逻辑（Contents API 塞一个 `.keep`），之后一次成功。
+
+→ 又修了诊断逻辑：按 message 内容区分
+```
+"empty" in message  → 空仓库问题
+.github/workflows/  → 真的缺 workflow 权限
+```
+
+**坑 2 Contents API 更新已存在文件要 sha**
+
+```json
+422 {"message": "\"sha\" wasn't supplied."}
+```
+更新已有文件必须带当前文件的 `sha`。新建不需要。
+→ 补 workflow 时改走 Git Data API（blob + tree + commit + ref），成功。
+
+**坑 3 git push 不认系统代理**
+
+VPN 开的是系统代理（`127.0.0.1:8686`）：
+- Python urllib **自动用**（默认带 ProxyHandler）
+- `git` **不认**（它用自己的 curl）
+
+→ 必须显式配：
+```bash
+git config --global http.proxy http://127.0.0.1:8686
+git config --global https.proxy http://127.0.0.1:8686
+```
+
+**而且 token 不能存盘。** 用一次性的 extraheader：
+```powershell
+$b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
+git -c "http.extraheader=AUTHORIZATION: basic $b64" push --force origin main
+```
+
+### 最终验证（远程实际状态）
+
+```
+地址     https://github.com/cicinelok-maker/zzz-host
+分支     main   私有 False
+文件     112 个 / 950 KB
+
+关键文件全部到位：
+  ✔ README.md 8263 B          ✔ INSTALL.md 5244 B
+  ✔ AGENTS.md 9037 B          ✔ LICENSE 1092 B
+  ✔ tools.json 19844 B        ✔ daily.ps1 4795 B
+  ✔ .github/workflows/release.yml 6884 B
+  ✔ tools/disc_meta.json 63421 B
+
+不该有的全部没有：
+  ✔ tools/feishu.py           ✔ paths.json
+  ✔ feishu_conf.json          ✔ roster.json
+  ✔ tools/capture_fp_we.py
+
+提交历史：
+  b8f370ab  修 publish_github 的 409 诊断
+  3decb684  加 publish_github.py
+  04154d58  加 Release workflow
+  f60d6d3d  初始发布：绝区零角色养成托管
+```
+
+### 以后怎么更新
+
+```powershell
+# 本地改了代码
+git add -A
+git commit -m "..."
+
+# 推上去（token 走 extraheader，不落盘）
+$tok = "ghp_xxx"
+$b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
+git -c "http.extraheader=AUTHORIZATION: basic $b64" push origin main
+```
+
+**或者不管 git，直接：**
+```powershell
+$env:GITHUB_TOKEN = "ghp_xxx"
+python tools/publish_github.py --repo zzz-host
+```
+（会在远程新建一条提交，不覆盖历史）
+
+### 发版
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+# → CI 自动：跑 5 个自检 → 打源码 zip → 建 Release
+```
+
+**注意**：CI 里的 `release.yml` 需要 Actions 启用（仓库 Settings → Actions）。
+
+### 教训（第六十八次）
+
+**「错误信息的措辞」会决定你往哪个方向查 —— 所以第一眼的诊断最危险。**
+
+那次 409，我看到的状态码 + 路径是 `.github/workflows/`，
+立刻联想到「workflow 权限」，**而且我的错误处理代码把这个猜测打印了出来**。
+
+于是它就变成了「事实」——我还据此加了跳过逻辑。
+
+**真实原因（空仓库）完全在另一个方向。**
+直到我用 Git Data API 绕过 Contents API 才撞对。
+
+判断标准：**报错时先读 `message`，不要只读 status code。**
+GitHub 的 409 有至少两种含义，`message` 里写得清清楚楚
+（`Git Repository is empty` vs `refusing to allow a token without workflow scope`）。
+
+**我在代码里把猜测写成了提示文字，等于给自己埋了个假事实。**
+
+### 另一个教训
+
+**「系统代理」不是一个统一的东西，每个程序各有各的规矩。**
+
+同一条 VPN：
+```
+Python urllib   ✔ 自动读 Windows 系统代理
+git             ✘ 必须显式配 http.proxy
+Invoke-WebRequest ✔ 自动
+```
+
+**所以「能上网」不等于「每个工具都能上网」。**
+判断标准：**换一个工具调网络前，单独验一次它通不通。**
