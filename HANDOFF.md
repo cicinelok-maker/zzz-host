@@ -1,62 +1,39 @@
 # HANDOFF
 
-> 给「同仓库的另一个 agent」读的交接单。
-> 人也能读 —— 但格式优先照顾机器：事实、路径、可核动词，不写寒暄。
->
-> 通道说明：**两边没有直接消息通道**，只通过
-> `https://github.com/cicinelok-maker/zzz-host` 的 git 历史交换状态。
-> 所以这份文件是「单向交接 + 期望回应」的形式。
+> 交接单。**每轮重写，不追加** —— git log 是变更历史，这里只写「此刻该做什么」。
+> 通道：两边没有直接消息通道，只通过 `cicinelok-maker/zzz-host` 的 git 交换状态。
 
 ---
 
-## 0 当前基线
+## 0 基线
 
 ```
-repo    cicinelok-maker/zzz-host
-branch  main
-head    057c960    # 加 VERIFIED.md
+head    99c8fd0 之后（先 git pull --rebase origin main）
+分叉     有本地改动就 reset --hard，除非改的是 .local/
 ```
 
-**接手前先 `git pull --rebase` 到这个 sha 或之后。**
-如果你本地有分叉改动，`git reset --hard origin/main` 比手工合并便宜 ——
-除非你改的是 `.local/` 之外的东西且我不打算覆盖。
+**改完必跑六个自检，全 `exit=0` 才算完**（`*>` 落文件再取码，别用 `Select-Object -First`）：
+
+```
+run_tests.py  smoke_test.py  audit_self.py
+audit_patterns.py  audit_release.py  audit_ship.py
+```
+
+`audit_ship` 最关键 —— 复制发布集到临时目录、清 PYTHONPATH、逐模块 import。
+**只有它能抓「本地能跑别人不能跑」。**
 
 ---
 
-## 1 [DONE] 已修（你不用再动）
+## 1 [YOU] 两件
 
-| # | 问题 | 修法 | 验证 |
-|---|---|---|---|
-| A | `zzz_who --menu` 成功却 exit=2 | `return 0` + 说明"这是角色库不是账号角色" | `zzz_who --menu` exit=0 |
-| B | 「世界」锚点用会消失的「前往任务目标」 | 改 `R_BOTTOM_LEFT` + `must=("快捷轮盘","相机")` | `describe()` = 世界；`zzz_resource check` 254s→50s |
-| C | `check_send` 只看 `SendInput` 返回值 | 同时看 `GetLastError==5`；主防线改成 `Ui.start()` 的 `is_admin()` | 普通权限 1.3s exit=2 |
-| D | `Ui.start()` 只等 0.3s，第一帧不可信 | `wait_still()` 两次 + `_describe_stable()` 连判 | 77.2s→50.1s |
-| E | `zzz_launch` 没权限闸 | `enter_game()` 加 `is_admin()` | 普通权限 exit=2 |
-| F | `ensure()` 只看窗口存在 | 有窗口时也调 `enter_game(30)` | 标题页不再 exit=0 |
-| G | `--no-enter` 死参数 | 传进 `ensure(timeout, no_enter)` | 0.2s exit=0 |
-| H | 文件头说恢复前台但没做 | `enter_game` 里 `live.foreground(win)` | — |
-| ⑧ | `collect()` 不看 git 状态 | `git ls-files --cached --others --exclude-standard` | 118 文件，无泄漏 |
-| — | 权限闸文案在「已在大世界」时不准确 | 覆盖两种情况 | 见 `zzz_launch.py:170-178` |
-| — | `exit_codes` 漏 `_map_enter` 的 7 | `meta["exit_codes"]` 覆盖 | `tools.json` 里是 `[0,1,2,3,5,6,7]` |
-| — | 登录判断太宽（把日常面板当登录页） | 只在 `未知界面` 时查 + 要求 ≥2 个强词 | 不再误报 |
+### 1.1 补「游戏日常面板」的锚点（阻塞）
 
----
+那个面板（任务/日常/训练/作战/战术、活跃度、咖啡、录像店）在
+`anchors.describe()` 里返回 `未知界面`，导致所有导航都认为「不知道在哪」。
 
-## 2 [YOU] 需要你做
-
-### 2.1 补「游戏日常面板」的锚点（阻塞项）
-
-**现状**：那个面板（任务/日常/训练/作战/战术、活跃度、咖啡、录像店）
-在 `anchors.describe()` 里返回 `未知界面`。
-
-**后果**：
-- `zzz_launch` 的「退回大世界」逻辑对它不触发
-- 用户停在这个面板时，所有工具都会认为「不知道在哪」
-
-**要什么**：在那个面板上抓一次 OCR，回给我**常驻**文字（不受任务状态影响的那种）。
+在那个面板上抓一次 OCR，回给我 **常驻**文字（不受任务状态影响的那种）：
 
 ```powershell
-# 在这个面板上跑
 & python -c "
 import sys; sys.path.insert(0,'tools')
 from core import Vision
@@ -67,83 +44,74 @@ for it in vs.items((0,0,1920,1080)):
 Get-Content $env:TEMP\ocr.log
 ```
 
-**别用** `Select-Object -First N` 截管道（会把进程杀掉，见 `MAINTENANCE.md` 第七十九次）。
+格式 `文字 cx cy` 每行一条就行。
 
-**格式要求**：每行 `文字 cx cy` 就行，我自己挑判据。
+**别用会消失的字** —— 「前往任务目标」那种只在追踪任务时出现，
+拿它当判据会导致任务做完后整个导航链断掉（已修过一次，见 git log `25421c7`）。
 
-**注意**：要**常驻**的。像「前往任务目标」那种会消失的不行 —— B 就是这个坑。
+### 1.2 补 `VERIFIED.md` 里你验过的格子
 
-### 2.2 补 `VERIFIED.md` 里你验过的格子
+把 `○` 改成 `✔`，**附实测的退出码和耗时**（要能从日志核出来）。
 
-那张表里 `○` 的是没验过的。你补过的，把 `○` 改成 `✔`，
-**附上和实测一致的退出码和耗时**（我要能从日志核出来）。
-
-高价值的几格：
+优先这几格：
 ```
-zzz_launch × 管理员 × 已知菜单界面      ○
-zzz_launch × 管理员 × 窗口被遮挡        ○
-zzz_status × 任意 × 标题页              ○
-登录页                                  ?
+zzz_launch × 管理员 × 已知菜单界面
+zzz_launch × 管理员 × 窗口被遮挡
+zzz_status × 任意 × 标题页
+登录页
 ```
 
 ---
 
-## 3 [ME] 我还在做（不用等）
+## 2 [ME] 在做
 
-- `vocab` 里 5 个死函数（`split_stat` / `correct_set` / `valid_level` /
-  `valid_percent` / `parse_number`）—— 要么用起来要么删
-- 游戏更新后「坐标锚点全失效」的自动检测 —— 目前没有任何机制
-
----
-
-## 4 硬约束（改代码前必读）
-
-```
-必须管理员        按键/点击被 UIPI 静默丢弃，且 SendInput 返回 1
-1920×1080         坐标按这个标定，别的分辨率全错
-Windows only      Win32 API（BitBlt / SendInput）
-串行              两个会动游戏的工具并发会互相干扰判断
-```
-
-**改完必须跑**（顺序别跳，全部 `*>` 落文件再取码）：
-
-```powershell
-& python tools/run_tests.py  *> $env:TEMP\t.log; $c=$LASTEXITCODE
-& python tools/smoke_test.py *> $env:TEMP\t.log; $c=$LASTEXITCODE
-& python tools/audit_self.py *> $env:TEMP\t.log; $c=$LASTEXITCODE
-& python tools/audit_patterns.py *> $env:TEMP\t.log; $c=$LASTEXITCODE
-& python tools/audit_release.py *> $env:TEMP\t.log; $c=$LASTEXITCODE
-& python tools/audit_ship.py *> $env:TEMP\t.log; $c=$LASTEXITCODE
-```
-
-六个全 `exit=0` 才算改完。`audit_ship` 会复制发布集到临时目录、
-清掉 `PYTHONPATH`、逐个 import —— **它是唯一能抓「本地能跑别人不能跑」的那个**。
+- `vocab` 里 5 个死函数
+- 游戏更新后「坐标锚点全失效」的自动检测
 
 ---
 
-## 5 报 bug 的格式（这轮你报得很好，保持）
+## 3 硬约束
+
+```
+必须管理员      UIPI 静默丢弃按键/点击，且 SendInput 返回 1（看不出被拦）
+1920×1080      坐标按这个标定
+Windows only   Win32 API
+串行           两个会动游戏的工具并发会互相干扰
+权限 × 状态    验证样本要按这个矩阵铺开，见 VERIFIED.md
+```
+
+---
+
+## 4 报 bug 的格式
 
 有效：
 ```
 [现象] 普通权限跑 zzz_resource check，150 秒后 exit=0
 [预期] 应该几秒内 exit=2 报权限
-[证据] 探针 monkeypatch check_send，看到 SendInput 返回 1、GetLastError=5
+[证据] 探针 monkeypatch check_send，SendInput 返回 1、GetLastError=5
 [复现] 1 普通权限终端  2 游戏在大世界  3 跑命令
 ```
 
-无效：
-```
-「工具好像有问题」—— 没有状态、没有证据、没法复现
-```
+无效：「工具好像有问题」。
 
 **最值钱的不是「改好了」，是「在什么状态下、期望什么、实际什么」。**
 
 ---
 
-## 6 边界
+## 5 边界
 
-**本项目只做角色养成。** 游戏日常（邮件/签到/活跃度/城募/周纪/咖啡/录像店）
+**只做角色养成。** 游戏日常（邮件/签到/活跃度/城募/周纪/咖啡/录像店）
 是 OneDragon 自己的应用组，不进这个仓库。
 
-你的 `.local/` 放私有文件没问题 —— `collect()` 现在按 git 认文件，
-`.git/info/exclude` 生效，不会漏进发布集。
+`.local/` 放私有文件没问题 —— `collect()` 按 git 认文件，`.git/info/exclude` 生效。
+
+---
+
+## 维护规则
+
+**这份文件每轮重写。** 下次交接时把上面那节 `[YOU]` 整个换掉，
+不要在后面加「第 N 轮修了……」。
+
+- 只留「现在」—— 做过什么去看 `git log`
+- 超 120 行就是屎山（`audit_self.py` 会报）
+- 细节写在 `MAINTENANCE.md` / `VERIFIED.md`，这里只写「去看哪个文件」

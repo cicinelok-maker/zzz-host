@@ -11,7 +11,16 @@ import pathlib
 import re
 
 BASE = pathlib.Path(__file__).resolve().parent.parent
-md = (BASE / "MAINTENANCE.md").read_text(encoding="utf-8")
+_md_p = BASE / "MAINTENANCE.md"
+if not _md_p.exists():
+    # MAINTENANCE.md 是维护者文档，不随发布包发出去。
+    # 干净副本里没有它是正常的 —— 跳过依赖它的规矩，不算失败。
+    print("=" * 74)
+    print("MAINTENANCE.md 不存在（发布集里没有它，这是正常的）")
+    print("→ 跳过「规矩 5：新文件登记」")
+    print("=" * 74)
+    raise SystemExit(0)
+md = _md_p.read_text(encoding="utf-8")
 
 # 1) 清单里的工具
 listed = set(re.findall(r"`([\w]+\.py)`", md))

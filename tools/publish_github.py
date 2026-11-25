@@ -80,6 +80,8 @@ IGN_FILES = [
     "graduate.py", "od_bridge.py", "zzz_host.py",
     "DELIVERY.md", "HANDOFF-vision.md", "ONEDRAGON.md",
     "DISC_CHAIN.md", "TASKS.md",
+    # 开发日志（5000+ 行的教训总结）—— 给维护者看，不该塞进用户的 zip 里
+    "MAINTENANCE.md",
 ]
 
 
