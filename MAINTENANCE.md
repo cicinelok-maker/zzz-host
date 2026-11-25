@@ -123,6 +123,7 @@ python tools/check_consistency.py  # 指纹/状态机一致性
 | `zzz_mcp.py` | **MCP 服务器**：8 个工具，stdio JSON-RPC，给任何 MCP 客户端用 |
 | `zzz_who.py` | **角色选择器**：列 64 个角色 + 各自进度，不联网秒出 |
 | `zzz_guide.py` | **读游戏内「养成指南」的官方材料缺口**（所需/已有/仍需，精确值，不用自己算） |
+| `zzz_uid.py` | **用 UID API 交叉核对角色库**（只含展柜角色，抽样验证，能抓到扫描遗漏） |
 | `check_config.py` | **配置检查**：路径/角色/飞书，第一次用先跑 |
 | `disc_gaps.py` | 调律推导 + 升级止损 |
 | `filter_terms.py` | 筛选词条映射 |
