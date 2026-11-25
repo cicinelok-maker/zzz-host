@@ -111,6 +111,24 @@ def main() -> int:
     print("下一步：")
     print("  python tools/zzz_launch.py --check   # 检查游戏")
     print("  python tools/smoke_test.py           # 跑自检")
+    print()
+
+    # 管理员权限：非管理员时按键注入会被 Windows UIPI 静默丢弃，
+    # 表现为「工具白等到超时」而不是报错（朋友实测 254 秒才发现）。
+    try:
+        if str(Path(__file__).resolve().parent) not in sys.path:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from core.input import is_admin
+        if is_admin():
+            print("✔ 管理员权限：有（按键注入正常）")
+        else:
+            print("⚠ 管理员权限：没有")
+            print("   按键/点击会被 Windows UIPI 静默丢弃 ——")
+            print("   工具不会报错，而是白等到超时（实测 4 分钟）")
+            print("   正确用法：右键终端 → 以管理员身份运行")
+    except Exception as e:
+        print(f"· 管理员权限：查不到（{type(e).__name__}）")
+
     return 0
 
 

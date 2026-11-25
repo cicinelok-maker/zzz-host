@@ -7137,3 +7137,122 @@ P2 死函数   vocab 里 5 个（split_stat / correct_set / valid_level /
 
 **判断标准：数据文件里的 `note` / `_说明` 字段要当成「承诺」来验 ——
 搜一遍「谁读这个文件」，读不到就是没实现。**
+## 朋友 agent 报的 bug（用户 2026-11-25）
+
+朋友下载后，他的 agent 报了三个 bug。**我一个都没抓到。**
+
+### 报的
+
+**① tools.json 登记了不存在的 capture_fp_we**
+
+根因：`gen_manifest.py` 扫的是**本地 `tools/` 目录**，不是**发布集**。
+我把 `capture_fp_we.py` 加进 `.gitignore` 但没删本地文件，
+于是 `gen_manifest` 扫到了它并登记进 `tools.json`。
+朋友的机器上没这个文件 → 悬空。
+
+→ 修：`gen_manifest` 改用 `publish_github.collect()` 的白名单。
+
+**验证方法**：本地造一个被排除的 `capture_fp_we.py`，
+跑 `gen_manifest`，输出仍然是 37 个工具（不是 38）→ 通过。
+
+**② status.py 崩溃（import zzz_host）**
+
+`status.py` 在发布集里，但它 `import zzz_host`，
+而 `zzz_host.py`（1068 行旧引擎）被排除了。
+
+`status.py` 只用到 `zh` 的 2 个函数（`load_cfg` / `load_roster`），
+功能已被 `zzz_who` 覆盖 → **直接删 status.py。**
+
+**③ 截图临时文件、探针脚本**（朋友那边清理的）
+
+### 我顺着查出来的（六个同类）
+
+**④ `core/input.py` / `core/fingerprint.py` / `core/vision.py` 硬编码我的 OneDragon 路径**
+
+```python
+sys.path.insert(0, r"E:\\OneDragon\\ZenlessZoneZero-OneDragon-v2.6.1-Full\\plugins")
+```
+
+这三个是**核心模块**，所有工具都经过。
+`sys.path.insert` 一个不存在的路径**不报错**（静默忽略），
+所以别人机器上是「不崩但也没用」—— **比崩更难发现**。
+
+→ 修：改用 `core.paths.one_dragon_home()` 探测。
+
+**⑤ `tools/live.py` 的 `agent_growth` / `pyautogui` 是硬 import**
+
+→ 修：改成 `try/except ImportError` 软引用。
+
+**但我第一版做错了**：为了消掉这条报警，我把 `live.py` **排除出了发布集**。
+结果 `core/input.py` / `ui.py` / `vision.py` / `zzz_launch.py`
+**全都 `import live`**（用它的 `find_window()`），
+排除 live.py 等于把核心模块的依赖砍了。→ 撤销，改成软引用。
+
+**⑥ `od_material_farm.py` 引 `zzz_od`** —— 这个是**对的**，
+它在 `sys.path` 里加了 OneDragon 的 `src`，属于正常用法。
+
+### 真正的修法：两个新审计工具
+
+**为什么 12 个 audit 一个都没抓到**
+
+```
+① gen_manifest 扫本地，本地有 capture_fp_we.py
+② 本地有 zzz_host.py，所以 import 成功、status.py 能跑
+③ 本地有那些残留文件
+```
+
+**共同点：本地有那个东西，所以「在本地跑」永远测不出来。**
+
+**`audit_release.py`** —— 只查发布集，不看本地：
+```
+import 能否在本发布集内解析（跳过 try/except ImportError 的软引用）
+tools.json 登记的文件是否真在发布集
+发布集里的硬编码本机路径（排除「猜测列表」这类故意的）
+关键文件是否齐全
+敏感文件是否被排除
+```
+
+**`audit_ship.py`** —— 终极验证：
+```
+1 只复制发布集到临时目录
+2 显式清掉 PYTHONPATH
+3 逐模块 import 每个 core 模块（不只是 --help）
+4 每个带 argparse 的工具跑 --help
+5 确认没有本地独有文件泄漏
+```
+
+两个都接进了 `release.yml` CI。
+
+### 干净副本最终验证
+
+```
+✔ check_config / run_tests / smoke_test / audit_self /
+  audit_patterns / audit_lessons / audit_release     全部 exit 0
+✔ 31/31 个 core 模块能 import
+✔ 25/25 个带 argparse 的工具 --help 正常
+✔ 9 个本地独有文件（zzz_host.py / status.py / paths.json …）都不在
+```
+
+### 教训（第七十一次）
+
+**「我本地能跑」这件事，在「别人能不能跑」这个问题上完全没有信息量。**
+
+朋友的三个 bug，我这边一个都复现不了：
+- `tools.json` 我看是对的（因为我本地有那个文件）
+- `status.py` 能跑（因为我本地有 `zzz_host.py`）
+- 截图残留我看不到（因为我本地确实有）
+
+**共同点是「本地有那个东西」。** 而我的 12 个 audit 全在本地跑。
+
+判断标准：**任何「发布 / 交付 / 给别人用」的检查，必须在「只有交付物」的环境里跑。**
+在原始目录跑，测的是「原始目录」不是「交付物」。
+
+### 另一个教训
+
+**「修一个 bug」时，最容易顺手引入新 bug 的，是把依赖砍掉。**
+
+为了消掉 `live.py` 的 `import agent_growth` 报警，
+我把整个 `live.py` 排除出发布集 —— 一步就让**四个核心模块**的依赖断了。
+
+**判断标准：要砍掉一个文件前，先搜「谁 import 它」。**
+搜不到才能砍，搜到就得改那个 import（软引用），不能砍文件。

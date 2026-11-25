@@ -262,7 +262,12 @@ def show_menu(roster: dict | None = None) -> int:
         for i, n in enumerate(names, 1):
             c = cfg_of(n)
             print(f"{i:>2}. {n}　{c['定位']}·{element_of(n) or '?'}")
-        return 2
+        print()
+        print("以上是**角色库**（64 个），不是你的账号角色。")
+        print("要看账号上实际有哪些：python tools/zzz_who.py --scan")
+        # exit 0：输出是有用内容。exit 2 表示「配置缺失/参数错误」，
+        # 那会让 agent 当成失败去重试（朋友报的 bug A）。
+        return 0
 
     # 有 roster：按进度排，未盘点排后面
     rows = []

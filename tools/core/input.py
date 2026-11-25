@@ -54,6 +54,44 @@ import vgamepad as vg  # noqa: E402
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
+
+# ============================================================ 输入注入失败
+
+class InputBlocked(RuntimeError):
+    """SendInput 被系统拒绝 —— 几乎总是「没以管理员身份运行」。
+
+    Windows 的 UIPI（User Interface Privilege Isolation）会静默丢弃
+    低完整性级别进程往高完整性级别窗口注入的输入。
+    SendInput 返回 0，GetLastError 给 ERROR_ACCESS_DENIED (5)。
+    """
+
+
+def _admin_hint() -> str:
+    return ("  以管理员身份运行（右键终端 → 以管理员身份运行，"
+            "或用项目的 .\\admin.ps1）")
+
+
+def check_send(ok: int, what: str) -> None:
+    """SendInput 返回 0 就抛 InputBlocked。"""
+    if ok:
+        return
+    err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
+    msg = [f"✘ 输入注入失败：{what} 没送到游戏窗口"]
+    if err == 5 or True:
+        msg.append(_admin_hint())
+    msg.append("  症状：工具会一直等到超时才报错（几分钟），不是立刻失败")
+    msg.append("  这是 Windows UIPI 拦的，不是游戏的问题")
+    raise InputBlocked("\n".join(msg))
+
+
+def is_admin() -> bool:
+    """当前进程是不是管理员。"""
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 MOVE = 0x0001
 LDOWN, LUP = 0x0002, 0x0004
 RDOWN, RUP = 0x0008, 0x0010
@@ -187,7 +225,8 @@ class Input:
     def click(self, x: int, y: int, *, wait: float = 0.35,
               hold: float = 0.06, button: str = "left") -> None:
         """点击游戏内坐标。默认参数是实测下来最稳的。"""
-        user32.SetCursorPos(self.ox + x, self.oy + y)
+        if not user32.SetCursorPos(self.ox + x, self.oy + y):
+            check_send(0, f'鼠标移到 ({x},{y})')
         time.sleep(0.05)
         down, up = (LDOWN, LUP) if button == "left" else (RDOWN, RUP)
         user32.mouse_event(down, 0, 0, 0, 0)
@@ -286,9 +325,10 @@ class Input:
         up.u.ki = _KEYBDINPUT(wVk=0, wScan=scan,
                               dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
                               time=0, dwExtraInfo=None)
-        user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
+        n1 = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
         time.sleep(_jit(hold, 0.3) if self.jitter else hold)
-        user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
+        n2 = user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
+        check_send(min(n1, n2), f"按键 {key}")
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "mouse"
 
@@ -304,9 +344,10 @@ class Input:
         up.u.ki = _KEYBDINPUT(wVk=0, wScan=scan,
                               dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
                               time=0, dwExtraInfo=None)
-        user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
+        n1 = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
         time.sleep(seconds)
-        user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
+        n2 = user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
+        check_send(min(n1, n2), f"按键 {key}")
         time.sleep(0.1)
         self.mode = "mouse"
 
