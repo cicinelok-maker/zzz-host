@@ -106,11 +106,41 @@ def charge_now() -> int:
     return read_battery_via_cli(PY, str(HERE / "zzz_resource.py"), str(BASE))
 
 
+def run_from_targets(agents: list[str], run_it: bool, max_n: int = 0) -> int:
+    """按顺序逐个跑。返回失败个数。"""
+    import subprocess
+    if max_n > 0:
+        agents = agents[:max_n]
+    print("=" * 62)
+    print(f"批量养成：{len(agents)} 个角色")
+    print("=" * 62)
+    for i, a in enumerate(agents, 1):
+        print()
+        print(f"[{i}/{len(agents)}] {a}")
+        print("-" * 62)
+        cmd = [PY, "-u", str(HERE / "zzz_daily.py"), a]
+        if run_it:
+            cmd.append("--run")
+        r = subprocess.run(cmd, cwd=str(BASE))
+        if r.returncode != 0:
+            print(f"  ⚠ {a} 返回 {r.returncode}，继续下一个")
+    print()
+    print("=" * 62)
+    print("批量结束。看进度：python tools/zzz_who.py")
+    print("=" * 62)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--from-targets", action="store_true",
+                    help="按 targets.json 里的角色列表逐个跑（不用指定角色名）")
+    ap.add_argument("--max", type=int, default=0,
+                    help="配合 --from-targets：今天最多跑几个（0=全跑）")
     ap.add_argument("--force-unknown", action="store_true",
                     help="角色不在库里也继续（按强攻模板判定，可能不准）")
-    ap.add_argument("agent")
+    ap.add_argument("agent", nargs="?",
+                    help="角色名。用 --from-targets 时可以省略")
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--no-farm", action="store_true")
     ap.add_argument("--skip", default="", help="跳过的步骤，逗号分隔：wengine,level,skill,core,disc,farm")
@@ -119,6 +149,31 @@ def main() -> int:
     ap.add_argument("--need-skill", action="store_true", help="技能材料也不够")
     ap.add_argument("--need-core", action="store_true", help="核心技材料也不够")
     args = ap.parse_args()
+
+    # --from-targets：从 targets.json 读角色列表批量跑
+    if getattr(args, "from_targets", False):
+        tj = BASE / "targets.json"
+        if not tj.exists():
+            print(f"✘ 没有 {tj.name}")
+            print("   建一个：{\"note\": \"说明\", \"agents\": [\"佩洛伊斯\"]}")
+            return 2
+        try:
+            d = json.loads(tj.read_text(encoding="utf-8"))
+            agents = [x for x in (d.get("agents") or []) if isinstance(x, str)]
+        except Exception as e:
+            print(f"✘ 读不了 targets.json：{e}")
+            return 2
+        if not agents:
+            print("✘ targets.json 里的 agents 是空的 —— 没有角色要养")
+            print("   填上角色名，例如：{\"agents\": [\"佩洛伊斯\"]}")
+            return 0
+        return run_from_targets(agents, args.run, getattr(args, "max", 0))
+
+    if not args.agent:
+        print("✘ 没指定角色。两种用法：")
+        print("   python tools/zzz_daily.py 佩洛伊斯 --run")
+        print("   python tools/zzz_daily.py --from-targets --run")
+        return 2
     # 角色名校验：能纠正就纠正，纠正不了就退出（不静默走默认）
     try:
         from core.agent_cfg import resolve_agent

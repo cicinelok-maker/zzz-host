@@ -206,6 +206,44 @@ python tools/zzz_daily.py 佩洛伊斯 --run
 # 会花电量、材料。跑完追加一条到 state/disc_progress.json
 ```
 
+### 任务：一次养多个角色
+
+编辑 `targets.json`：
+
+```json
+{"agents": ["佩洛伊斯", "丽娜"]}
+```
+
+```bash
+python tools/zzz_daily.py --from-targets                  # 计划
+python tools/zzz_daily.py --from-targets --run            # 真跑
+python tools/zzz_daily.py --from-targets --max 2 --run    # 今天只养 2 个
+```
+
+按 `targets.json` 里的顺序跑，不重新排序（你想先养谁就写前面）。
+单个角色失败不会中断整批，只打印返回码然后继续。
+
+### 任务：看养成进度曲线
+
+```bash
+python tools/zzz_who.py 佩洛伊斯 --history
+```
+
+输出长这样：
+
+```
+  11-24 22:52    20.5   ██████████░░░░  蓝10
+  11-25 07:41    24.0   ████████████░░  蓝11   ▲ +3.5
+  起点 20.5 → 现在 24.0，涨了 3.5
+  距小毕业 28 还差 4.0
+  位号变化：
+    3号位  5.5 → 6.5   ▲ +1.0
+    4号位  1.5 → 4.0   ▲ +2.5 （啄木鸟电音 → 拂晓行纪）
+```
+
+**记录少于 3 条时会警告「速率是单次跳跃外推的」** ——
+一次大改造（同时换装+训练+刷本）不是每天都能做到。
+
 ### 任务：只看驱动盘换装建议
 
 ```bash

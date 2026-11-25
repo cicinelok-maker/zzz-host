@@ -293,6 +293,143 @@ def show_menu(roster: dict | None = None) -> int:
     return 0
 
 
+# ============================================================ 进度曲线
+
+PROGRESS = STATE / "disc_progress.json"
+
+
+def _load_progress(agent: str) -> list[dict]:
+    """读 disc_progress.json 里这个角色的记录，按时间排序。"""
+    if not PROGRESS.exists():
+        return []
+    try:
+        d = json.loads(PROGRESS.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    rows = [x for x in d if isinstance(x, dict) and x.get("agent") == agent]
+    rows.sort(key=lambda x: str(x.get("ts") or ""))
+    return rows
+
+
+def _parse_ts(ts: str):
+    from datetime import datetime
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(ts, fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _bar(val: float, target: float, width: int = 14) -> str:
+    """进度条。超过目标就全满。"""
+    if target <= 0:
+        return "░" * width
+    n = int(round(min(val / target, 1.0) * width))
+    return "█" * n + "░" * (width - n)
+
+
+def history(agent: str) -> int:
+    """打印一个角色的养成历史。"""
+    rows = _load_progress(agent)
+    print("=" * 66)
+    print(f"{agent}　养成历史")
+    print("=" * 66)
+
+    if not rows:
+        print()
+        print(f"  还没有记录。跑一轮就有：")
+        print(f"     python tools/zzz_daily.py {agent} --run")
+        print()
+        print("  （记录写在 state/disc_progress.json，每跑一轮追加一条）")
+        return 0
+
+    if len(rows) == 1:
+        r = rows[0]
+        print()
+        print(f"  只有 1 条记录（{r.get('ts')}）：{r.get('质量分')} 分")
+        print(f"  再跑一轮就能看到变化了。")
+        return 0
+
+    # ---- 曲线
+    first = rows[0].get("质量分") or 0
+    print()
+    prev = None
+    for r in rows:
+        ts = str(r.get("ts") or "")[5:16]
+        sc = r.get("质量分") or 0
+        blue = r.get("蓝条") or 0
+        line = f"  {ts}   {sc:>5.1f}   {_bar(sc, GRAD)}  蓝{blue}"
+        if prev is not None:
+            d = sc - prev
+            if abs(d) > 0.05:
+                line += f"   {'▲ +' if d > 0 else '▼ '}{d:.1f}"
+        print(line)
+        prev = sc
+
+    # ---- 汇总
+    last = rows[-1]
+    now = last.get("质量分") or 0
+    gain = now - first
+    print()
+    print("-" * 66)
+    print(f"  起点 {first:.1f} → 现在 {now:.1f}，{'涨了' if gain >= 0 else '掉了'} {abs(gain):.1f}")
+
+    t0, t1 = _parse_ts(str(rows[0].get("ts") or "")), _parse_ts(str(last.get("ts") or ""))
+    if t0 and t1 and t1 > t0:
+        days = (t1 - t0).total_seconds() / 86400
+        rate = gain / days if days > 0 else 0
+        if days < 1:
+            print(f"  {days * 24:.1f} 小时涨 {gain:.1f} → 约 {rate:.2f} 分/天")
+        else:
+            print(f"  {days:.1f} 天涨 {gain:.1f} → 约 {rate:.2f} 分/天")
+        if now < GRAD and rate > 0.01:
+            eta = (GRAD - now) / rate
+            print(f"  距小毕业 {GRAD:g} 还差 {GRAD - now:.1f}，按这个速度约 {eta:.1f} 天")
+        elif now >= GRAD:
+            print(f"  ✔ 已过小毕业线 {GRAD:g}")
+        # 样本少时外推不可靠：一轮里可能同时做了换装+训练+刷本，
+        # 那不是可持续的日速率
+        if len(rows) <= 3:
+            print()
+            print(f"  ⚠ 只有 {len(rows)} 条记录，上面的「分/天」是从单次跳跃外推的")
+            print("     一次大改造（同时换装+训练+刷本）不是每天都能做到")
+            print("     攒够 5 条以上再看速率才准")
+
+    # ---- 位号变化（只报有变化的）
+    s0 = {x.get("slot"): x for x in (rows[0].get("位号") or [])}
+    s1 = {x.get("slot"): x for x in (last.get("位号") or [])}
+    changes = []
+    for slot in sorted(set(s0) | set(s1)):
+        a, b = s0.get(slot) or {}, s1.get(slot) or {}
+        ea, eb = a.get("eff") or 0, b.get("eff") or 0
+        if abs(eb - ea) > 0.05:
+            sa, sb = a.get("set") or "—", b.get("set") or "—"
+            note = ""
+            if sa != sb:
+                note = f"（{sa} → {sb}）"
+            changes.append((slot, ea, eb, eb - ea, note))
+    if changes:
+        print()
+        print("  位号变化：")
+        for slot, ea, eb, d, note in changes:
+            arrow = "▲ +" if d > 0 else "▼ "
+            print(f"    {slot}号位  {ea:.1f} → {eb:.1f}   {arrow}{abs(d):.1f} {note}")
+
+    # ---- 动作历史
+    acts = []
+    for r in rows:
+        a = r.get("动作") or []
+        if a:
+            acts.append(f"{str(r.get('ts'))[5:16]} {'/'.join(map(str, a))}")
+    if acts:
+        print()
+        print("  每轮做了什么：")
+        for a in acts[-8:]:
+            print(f"    {a}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="角色养成进度一览")
     ap.add_argument("--force-unknown", action="store_true",
@@ -304,8 +441,21 @@ def main() -> int:
                     help="扫账号上有哪些角色（需游戏开着）")
     ap.add_argument("--menu", action="store_true",
                     help="输出聊天友好的角色菜单")
+    ap.add_argument("--history", action="store_true",
+                    help="看养成进度曲线（配合角色名）")
     args = ap.parse_args()
 
+    if args.history:
+        if not args.agent:
+            print("要指定角色：python tools/zzz_who.py 佩洛伊斯 --history")
+            return 2
+        try:
+            from core.agent_cfg import resolve_agent
+            n = resolve_agent(args.agent, allow_unknown=args.force_unknown)
+        except Exception as e:
+            print(f"✘ {e}")
+            return 3
+        return history(n)
     if args.scan:
         return do_scan()
     if args.menu:
