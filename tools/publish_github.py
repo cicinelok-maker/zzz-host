@@ -73,7 +73,7 @@ IGN_FILES = [
     "roster.json.bak-*",
     "tools/feishu.py", "tools/feishu_img.py",
     "*.local.json", ".env", ".env.*",
-    # 本机专属的一次性脚本
+    # 本机专属的一次性脚本 / 开发工具
     "tools/run_feishu_agent.ps1", "tools/run_feishu_listen.ps1",
     "tools/capture_fp_we.py",
     # 历史残留（已被 tools/ 取代）

@@ -31,7 +31,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent
 sys.path.insert(0, str(TOOLS))
-sys.path.insert(0, r"E:\OneDragon\ZenlessZoneZero-OneDragon-v2.6.1-Full\plugins")
+# 不硬编码本机路径 —— 用 core.paths 探测
+try:
+    from core.paths import one_dragon_home as _odh2
+    _od2 = _odh2()
+    if _od2:
+        sys.path.insert(0, str(Path(_od2) / "plugins"))
+        sys.path.insert(0, str(Path(_od2) / "src"))
+except Exception:
+    pass
 
 import live  # noqa: E402
 import numpy as np  # noqa: E402

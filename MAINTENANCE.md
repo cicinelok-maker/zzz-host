@@ -179,6 +179,8 @@ python tools/check_consistency.py  # 指纹/状态机一致性
 | `audit_lessons.py` | **教训体检**：把 42 条教训抽成 13 条可自动化规则 |
 | `publish_github.py` | **发布**：走 GitHub API 推送（绕开被墙的 github.com:443） |
 | `run_tests.py` | **单元测试**：43 个用例，测判盘/止损/调律/名字（标准库 unittest） |
+| `audit_release.py` | **发布集自洽**：只查发布集，不看本地（抓「本地能跑但别人跑不了」） |
+| `audit_ship.py` | **终极验证**：复制发布集到临时目录 + 清 PYTHONPATH + 逐模块 import（模拟别人的机器） |
 | `gen_manifest.py` | **生成 tools.json**（机器可读能力清单，改工具后重跑） |
 | `cleanup_tools.py` | 本清理流程 |
 
@@ -6998,3 +7000,140 @@ test_*.py 有 18 个，但全在 od_plugin/ od_test/ _legacy/（都不发布）
 判断标准：**引入哨兵值时，必须同时改完所有消费方。**
 或者更安全：**用 `None` 而不是 `-1`** —— `None` 做算术会直接抛 TypeError，
 **错误会立刻暴露，而不是悄悄算出「距满 241 点」。**
+## 继续改：进度曲线 / 多角色 / 单元测试 / 确定性（用户 2026-11-25）
+
+用户：**「你继续」**（接着上一条的改进清单做）
+
+### 做完四项
+
+**① 进度曲线：`zzz_who --history`**
+
+`disc_progress.json` 每条记录有 `ts` / `质量分` / `蓝条` / `动作` / `位号`，
+但只有 `zzz_disc_daily --report` 读它，而且只是列表。
+
+新增输出：
+```
+  11-24 22:52    20.5   ██████████░░░░  蓝10
+  11-25 07:41    24.0   ████████████░░  蓝11   ▲ +3.5
+  起点 20.5 → 现在 24.0，涨了 3.5
+  8.8 小时涨 3.5 → 约 9.54 分/天
+  距小毕业 28 还差 4.0，按这个速度约 0.4 天
+  位号变化：
+    3号位  5.5 → 6.5   ▲ +1.0
+    4号位  1.5 → 4.0   ▲ +2.5 （啄木鸟电音 → 拂晓行纪）
+```
+
+**但加了警告**：记录 ≤3 条时提示「分/天 是从单次跳跃外推的」——
+那轮同时做了换装+训练+刷本，不是可持续的日速率。
+**「0.4 天毕业」这种乐观数字必须带前提。**
+
+**② 多角色批量：`zzz_daily --from-targets`**
+
+`targets.json` 里写着「只有写进这里的角色才会被自动刷本」，
+**但只有 `_legacy/` 里的脚本读它，现役 38 个工具一个都不读。**
+
+```
+python tools/zzz_daily.py --from-targets            # 计划
+python tools/zzz_daily.py --from-targets --run      # 真跑
+python tools/zzz_daily.py --from-targets --max 2    # 今天只养 2 个
+```
+
+按 `targets.json` 顺序跑，不重新排序（先养谁就写前面）。
+单个失败不中断整批。
+
+**踩的坑**：`ap.add_argument("agent")` 是必填，argparse 先报错，
+`--from-targets` 根本走不到。改成 `nargs="?"`。
+
+**③ 单元测试：43 个用例**
+
+```
+原生 18 个 test_*.py 全在 od_plugin/ od_test/ _legacy/，发布集里一条都没有
+判盘逻辑、止损线、调律预算这些核心算法原本全靠人肉验证
+```
+
+新建 `tools/tests/test_core.py` + `tools/run_tests.py`，
+用**标准库 unittest**（用户不用装 pytest）：
+
+```
+disc_stoploss  里程碑 3/6/9/12/15、roll 次数、止损边界
+disc_initial   命中计数、主词条错必 drop、命中多判定不更差
+tune_plan      3/6 母盘成本、默认定向、不为负
+agent_name     繁简、书名号、·前缀不能剥、OCR 错1字能认
+agent_cfg      未知角色默认拒绝/显式放行、错字自动纠正
+disc_stats     parse_value 返回 tuple 或 None、resolve 返回 tuple
+```
+
+已接进 `AGENTS.md` 自检清单 + `release.yml` CI（发版前必跑）。
+
+**④ `picks[0]` 确定性**
+
+`zzz_farm_plan` 里 `sets = set()`，`picks[0]` 取决于哈希顺序，
+**同样的输入可能给出不同副本。**
+→ 改成 `dict.fromkeys` 保插入序。实测 5/5 次一致。
+
+### 第一版测试 11 个失败 —— 全是我对接口的假设错
+
+```
+resolve(name, value, is_pct)   → 返回 tuple[str, int]，不是 str
+parse_value(txt)               → 返回 tuple[float,bool] | None，可能是 None
+should_stop(...)               → 返回 dict（stop/reason/expect），不是 bool
+initial_verdict(...)           → 返回 dict，不是 str
+max_tunes(n, directed=True)    → 默认是**定向**（6 母盘/次），不是不定向
+count_hits(subs, good, half)   → 返回 tuple[int, int, list]，不是单个数字
+```
+
+**六个接口我全猜错了。**
+
+按真实签名重写后 43/43 通过。
+
+### 最终状态
+
+```
+单元测试         43/43
+tools.json 与 38 个工具一致（新增 run_tests）
+冒烟             11/11
+✔ 路径 / OneDragon OCR / 64 个角色，完整配装 64 个
+规矩5 登记        ✔ 全部已登记
+扫描器自测         8/8
+体检剩余          R04 死函数 5（vocab）/ R05 硬编码 33（误报）
+```
+
+已推送：`31f5684`
+
+### 还剩
+
+```
+P2 社区化   CONTRIBUTING.md / CHANGELOG.md / ISSUE_TEMPLATE
+P2 死函数   vocab 里 5 个（split_stat / correct_set / valid_level /
+            valid_percent / parse_number）
+```
+
+### 教训（第七十次）
+
+**「我知道这个函数怎么用」和「我查过这个函数的签名」是两件事 ——
+而写测试是唯一能逼自己分清的方法。**
+
+我写过 `disc_stats.resolve()` 的调用（上一轮修 `攻击力` / `攻击力百分比`
+的 bug 时），以为自己很熟。
+
+写测试时我写 `assertEqual(resolve(...), "攻击力百分比")` —— **返回的是 tuple。**
+`should_stop` 我写 `assertFalse(...)` —— **返回的是 dict。**
+`max_tunes(3)` 我断言 `== 1` —— **默认定向，3 母盘只够半次，是 0。**
+
+**六个接口全错。** 如果这六个都是「我以为对」，
+那说明**读代码时我读的是「我以为它做什么」，不是「它实际做什么」。**
+
+判断标准：**写测试时如果一次就全绿，说明测试写得太弱；
+第一次有大量失败才是正常的 —— 那说明测试真的在验证东西。**
+
+### 另一个教训
+
+**`targets.json` 这种「写好了说明但没人读」的文件，是最难发现的半成品。**
+
+它的 note 写着「只有写进这里的角色才会被自动刷本 / 升级」——
+**这句话读起来像功能已经实现了。**
+
+实际只有 `_legacy/` 里的死代码读它。现役 38 个工具一个都不读。
+
+**判断标准：数据文件里的 `note` / `_说明` 字段要当成「承诺」来验 ——
+搜一遍「谁读这个文件」，读不到就是没实现。**

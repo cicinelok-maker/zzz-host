@@ -366,6 +366,8 @@ python tools/smoke_test.py             # 全部工具的语法 + 导入
 python tools/audit_self.py             # 有没有违反项目自己的规矩
 python tools/audit_stale_frame.py      # 读旧帧（改画面后立刻读）
 python tools/audit_patterns.py         # 历史 bug 模式
+python tools/audit_release.py          # 发布集自洽（依赖都在发布集里吗）
+python tools/audit_ship.py             # 终极验证（复制到临时目录完整跑）
 python tools/check_config.py           # 环境
 python tools/gen_manifest.py           # 重新生成 tools.json
 ```

@@ -58,6 +58,13 @@ jobs:
       - name: 扫描器自测（确认检查本身可信）
         run: python tools/selftest_audit.py
 
+      # 这两个是「别人能不能用」的检查 —— 本地能跑不代表发布版能跑
+      - name: 发布集自洽（依赖都在发布集里吗）
+        run: python tools/audit_release.py
+
+      - name: 终极验证（复制到临时目录，清掉 PYTHONPATH 完整跑）
+        run: python tools/audit_ship.py
+
       # disc_meta.json 的结构完整性 —— 不依赖 OneDragon
       - name: 角色数据完整性
         shell: python

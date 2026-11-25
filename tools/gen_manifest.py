@@ -180,7 +180,15 @@ def scan_tool(p: pathlib.Path) -> dict | None:
 
 
 tools = []
-for p in sorted(T.glob("*.py")):
+# 扫**发布集**，不是本地目录 ——
+# 本地可能有 capture_fp_we.py 这种「有但不发布」的脚本，
+# 扫本地会把它登记进 tools.json，别人机器上就悬空了（朋友报的第一个 bug）。
+from publish_github import collect as _collect
+_rel = {x.as_posix() for x in _collect(BASE)}
+_names = sorted(pathlib.Path(x).name for x in _rel
+                if x.startswith("tools/") and x.count("/") == 1
+                and x.endswith(".py"))
+for p in (T / n for n in _names):
     if any(p.stem.startswith(x) for x in SKIP):
         continue
     if p.stem in ("feishu", "feishu_img"):

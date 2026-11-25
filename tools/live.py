@@ -135,7 +135,12 @@ def ocr_items(ocr, img):
 
 
 def pick(items, keyword: str):
-    from agent_growth.core.navigator import pick_text
+    try:
+        from agent_growth.core.navigator import pick_text
+    except ImportError:
+        print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
+        print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
+        return 2
     return pick_text(
         [{"text": getattr(i, "data", ""), "c": 0.9,
           "center": (int(i.center.x), int(i.center.y))} for i in items], keyword)
@@ -170,7 +175,12 @@ def enter_game(win, ocr) -> int:
 
 def enter_loop(win, ocr, tries: int = 4, gap: float = 10.0) -> int:
     """ZZZ 要连点两次进入：第一次加载配置，第二次才真正进。反复点到标题页消失为止。"""
-    import pyautogui
+    try:
+        import pyautogui
+    except ImportError:
+        print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
+        print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
+        return 2
     pyautogui.FAILSAFE = False
     for i in range(1, tries + 1):
         if not foreground(win):
@@ -194,7 +204,12 @@ def enter_loop(win, ocr, tries: int = 4, gap: float = 10.0) -> int:
     print("4 次之后仍在标题页")
     return 5
 def main() -> int:
-    from agent_growth.core import preflight
+    try:
+        from agent_growth.core import preflight
+    except ImportError:
+        print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
+        print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
+        return 2
     ok, lines = preflight.report()
     print("\n".join(lines))
     if not ok:
@@ -260,8 +275,18 @@ def main() -> int:
         return 0
 
     if args.click_tpl:
-        from agent_growth.core.vision import TemplateBank
-        from agent_growth.core.navigator import _assets_root
+        try:
+            from agent_growth.core.vision import TemplateBank
+        except ImportError:
+            print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
+            print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
+            return 2
+        try:
+            from agent_growth.core.navigator import _assets_root
+        except ImportError:
+            print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
+            print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
+            return 2
         bank = TemplateBank(Path("x"), fallback_root=_assets_root())
         hit = bank.find(img, args.click_tpl, threshold=0.85)
         if not hit:

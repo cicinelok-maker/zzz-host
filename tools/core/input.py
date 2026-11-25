@@ -37,7 +37,17 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-sys.path.insert(0, r"E:\OneDragon\ZenlessZoneZero-OneDragon-v2.6.1-Full\plugins")
+# 不硬编码本机路径 —— 用 core.paths 探测（别人的 OneDragon 不在这）
+try:
+    from core.paths import one_dragon_home as _odh
+    _od = _odh()
+    if _od:
+        for _sub in ("src", "plugins"):
+            _p = str(__import__("pathlib").Path(_od) / _sub)
+            if __import__("pathlib").Path(_p).is_dir():
+                sys.path.insert(0, _p)
+except Exception:
+    pass
 
 import live  # noqa: E402
 import vgamepad as vg  # noqa: E402

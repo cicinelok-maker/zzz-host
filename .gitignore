@@ -89,3 +89,6 @@ tools/run_feishu_listen.ps1
 tools/capture_fp_we.py
 # 个人目标清单：每人不同，发布版留空
 # （文件本身仍提交，内容是空的；这里防止误加回去）
+
+# 旧引擎的看板入口：依赖 zzz_host.py（1068 行旧版），已被 zzz_who 取代
+status.py
