@@ -105,17 +105,29 @@ def reset_to_world(ui: Ui, max_esc: int = 6) -> bool:
     """
     vs, inp = ui.vs, ui.inp
 
-    # 第一轮：只判不按。画面可能还在过渡。
-    if _describe_stable(vs, tries=3, gap=0.2) == "世界":
+    # 第一轮：只判不按。画面可能还在过渡 —— 先等稳再判。
+    try:
+        vs.wait_still(quiet=0.3, timeout=2.5)
+    except Exception:
+        time.sleep(0.4)
+    if _describe_stable(vs, tries=3, gap=0.4) == "世界":
         return True
 
     for i in range(max_esc):
         # 优先手柄 B：它在大世界没有副作用（不像 ESC 会开菜单）
         try:
-            inp.pad_tap("b", wait=1.2)
+            inp.pad_tap("b", wait=1.0)
         except Exception:
             inp.key("esc", wait=1.5)      # 手柄不可用才用 ESC
-        if _describe_stable(vs, tries=2, gap=0.15) == "世界":
+
+        # **等画面真的稳了再判**，不要固定睡 0.15 秒就重判 ——
+        # 实测界面切换有约 3 秒的过渡画面，期间判出来是「未知界面」。
+        # 之前等太短，会在过渡期连按 B，退过头或把按键喂给过渡动画。
+        try:
+            vs.wait_still(quiet=0.3, timeout=3.0)
+        except Exception:
+            time.sleep(0.4)
+        if _describe_stable(vs, tries=3, gap=0.5) == "世界":
             return True
 
     return _describe_stable(vs, tries=3, gap=0.2) == "世界"
