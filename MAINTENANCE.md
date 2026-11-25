@@ -177,6 +177,7 @@ python tools/check_consistency.py  # 指纹/状态机一致性
 | `audit_fresh.py` | **新代码审计**：常量冲突 / 重复实现 / 躺着的 / 规矩合规 |
 | `audit_hardcode.py` | **硬编码审计**：角色名写死在哪 / 不在库时会怎样 |
 | `audit_lessons.py` | **教训体检**：把 42 条教训抽成 13 条可自动化规则 |
+| `publish_github.py` | **发布**：走 GitHub API 推送（绕开被墙的 github.com:443） |
 | `gen_manifest.py` | **生成 tools.json**（机器可读能力清单，改工具后重跑） |
 | `cleanup_tools.py` | 本清理流程 |
 
@@ -6402,3 +6403,157 @@ git push -u origin main
 **而且如果不是冒烟测试真的去 import 每个模块，这个错会带到发布版里。**
 
 判断标准：**批量替换前，先 grep 一遍「这个符号有几种导入写法」。**
+
+## OneDragon 是怎么发布的（用户 2026-11-25）
+
+用户：**「onedragon他们是怎么发布的」**
+
+### 直接看了它本地的完整安装包
+
+`E:\OneDragon\ZenlessZoneZero-OneDragon-v2.6.1-Full` 带 `.git`，
+所以能直接读它的 workflow 和构建脚本。
+
+### 它的发布链路
+
+**触发**：`push tag v*` 或手动 `workflow_dispatch`
+
+**构建**（GitHub Actions `windows-latest`）：
+```
+1 setup-python 3.11
+2 装 uv
+3 uv venv + uv sync --group dev
+4 下 UPX 4.2.3 放进 .venv/Scripts
+5 写 src/one_dragon/version.py（版本号从 tag 注入）
+6 PyInstaller 打三个 exe:
+    OneDragon-Installer.spec      → 97 MB 精简安装器
+    OneDragon-Launcher.spec       → 18 MB 启动器
+    OneDragon-RuntimeLauncher.spec → 集成运行时
+7 uv export → pip wheel → 所有依赖打成 Environment.zip
+```
+
+**签名**（独立 job）：SignPath.io 免费签名 + SignPath Foundation 证书
+→ 消除 Windows SmartScreen 警告
+
+**发布**（`softprops/action-gh-release`）：**8 个资产**
+
+| 资产 | 说明 | 体积量级 |
+|---|---|---|
+| `-Full-Environment.zip` | 带环境完整包 | ~1.4 GB |
+| `-Full.zip` | 完整源码，只下依赖 | ~9 MB |
+| `-Installer.exe` | 精简安装器，自动下资源 | 97 MB |
+| `-WithRuntime-Full.zip` | 内嵌运行时+源码+模型，解压即用 | ~1.4 GB |
+| `-WithRuntime.zip` | 内嵌运行时+源码 | 大 |
+| `-Environment.zip` | 只有依赖 wheels | ~1 GB |
+| `-Launcher.zip` | 启动器更新包 | 18 MB |
+| `-RuntimeLauncher.zip` | 集成启动器（就地升级） | 大 |
+
+**多通道分发**：
+- GitHub Releases（主）
+- **CNB**（cnb.cool）—— 国内镜像，Release 时自动 trigg​er 同步
+- **MirrorChyan** —— CDK 付费高速下载
+- 文档站 one-dragon.com
+
+**热更新**：单独的 `build-running-resources.yml` 发资源补丁，
+不用重发整个包。
+
+### 关键差异：它和我们不是一个物种
+
+| 维度 | OneDragon | 我们 |
+|---|---|---|
+| 形态 | **GUI 应用**，用户双击 exe | **CLI 工具集**，用户在终端跑 |
+| 用户需不需要 Python | **不需要**（自带运行时） | **需要**（用 OneDragon 的 venv） |
+| 体积 | ~1.4 GB（.venv 1318 MB + assets 110 MB） | **594 KB** |
+| 要不要签名 | **要**（exe 会被 SmartScreen 拦） | **不要**（纯 .py） |
+| 打包 | PyInstaller × 3 + UPX | **不打包** |
+| CI 能跑完整自检吗 | 能（自带全部依赖） | **不能**（缺 OneDragon 的 OCR） |
+
+**我们是寄生在 OneDragon 上的**：用户反正要装它，我们不需要自带 Python。
+
+### 所以：学流程，不学打包
+
+**学了的**（已落地 `.github/workflows/release.yml`）：
+```
+tag 触发            v* → 自动建 Release
+自检门禁            自检不过就不发布
+源码 zip            打一个干净的包（排掉 state/od_test/本机文件）
+Release 说明        写清前置依赖、安装步骤、已知限制
+多资产              目前 1 个 zip 够用
+```
+
+**没学、也不该学的**：
+```
+PyInstaller 打包     我们依赖 OneDragon 的 venv，打包只会变成「带一个假 Python」
+签名                纯 .py 不需要
+CNB/MirrorChyan     小项目，GitHub 够用（国内慢但能下）
+热更新              我们没有「资源」需要单独更新
+```
+
+### CI 里能跑什么、不能跑什么
+
+**试出来了**（本地不设 PYTHONPATH 模拟）：
+```
+smoke_test        exit=0   ← 只跑 --help，不需要 OneDragon
+audit_self        exit=0
+audit_lessons     exit=0
+audit_patterns    exit=0
+selftest_audit    exit=0
+check_config      ✘ 需要真装 OneDragon → CI 里跳过
+```
+
+**CI 里额外加的**：
+- `disc_meta.json` 结构完整性（64 个角色、定位/有效词条/套装都在）
+- 个人数据扫描（`cicin` / `cli_xxx` 密钥）
+
+### workflow 写完才发现自己编了 API
+
+我第一版写了：
+```yaml
+run: python tools/smoke_test.py -k import        # -k 不存在
+run: python tools/check_config.py --no-env       # --no-env 不存在
+run: python tools/audit_lessons.py --fail-on critical  # 不存在
+```
+
+**这三个参数全是我编的。** 查了一下，这些工具**根本没有 argparse**，
+无参数直接跑就 exit 0。
+
+→ 全部改成裸调用。**又是「凭印象写代码」的老毛病。**
+
+### 现在的发布流程
+
+```powershell
+# 用户那边
+git remote add origin https://github.com/<用户名>/zzz-host.git
+git push -u origin main
+
+# 以后发版
+git tag v1.0.0
+git push origin v1.0.0
+# → CI 自动：自检 → 打 zip → 建 Release
+```
+
+### 教训（第六十六次）
+
+**「参考别人怎么做」要先确认「我们是不是同一个物种」。**
+
+OneDragon 是 GUI 应用，用户不装 Python → 必须打包 exe（1.4 GB）。
+我们是 CLI 工具，**依赖它已经装好的 venv** → 打包反而没意义。
+
+**如果我照抄它的 PyInstaller 流程，会得到一个 200 MB 的 exe，
+里面套了个假 Python，而用户机器上 OneDragon 的 venv 还是得装。**
+
+判断标准：**抄之前先列表——「它有的条件，我有没有」/「它的约束，我是不是也有」。
+差异项才是不能抄的部分。**
+
+### 另一个教训（又犯了）
+
+**写代码前先 `--help`，不要凭印象。**
+
+这是第 N 次了。这次是 workflow 里的命令行参数。
+`-k` / `--no-env` / `--fail-on` 全都不是真的。
+
+**而且这次差点没发现** —— 因为 YAML 语法是对的，
+`python tools/smoke_test.py -k import` 语法也对，
+**只有真的跑一遍才会发现参数被忽略（argparse 不存在 → 参数被当成 sys.argv 里的垃圾）。**
+
+判断标准：**在 CI 配置里写任何命令前，先在本地把那行命令原样跑一遍。**
+不是「跑类似的」，是**原样**。

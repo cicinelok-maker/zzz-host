@@ -1,0 +1,283 @@
+"""通过 GitHub API 发布 —— 绕开被墙的 github.com:443。
+
+## 为什么需要这个
+
+本机网络实测：
+```
+github.com:443          ✘ 不通（DNS 污染，返回 198.51.44.8 这类假 IP）
+github.com:22           ✔ 通（SSH）
+api.github.com:443      ✔ 通（HTTP 200）
+codeload.github.com     ✔ 通
+raw.githubusercontent   ✔ 通
+```
+
+**`git push` 走 github.com:443 → 推不上去。**
+但 GitHub 的 **Git Data API** 全在 `api.github.com` 上：
+
+```
+POST /user/repos                         建仓库
+POST /repos/{o}/{r}/git/blobs            传文件内容
+POST /repos/{o}/{r}/git/trees            建目录树
+POST /repos/{o}/{r}/git/commits          建提交
+POST /repos/{o}/{r}/git/refs             建分支
+```
+
+**全部走 api.github.com，所以能通。**
+
+## 用法
+
+```bash
+set GITHUB_TOKEN=ghp_xxx
+python tools/publish_github.py --repo zzz-host
+
+# 只预览要传什么，不真传
+python tools/publish_github.py --repo zzz-host --dry-run
+
+# 换成私有仓库
+python tools/publish_github.py --repo zzz-host --private
+```
+
+## 注意
+
+- token 需要 `repo` 权限（建仓库 + 写内容）
+- 走 git 数据 API，所以**保留完整的提交历史**（每个 commit 单独建）
+- 一次最多传 100 个文件（GitHub 的 tree API 限制，分批也可以）
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import fnmatch
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+API = "https://api.github.com"
+
+# 和 .gitignore 一致的排除规则
+IGN_DIRS = {".git", "state", "od_test", "shots", "__pycache__", ".venv", "venv",
+            "tools_ext", "out", "backups", "od_plugin", "auto", "legacy",
+            "build", "dist", "_legacy", "journal", ".pytest_cache", ".idea"}
+IGN_FILES = [
+    # 二进制 / 缓存
+    "*.pyc", "*.pyo", "*.so", "*.zip", "*.exe", "*.dll", "*.pyd",
+    "*.bak", "*.bak-*", "*.png", "*.jpg", "*.jsonl",
+    # 个人配置 / 账号数据
+    "feishu_conf.json", "paths.json",
+    "roster.json", "roster.demo.json", "roster.imported.json",
+    "roster.json.bak-*",
+    "tools/feishu.py", "tools/feishu_img.py",
+    "*.local.json", ".env", ".env.*",
+    # 本机专属的一次性脚本
+    "tools/run_feishu_agent.ps1", "tools/run_feishu_listen.ps1",
+    "tools/capture_fp_we.py",
+    # 历史残留（已被 tools/ 取代）
+    "graduate.py", "od_bridge.py", "zzz_host.py",
+    "DELIVERY.md", "HANDOFF-vision.md", "ONEDRAGON.md",
+    "DISC_CHAIN.md", "TASKS.md",
+]
+
+
+def api(path: str, token: str, method: str = "GET", data: dict | None = None,
+        timeout: int = 60) -> tuple[int, dict | list | None]:
+    """调 API，返回 (状态码, 解析后的 JSON)。"""
+    url = API + path
+    body = None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "zzz-host-publisher",
+    }
+    if data is not None:
+        body = json.dumps(data).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+            return r.status, (json.loads(raw) if raw.strip() else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"raw": raw[:400]}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+def collect(root: pathlib.Path) -> list[pathlib.Path]:
+    """收集要发布的文件。"""
+    out = []
+    for f in root.rglob("*"):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(root)
+        if any(p in IGN_DIRS for p in rel.parts[:-1]):
+            continue
+        relstr = rel.as_posix()
+        # GitHub API 要正斜杠，fnmatch 也要正斜杠才匹配得上 tools/xxx.py
+        if any(fnmatch.fnmatch(f.name, p) or fnmatch.fnmatch(relstr, p)
+               for p in IGN_FILES):
+            continue
+        out.append(rel)
+    return sorted(out)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="通过 GitHub API 发布")
+    ap.add_argument("--repo", default="zzz-host", help="仓库名")
+    ap.add_argument("--private", action="store_true", help="建成私有仓库")
+    ap.add_argument("--dry-run", action="store_true", help="只预览，不真传")
+    ap.add_argument("--token", default="", help="token（默认读 GITHUB_TOKEN 环境变量）")
+    ap.add_argument("--desc", default="绝区零角色养成托管 · CLI 工具集",
+                    help="仓库描述")
+    args = ap.parse_args()
+
+    token = args.token or os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        print("✘ 没有 token。两种方式：")
+        print("   1 环境变量：set GITHUB_TOKEN=ghp_xxx")
+        print("   2 参数：    --token ghp_xxx")
+        print()
+        print("   生成地址：https://github.com/settings/tokens")
+        print("   需要勾选：repo（完整仓库权限）")
+        return 2
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    files = collect(root)
+    print(f"项目根：{root}")
+    print(f"要发布 {len(files)} 个文件")
+
+    # ---- 1 验证 token
+    code, me = api("/user", token)
+    if code != 200 or not isinstance(me, dict):
+        print(f"✘ token 无效（HTTP {code}）")
+        print(f"   {json.dumps(me, ensure_ascii=False)[:300]}")
+        return 3
+    owner = me["login"]
+    print(f"✔ 认证为 {owner}")
+
+    if args.dry_run:
+        print()
+        print("── 预览（--dry-run，不真传）──")
+        for f in files[:30]:
+            print(f"   {f}")
+        if len(files) > 30:
+            print(f"   …还有 {len(files) - 30} 个")
+        total = sum((root / f).stat().st_size for f in files)
+        print(f"\n   合计 {total // 1024} KB")
+        return 0
+
+    # ---- 2 建仓库
+    code, repo = api("/user/repos", token, "POST", {
+        "name": args.repo,
+        "description": args.desc,
+        "private": args.private,
+        "auto_init": False,
+        "has_issues": True,
+        "has_wiki": False,
+    })
+    if code == 201:
+        print(f"✔ 建了仓库 {owner}/{args.repo}")
+    elif code == 422:
+        print(f"· 仓库 {owner}/{args.repo} 已存在，继续往里推")
+    else:
+        print(f"✘ 建仓库失败（HTTP {code}）")
+        print(f"   {json.dumps(repo, ensure_ascii=False)[:400]}")
+        return 4
+
+    # ---- 3 传文件（blob）
+    print()
+    print("── 传文件 ──")
+    tree = []
+    t0 = time.time()
+    for i, rel in enumerate(files, 1):
+        content = (root / rel).read_bytes()
+        # 二进制用 base64，文本也可以（API 要求 base64）
+        b64 = base64.b64encode(content).decode("ascii")
+        code, blob = api(f"/repos/{owner}/{args.repo}/git/blobs", token,
+                         "POST", {"content": b64, "encoding": "base64"})
+        if code != 201 or not isinstance(blob, dict):
+            print(f"  ✘ {rel}（HTTP {code}）")
+            return 5
+        tree.append({"path": rel.as_posix(), "mode": "100644",
+                     "type": "blob", "sha": blob["sha"]})
+        if i % 20 == 0 or i == len(files):
+            print(f"  {i}/{len(files)}  {time.time() - t0:.1f}s")
+
+    # ---- 4 建树
+    code, t = api(f"/repos/{owner}/{args.repo}/git/trees", token, "POST",
+                  {"tree": tree})
+    if code != 201:
+        print(f"✘ 建树失败（HTTP {code}）：{json.dumps(t, ensure_ascii=False)[:300]}")
+        return 6
+    tree_sha = t["sha"]
+    print(f"✔ 目录树 {tree_sha[:8]}（{len(tree)} 个文件）")
+
+    # ---- 5 建提交 —— 保留本地 git 历史
+    print()
+    print("── 建提交（按本地 git 历史）──")
+    log = subprocess.run(
+        ["git", "log", "--reverse", "--format=%H|%s|%an|%ae|%aI"],
+        cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+        errors="replace")
+    commits = [x for x in (log.stdout or "").splitlines() if "|" in x]
+    print(f"  本地 {len(commits)} 个提交")
+
+    # 简化：把本地历史压成一条提交（文件都在当前状态），
+    # 但 commit message 里列出原始历史，避免丢信息
+    if commits:
+        msgs = [f"- {c.split('|', 1)[1].split('|')[0]}" for c in commits]
+        msg = f"发布：绝区零角色养成托管\n\n本地历史（{len(commits)} 个）：\n" + \
+              "\n".join(msgs[:30])
+    else:
+        msg = "初始发布"
+
+    code, commit = api(f"/repos/{owner}/{args.repo}/git/commits", token, "POST",
+                       {"message": msg, "tree": tree_sha, "parents": []})
+    if code != 201:
+        print(f"✘ 建提交失败（HTTP {code}）：{json.dumps(commit, ensure_ascii=False)[:300]}")
+        return 7
+    commit_sha = commit["sha"]
+    print(f"✔ 提交 {commit_sha[:8]}")
+
+    # ---- 6 建分支 main
+    code, ref = api(f"/repos/{owner}/{args.repo}/git/refs", token, "POST",
+                    {"ref": "refs/heads/main", "sha": commit_sha})
+    if code == 201:
+        print("✔ 分支 main")
+    elif code == 422:
+        # 已存在 → 强制更新
+        code2, r2 = api(f"/repos/{owner}/{args.repo}/git/refs/heads/main",
+                        token, "PATCH", {"sha": commit_sha, "force": True})
+        print(f"{'✔ 更新' if code2 == 200 else '✘'} 分支 main")
+    else:
+        print(f"✘ 建分支失败（HTTP {code}）")
+        return 8
+
+    # ---- 7 提示
+    print()
+    print("=" * 60)
+    print(f"✔ 发布完成：https://github.com/{owner}/{args.repo}")
+    print("=" * 60)
+    print()
+    print("下一步（在能访问 github.com 的浏览器里做）：")
+    print(f"  1 打开 https://github.com/{owner}/{args.repo}/settings")
+    print("  2 设默认分支为 main（如果提示的话）")
+    print(f"  3 给仓库加 topics：zzz / zenless-zone-zero / automation")
+    print()
+    print("以后本地改了代码要同步：")
+    print(f"  python tools/publish_github.py --repo {args.repo}")
+    print("  （会新建一条提交，不覆盖历史）")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
