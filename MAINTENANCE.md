@@ -7861,3 +7861,48 @@ core.input.InputBlocked: ✘ 需要管理员权限
 
 判断标准：**设计「脱离未知状态」的动作时，优先选「在任何状态下都无副作用」的那个。**
 手柄 B（返回）比 ESC（打开菜单）更适合这个任务。
+
+### 教训（第七十九次）
+
+**PowerShell 的管道截断会让 `$LASTEXITCODE` 撒谎 —— 而且专挑「一切正常」的方向撒谎。**
+
+朋友实测，同一台机器、同一条命令、两种读法：
+
+```powershell
+# 假的
+& python tools/zzz_resource.py check 2>&1 | Select-Object -First 3
+→ exit=0
+
+# 真的
+& python tools/zzz_resource.py check *> $env:TEMP\o.log
+→ exit=2
+```
+
+`Select-Object -First N` 读够 N 条就关管道。上游进程收到管道断开信号，
+**被终止**了 —— `$LASTEXITCODE` 记的是「被终止」，不是「真实退出码」。
+
+会掐断管道的写法（都不安全）：
+```
+Select-Object -First N
+Select-String -List
+more
+Out-Host            # 某些情况下
+任何 break 掉上游枚举的
+```
+
+**为什么这个错误特别危险：它把非 0 读成 0。**
+
+「本该报错的东西看起来成功了」—— 这和找 bug 的方向**正好相反**。
+你以为验过了，其实只验了前 3 行输出，进程还没跑到出错的路上就被杀了。
+
+我这边也踩过同样的坑（在别的地方），当时以为是工具的行为，查了半天代码。
+
+判断标准：**验证退出码时，先把完整输出落到文件，再从文件里挑着看。**
+
+```powershell
+& python ... *> $env:TEMP\o.log
+$code = $LASTEXITCODE           # 先取退出码
+Get-Content $env:TEMP\o.log | Select-Object -First 3    # 再看输出
+```
+
+顺序很重要：**先取码，后截断。** 反过来就取不到了。

@@ -170,8 +170,9 @@ def enter_game(timeout: int = 90) -> int:
     from core.input import is_admin
     if not is_admin():
         print("✘ 需要管理员权限")
-        print("  要点「点击进入游戏」—— 没有管理员权限时这个点击会被")
-        print("  Windows UIPI 静默丢弃，然后白等满超时，最后只报「超时」。")
+        print("  本项目的所有操作都要管理员权限 —— 按键/点击会被 Windows UIPI 静默丢弃。")
+        print("  没有权限时不会报错，而是白等到超时（实测 150~254 秒）。")
+        print("  这一步要「点击进入游戏」；就算游戏已在大世界，后面的命令也都要权限。")
         print()
         print("  正确用法：右键终端 → 以管理员身份运行")
         print("  或跑项目根的：.\\admin.ps1")
