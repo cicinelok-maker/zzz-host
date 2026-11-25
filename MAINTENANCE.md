@@ -7687,3 +7687,177 @@ Ui.start() 闸   非管理员直接报错，不白等
 **但这条只有在「别人的环境」里才能验，而我只有一个环境。**
 
 所以：**发布前最该做的事不是加检查，是找一个「环境和我不同」的人先跑一遍。**
+
+## 竞态：抢前台后第一帧不可信（朋友实测，2026-11-25 深夜）
+
+朋友同步 `12db20c` 后权限闸生效（**150 秒白等 → 1.3 秒报错**），
+但他管理员下跑 `zzz_resource check` 又撞出新问题。
+
+### 现象
+
+```
+当前界面：未知界面          ← 但锚点没问题
+电量：10/240  母盘：1000    ← 数据其实都读到了
+耗时 77.2 秒               ← 比正常多 28 秒
+```
+
+他单独测当前画面：
+```
+describe() = '世界'
+HIT 世界  must=('快捷轮盘', '相机')  txt='相机 | Tab | 快捷轮盘'
+16 个锚点逐个过，只有「世界」命中，其他全部落空
+```
+**所以锚点是好的。**
+
+### 根因：时序竞态
+
+`Ui.start()` 只等 300 毫秒：
+```python
+live.foreground(self.vs.win)
+time.sleep(0.3)
+self.inp.mouse_mode()
+self.vs.frame(force=True)     # ← 抢前台后游戏有焦点切换 + 淡入动画
+```
+
+`reset_to_world` 的循环：
+```python
+for _ in range(max_esc):
+    vs.frame(force=True)
+    if anchors.describe(vs) == "世界":
+        return True
+    inp.key("esc", wait=1.5)   # ← 第一帧判不出来就立刻按 ESC
+```
+
+**而 ESC 在大世界是「打开菜单」** —— 按下去画面更不像大世界，
+下一帧还是判不出来，继续按。77 秒基本都耗在这段反复。
+
+朋友的总结：
+> 第一帧判定失败，`reset_to_world` 立刻按 ESC ——
+> 而 ESC 在大世界是「打开菜单」，按下去画面更不像大世界，
+> 下一帧还是判不出来，继续按。77 秒基本都耗在这段反复尝试上。
+> 你换了锚点之后判定是对的，但是在这个时序下，
+> **判定还没机会跑到正确的帧。**
+
+### 修法（两处）
+
+**① `Ui.start()` 用 `wait_still` 替代固定 sleep**
+
+```python
+live.foreground(self.vs.win)
+try:
+    self.vs.wait_still(quiet=0.25, timeout=2.5)
+except Exception:
+    time.sleep(0.5)
+self.inp.mouse_mode()
+try:
+    self.vs.wait_still(quiet=0.2, timeout=1.5)   # 切输入模式也会变画面
+except Exception:
+    time.sleep(0.3)
+self.vs.frame(force=True)
+```
+
+**② `reset_to_world` 先重判再动手，优先用无副作用的键**
+
+```python
+def _describe_stable(vs, tries=2, gap=0.18):
+    """连判几次，任一次认出就用它。"""
+    ...
+
+def reset_to_world(ui, max_esc=6):
+    # 第一轮：只判不按
+    if _describe_stable(vs, tries=3, gap=0.2) == "世界":
+        return True
+    for _ in range(max_esc):
+        try:
+            inp.pad_tap("b", wait=1.2)     # 手柄 B：大世界无副作用
+        except Exception:
+            inp.key("esc", wait=1.5)       # 手柄不可用才用 ESC
+        if _describe_stable(vs, tries=2, gap=0.15) == "世界":
+            return True
+```
+
+**核心原则**：**在「不确定当前是什么界面」时，必须用无副作用的键。**
+ESC 有副作用（开菜单），手柄 B 没有。
+
+### 实测
+
+```
+修复前（朋友机器）：当前界面：未知界面   77.2 秒
+修复后（我这边）：  当前界面：世界       53.0 秒
+```
+
+### 顺带修的 UX
+
+朋友报的第五点：`Ui.start()` 直接抛未包装的 `InputBlocked`，
+新手看到 400 行堆栈，最后那段话埋在最底下。
+
+```
+    ui.start()
+    ~~~~~~~~^^
+  File "...\tools\core\ui.py", line 32, in start
+    raise InputBlocked(
+core.input.InputBlocked: ✘ 需要管理员权限
+```
+
+→ 改成 `print(...)` + `raise SystemExit(2)`。
+`SystemExit` 不打印 traceback，退出码也对。
+
+实测输出：
+```
+✘ 需要管理员权限
+  没有管理员权限时，Windows UIPI 会静默丢弃所有按键/点击，
+  工具不报错，而是白等到超时（实测 150~254 秒）。
+
+  正确用法：右键终端 → 以管理员身份运行
+  或跑项目根的：.\admin.ps1
+    它会自动提权重开，并列出常用命令
+→ SystemExit(code=2)，没有堆栈 ✔
+```
+
+### 关于「点击路径还是漏检」
+
+朋友指出 `click()` 用 `mouse_event`（void 无返回值），建议换成
+`SendInput` + `MOUSEEVENTF_LEFTDOWN/UP` 以便拿到返回值和 LastError。
+
+**我核对后决定不改**：
+
+```
+用了 Ui 的工具：16 个
+调了 start() 的：16 个    ← 权限闸覆盖完整
+没调的：无
+```
+
+`flows.py` / `locate.py` / `machine.py` 虽然直接调 `inp.click()`，
+但它们拿到的 `ui` 都是走过 `Ui.start()` 的 —— **闸已经拦在前面了。**
+
+改成 `SendInput` 会动到**管理员下跑得好好的**点击路径
+（`hold` / `wait` 参数是实测调过的），收益只是「多一个冗余信号」。
+
+**判断：不动。** 加检查 > 改代码。
+
+### 教训（第七十五次）
+
+**「第一帧不可信」是 GUI 自动化里最容易被忽略的一类问题。**
+
+代码逻辑完全正确：`describe()` 判对了，锚点也对了。
+**但「什么时候去读」，比「读什么」更容易错。**
+
+我做锚点时反复问「这个字会不会消失」，
+**却没想到问「我读的那一帧，画面稳了吗」。**
+
+判断标准：**任何「抢焦点 / 切窗口 / 切模式」之后的第一帧，都要当成不可用。**
+不是「睡一会儿」就好 —— 要用 `wait_still` 这类**基于画面内容**的等待，
+因为过渡动画的长度不固定。
+
+### 另一个教训
+
+**「不确定状态时用什么键」，是个独立的设计问题。**
+
+`reset_to_world` 的目的是「回到大世界」。
+我用了 ESC —— 一个**在大世界会打开菜单**的键。
+
+**在「我连自己在哪都不知道」的时候，用一个有副作用的键，
+等于让情况更糟。**
+
+判断标准：**设计「脱离未知状态」的动作时，优先选「在任何状态下都无副作用」的那个。**
+手柄 B（返回）比 ESC（打开菜单）更适合这个任务。

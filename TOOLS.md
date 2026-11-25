@@ -7,7 +7,7 @@
 
 | 工具 | 行数 | 用途 |
 |---|---|---|
-| `zzz_daily.py` | 256 | 日常总控：音擎→等级→转化→技能→核心技→驱动盘→刷本→训练回收　`参数 --run --no-farm --skip --wengine-times --level-times --need-skill` |
+| `zzz_daily.py` | 256 | 养成总控：音擎→等级→转化→技能→核心技→驱动盘→刷本→训练回收　`参数 --run --no-farm --skip --wengine-times --level-times --need-skill` |
 | `zzz_grind.py` | 230 | 多轮收敛：反复跑到目标或电量耗尽　`参数 --run --rounds --target --wait-charge --patience` |
 
 **怎么选**：

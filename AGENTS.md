@@ -70,8 +70,8 @@ python tools/zzz_daily.py <agent> --run         # 5 真跑
 **标了 `destructive: true` 的会真的改游戏数据**（花电量、花材料、换盘、拆解）：
 
 ```
-zzz_daily        完整日常（最重）
-zzz_disc_daily   驱动盘日常
+zzz_daily        角色养成一轮（最重，会花电量/材料）
+zzz_disc_daily   驱动盘养成一天
 zzz_grind        多轮收敛
 zzz_equip        换装
 od_material_farm 刷本（消耗电量）
