@@ -37,6 +37,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 单元测试：纯逻辑，不碰游戏和 OCR
+      - name: 单元测试（判盘 / 止损 / 调律 / 名字）
+        run: python tools/run_tests.py
+
       # 冒烟：只跑 --help，不需要 OneDragon
       - name: 冒烟（工具能 import、参数正确）
         run: python tools/smoke_test.py

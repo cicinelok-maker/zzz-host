@@ -205,12 +205,16 @@ def plan_rows(need: dict, meta: dict) -> list[dict]:
 
         # 驱动盘/蓄电池这类要按套装选具体副本，不能写死
         if key in ("蓄电池", "驱动盘"):
-            sets = set()
+            # 有序去重 —— 用 set 的话 picks[0] 取决于哈希顺序，
+            # 同样的输入可能给出不同副本（结果不可复现）。
+            # dict.fromkeys 保插入序（Python 3.7+ 保证）。
+            set_order = {}
             for who in d["角色"]:
                 agent = who.split("(")[0]
                 s = (meta.get(agent) or {}).get("四件套")
                 if s:
-                    sets.add(s)
+                    set_order[s] = True
+            sets = list(set_order)
             picks = [PATROL_BY_SET.get(s, DEFAULT_PATROL) for s in sets] or [DEFAULT_PATROL]
             # 用第一个需要的套装（多个套装时要分开刷）
             dungeon = picks[0]

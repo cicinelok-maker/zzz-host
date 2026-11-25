@@ -178,6 +178,7 @@ python tools/check_consistency.py  # 指纹/状态机一致性
 | `audit_hardcode.py` | **硬编码审计**：角色名写死在哪 / 不在库时会怎样 |
 | `audit_lessons.py` | **教训体检**：把 42 条教训抽成 13 条可自动化规则 |
 | `publish_github.py` | **发布**：走 GitHub API 推送（绕开被墙的 github.com:443） |
+| `run_tests.py` | **单元测试**：43 个用例，测判盘/止损/调律/名字（标准库 unittest） |
 | `gen_manifest.py` | **生成 tools.json**（机器可读能力清单，改工具后重跑） |
 | `cleanup_tools.py` | 本清理流程 |
 

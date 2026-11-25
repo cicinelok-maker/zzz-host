@@ -347,6 +347,22 @@
    "destructive": false
   },
   {
+   "name": "run_tests",
+   "cmd": "python tools/run_tests.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    1,
+    2
+   ],
+   "purpose": "跑所有单元测试",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "selfcheck",
    "cmd": "python tools/selfcheck.py",
    "args": [],
@@ -459,6 +475,12 @@
    "cmd": "python tools/zzz_daily.py",
    "args": [
     {
+     "flag": "--from-targets"
+    },
+    {
+     "flag": "--max"
+    },
+    {
      "flag": "--force-unknown"
     },
     {
@@ -489,6 +511,7 @@
    "json_output": true,
    "exit_codes": [
     0,
+    2,
     3
    ],
    "purpose": "完整日常：盘点→缺口→电量→刷本→养成→记账→汇报",
@@ -554,6 +577,9 @@
     },
     {
      "flag": "--batch-n"
+    },
+    {
+     "flag": "--offline"
     },
     {
      "flag": "--report"
@@ -1044,6 +1070,9 @@
     },
     {
      "flag": "--menu"
+    },
+    {
+     "flag": "--history"
     }
    ],
    "json_output": false,
