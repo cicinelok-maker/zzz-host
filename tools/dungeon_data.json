@@ -1,5 +1,5 @@
 {
-  "source": "E:\\OneDragon\\ZenlessZoneZero-OneDragon-v2.6.1-Full\\assets\\game_data\\compendium_data.yml",
+  "source": "OneDragon 的 assets/game_data/compendium_data.yml",
   "tabs": {
     "目标": {
       "categories": {}
@@ -338,5 +338,6 @@
         }
       }
     }
-  }
+  },
+  "source_note": "从 OneDragon 安装目录下的 assets/game_data/compendium_data.yml 提取。OneDragon 更新后可重新跑 tools/_extract_dungeons.py 覆盖。"
 }
