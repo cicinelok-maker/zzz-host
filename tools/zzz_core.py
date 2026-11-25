@@ -121,26 +121,42 @@ def parse_panel(txt: str) -> dict:
 
 
 def read_material(vs: Vision, inp: Input, xy: tuple[int, int]) -> dict:
-    """点材料图标，读名称 + 来源"""
+    """点材料图标，读名称 + 拥有数 + 来源 + **来源按钮坐标** + 来源 boss。
+
+    ## 为什么重写（2026-11-26）
+
+    旧版只返回 `{name, have, sources: [字符串]}`，**丢了按钮坐标**。
+
+    而用户指出：弹窗里那些「[获取]恶名狩猎」**是可点击的按钮**，
+    点了会弹「是否立即传送？」→ 确认 → 游戏自己把你送到副本。
+
+    **这意味着副本导航不用硬编码。**
+
+    新版另外拿到：
+    · `sources[].cx/cy`  —— 传送按钮坐标（可点）
+    · `boss`             —— 描述里的「取自「XXX」」，即 boss→材料 对照
+    · `desc`             —— 完整描述
+    """
+    from core import material_nav as _mnav
+
     icon = (xy[0], xy[1] + MAT_ICON_DY)
     before = vs.text((0, 0, 1920, 1080))
     inp.click(icon[0], icon[1], wait=2.0)
     vs.frame(force=True)
-    popup = vs.text((0, 0, 1920, 1080))
-    result = {"name": "", "have": 0, "sources": []}
-    if popup == before:
-        return result
-    m = re.match(r"\s*([^|]+)", popup)
-    if m:
-        result["name"] = m.group(1).strip()
-    h = re.search(r"当前拥有\s*[×x]\s*(\d+)", popup)
-    if h:
-        result["have"] = int(h.group(1))
-    # [获取] 后面的名字
-    for src in re.findall(r"\[获取\]\s*([^|\[]+)", popup):
-        s = src.strip()
-        if s and s not in result["sources"]:
-            result["sources"].append(s)
+
+    pop = _mnav.read_popup(vs)
+    if pop is None:
+        # 画面没变（点空了）
+        return {"name": "", "have": 0, "sources": []}
+
+    result = {
+        "name": pop.get("name") or "",
+        "have": pop.get("have") or 0,
+        "sources": [s["name"] for s in pop.get("sources") or []],
+        "buttons": pop.get("sources") or [],       # ★ 带坐标，可点
+        "boss": pop.get("boss") or "",
+        "desc": pop.get("desc") or "",
+    }
     inp.key("esc", wait=1.5)
     return result
 
@@ -170,6 +186,31 @@ def read_all(ui: Ui, m: Machine, agent: str, with_mat: bool) -> dict:
                 d = read_material(vs, inp, (mx, 926))
                 if d["name"]:
                     mats.append(d)
+                    # boss→材料 对照：**游戏自己说的**（描述里「取自「XXX」」）
+                    # 比手维护静态表可靠，每次读都是最新的。
+                    try:
+                        _boss = d.get("boss") or ""
+                        if _boss:
+                            from core import inventory as _inv2
+                            _inv2.record(d["name"], int(d.get("have") or 0),
+                                         source=f"{_boss} / " +
+                                                "/".join(d.get("sources") or []))
+                            _bm = BASE / "state" / "material_boss_map.json"
+                            import json as _j3
+                            _cur = {}
+                            if _bm.exists():
+                                try:
+                                    _cur = _j3.loads(_bm.read_text(encoding="utf-8"))
+                                except Exception:
+                                    _cur = {}
+                            _cur.setdefault("map", {})[d["name"]] = {
+                                "boss": _boss,
+                                "sources": d.get("sources") or [],
+                            }
+                            _bm.write_text(_j3.dumps(_cur, ensure_ascii=False, indent=2),
+                                           encoding="utf-8")
+                    except Exception:
+                        pass
                     # 顺手记库存 —— read_material 已经从弹窗读到「当前拥有 ×N」，
                     # 不记下来就白读了（inventory 是 P2 的数据层）。
                     try:
@@ -269,6 +310,9 @@ def main() -> int:
     for c in ("read", "material", "upgrade"):
         p = sub.add_parser(c)
         p.add_argument("--agent", default=_DEFAULT_AGENT)
+        if c == "material":
+            p.add_argument("--goto", type=int, default=-1,
+                           help="读完直接传送到第 N 个来源（0=第一个）")
         # **按角色分开存** —— 全局一份会让不同角色的核心技状态互相覆盖，
         # 更糟的是 farm_plan 会拿一个人的状态判断所有人（实跑踩过：
         # 佩洛伊斯 A~F 都解锁 → 所有角色的核心技缺口都不算）。
@@ -309,6 +353,27 @@ def main() -> int:
         if total == 0:
             print("  （一次都没升成 —— 材料不够或前置未解锁，看上面每圈的原因）")
         return 0
+
+    # --goto N：直接传送到第 N 个来源（0=第一个）
+    if args.cmd == "material" and getattr(args, "goto", -1) >= 0:
+        from core import material_nav as _mnav2
+        for _k, _v in data.items():
+            if _k.startswith("_") or not isinstance(_v, dict):
+                continue
+            _mats = _v.get("materials") or []
+            if not _mats:
+                continue
+            _m = _mats[0]
+            print(f"\n=== 传送到「{_m['name']}」的第 {args.goto} 个来源 ===")
+            # **必须从图标重新开弹窗** —— read_material 读完按了 ESC，
+            # 缓存的按钮坐标已经失效（弹窗没了，点到的是下层界面）。
+            _icon = (MAT_X[0], 926 + MAT_ICON_DY)
+            _res = _mnav2.goto_by_icon(ui, _icon, args.goto)
+            if _res:
+                print(f"  ✔ 已到达：{_res}")
+                return 0
+            print("  ✘ 传送失败")
+            return 4
 
     if args.cmd == "material":
         print("\n材料来源汇总：")
