@@ -668,34 +668,6 @@
    "slow": "5-40 分钟"
   },
   {
-   "name": "zzz_enka",
-   "cmd": "python tools/zzz_enka.py",
-   "args": [
-    {
-     "pos": "uid"
-    },
-    {
-     "flag": "--write"
-    },
-    {
-     "flag": "--status"
-    },
-    {
-     "flag": "--json"
-    }
-   ],
-   "json_output": true,
-   "exit_codes": [
-    0,
-    3
-   ],
-   "purpose": "从 Enka API 读账号数据（zzzcaculator.top 提供的代理接口）",
-   "outputs": [],
-   "requires": [],
-   "idempotent": true,
-   "destructive": false
-  },
-  {
    "name": "zzz_equip",
    "cmd": "python tools/zzz_equip.py",
    "args": [
