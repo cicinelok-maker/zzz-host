@@ -83,6 +83,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("agent")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--eff-loss-limit", type=float, default=1.5,
+                    help="为了凑套装，最多接受掉多少有效值（默认 1.5）")
     ap.add_argument("--secondary", default="", help="指定副套装（否则用 disc_meta 的第一个候选）")
     ap.add_argument("--out", default=str(BASE / "state" / "plan.json"))
     args = ap.parse_args()
@@ -228,6 +230,7 @@ def main() -> int:
         if cur_empty >= 2:
             print(f"  → 需要先补齐 {cur_empty} 个空位（定向调律或找盘）")
 
+    eff_loss_limit = args.eff_loss_limit
     plan = []
     for s in range(1, 7):
         kind, item = assign.get(s, (None, None))
@@ -241,15 +244,36 @@ def main() -> int:
         # 换装判断要看两件事：
         #   1) 有效值变了没有
         #   2) 套装构成变了没有（4+2 的套装效果不算进 eff，但价值真实）
+        #
+        # **但「套装变了就换」是个无上限的开关。** 2026-11-25 实跑：
+        # 为了凑 4+2，4 号位从 eff 4.0 换成 1.5（掉 2.5），6 号位掉 1.0，
+        # 总分 24.0 → 20.5。套装加成补不回这些。
+        # → 加一个「为了套装最多让步多少」的上限。
         eff_better = item["eff"] > cur_eff
+        eff_drop = cur_eff - item["eff"]
         set_diff = item["set"] != cur_set
-        need = eff_better or set_diff
+
+        if eff_better:
+            need = True
+        elif set_diff and eff_drop <= eff_loss_limit:
+            need = True
+        else:
+            need = False
+
         why = []
         if eff_better:
             why.append(f"有效 {cur_eff:.1f}→{item['eff']:.1f}")
         if set_diff:
-            why.append(f"套装 {cur_set or '空'}→{item['set']}")
-        tag = (" → 换（" + "；".join(why) + "）") if need else " → 不用换"
+            if need and not eff_better:
+                why.append(f"为套装让步 -{eff_drop:.1f}")
+            elif not need:
+                why.append(f"套装 {cur_set or '空'}→{item['set']} "
+                           f"但要掉 {eff_drop:.1f}（超上限 {eff_loss_limit}）")
+            else:
+                why.append(f"套装 {cur_set or '空'}→{item['set']}")
+        tag = (" → 换（" + "；".join(why) + "）") if need else " → 不换"
+        if not need and not why:
+            why.append("有效值和套装都没变好")
         print(f"  {s} 号位：{item['set']} Lv{item['level']} 有效 {item['eff']:.1f}"
               f"（当前 {cur_set or '空'} Lv{cur_lv} 有效 {cur_eff:.1f}）{tag}")
         plan.append({"slot": s, "set": item["set"], "level": item["level"],
