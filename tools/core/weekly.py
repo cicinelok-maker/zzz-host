@@ -1,12 +1,22 @@
-"""周本次数追踪。
+"""周本 / 免费次数的电量模型。
 
-**为什么单独一个模块**：周本按「自然周」重置，和电量的「按分钟恢复」
-是完全不同的资源模型。混在一起会让两边的判断互相污染。
+## 关键区分（用户 2026-11-26 纠正）
 
-数据：state/weekly_farm.json
+**「免费额度」不是「总上限」。**
+
+  前 N 次  电量 0
+  第 N+1 次起  花电量
+
+上一版把它当成总上限（用完就跳过），**错了** —— 那会让工具在还能刷的时候放弃。
+
+## 数据
+
+state/weekly_farm.json
 ```json
 {"week": "2026-W48", "runs": {"恶名狩猎": 2}}
 ```
+
+`week` 用 ISO 周（%G-W%V，周一为开始），换周自动清零。
 """
 from __future__ import annotations
 
@@ -17,17 +27,20 @@ import time
 BASE = pathlib.Path(__file__).resolve().parent.parent.parent
 STORE = BASE / "state" / "weekly_farm.json"
 
-# 各周本每周能刷几次（2026-11-26 从游戏里确认的只有恶名狩猎 3 次）
-LIMITS = {
+# 每周免费次数
+FREE_RUNS = {
     "恶名狩猎": 3,
-    "哨站后勤": 3,          # 待确认，先按 3 给
+    "哨站后勤": 3,      # 待确认
+}
+# 免费次数用完之后，每次要花多少电（**待用户确认**，先按 40 给）
+BATTERY_AFTER_FREE = {
+    "恶名狩猎": 40,
+    "哨站后勤": 40,
 }
 
 
 def _week_key() -> str:
-    """当前 ISO 周，形如 2026-W48。周一为一周开始。"""
-    t = time.localtime()
-    return time.strftime("%G-W%V", t)
+    return time.strftime("%G-W%V", time.localtime())
 
 
 def _load() -> dict:
@@ -37,7 +50,6 @@ def _load() -> dict:
         d = json.loads(STORE.read_text(encoding="utf-8"))
     except Exception:
         return {"week": _week_key(), "runs": {}}
-    # 换周了 → 清零
     if d.get("week") != _week_key():
         return {"week": _week_key(), "runs": {}}
     return d
@@ -49,32 +61,41 @@ def _save(d: dict) -> None:
 
 
 def used(name: str) -> int:
-    """本周这个周本刷了几次。"""
     return int((_load().get("runs") or {}).get(name, 0))
 
 
-def remaining(name: str) -> int:
-    """本周还能刷几次。不认识的周本返回 0（宁可说用完，不要瞎刷）。"""
-    limit = LIMITS.get(name)
-    if limit is None:
+def free_left(name: str) -> int:
+    """本周还剩几次免费。"""
+    lim = FREE_RUNS.get(name)
+    if lim is None:
         return 0
-    return max(0, limit - used(name))
+    return max(0, lim - used(name))
+
+
+def cost_for_next(name: str) -> int:
+    """**下一次**刷要花多少电量。免费期返回 0。"""
+    if name not in FREE_RUNS:
+        return -1              # 不认识
+    if free_left(name) > 0:
+        return 0
+    return BATTERY_AFTER_FREE.get(name, 40)
 
 
 def can_run(name: str) -> tuple[bool, str]:
-    """能不能刷。返回 (能, 说明)。"""
-    limit = LIMITS.get(name)
-    if limit is None:
-        return False, f"不知道「{name}」每周几次，不冒险"
+    """能不能刷 + 说明。**免费次数用完不代表不能刷。**"""
+    if name not in FREE_RUNS:
+        return False, f"不知道「{name}」的规则，不冒险"
+    left = free_left(name)
     u = used(name)
-    left = max(0, limit - u)
-    if left <= 0:
-        return False, f"本周已刷 {u}/{limit} 次，用完了 —— 下周一会重置"
-    return True, f"本周已刷 {u}/{limit} 次，还剩 {left} 次"
+    lim = FREE_RUNS[name]
+    if left > 0:
+        return True, f"本周免费 {u}/{lim} 次，还剩 {left} 次（不花电量）"
+    c = BATTERY_AFTER_FREE.get(name, 40)
+    return True, f"本周免费 {lim} 次已用完，之后每次花 {c} 电量"
 
 
 def record(name: str) -> None:
-    """记一次。只在真的刷成功之后调。"""
+    """记一次。只在真刷成功之后调。"""
     d = _load()
     runs = d.setdefault("runs", {})
     runs[name] = int(runs.get(name, 0)) + 1
@@ -83,9 +104,9 @@ def record(name: str) -> None:
 
 
 def status() -> dict:
-    """全部周本的剩余次数，给汇报用。"""
     out = {}
-    for name, limit in LIMITS.items():
-        out[name] = {"limit": limit, "used": used(name),
-                     "left": max(0, limit - used(name))}
+    for name, lim in FREE_RUNS.items():
+        out[name] = {"free_limit": lim, "used": used(name),
+                     "free_left": free_left(name),
+                     "next_cost": cost_for_next(name)}
     return out

@@ -110,22 +110,17 @@ def main() -> int:
     # 用户以为工具坏了，反复重试。**资源上限和工具故障要能分开报。**
     try:
         from core import weekly as _wk
-        _kept = []
+        _total_battery = 0
         for _cat, _name, _n in plans:
             if _cat in ("恶名狩猎", "哨站后勤"):
                 _ok, _why = _wk.can_run(_cat)
+                _cost = _wk.cost_for_next(_cat) if _ok else -1
                 print(f"  {_cat}：{_why}")
-                if not _ok:
-                    print(f"    → 跳过 {_cat}（不是工具坏了，是本周次数用完了）")
-                    continue
-            _kept.append((_cat, _name, _n))
-        plans = _kept
-        if not plans:
-            print("\n所有要刷的东西都用完次数了：")
-            for _k, _v in _wk.status().items():
-                print(f"  {_k}: {_v['used']}/{_v['limit']}（剩 {_v['left']}）")
-            print("  下周一会重置")
-            return 0
+                if _ok and _cost > 0:
+                    _total_battery += _cost * max(1, _n)
+                    print(f"    （这次要花 {_cost} 电/次 × {max(1, _n)} 次）")
+        if _total_battery > 0:
+            print(f"  周本预计花 {_total_battery} 电量（免费额度已用完）")
     except Exception as _e:
         print(f"  （周本次数检查跳过：{_e}）")
     if not plans:
