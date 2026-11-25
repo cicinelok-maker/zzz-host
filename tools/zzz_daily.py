@@ -268,6 +268,34 @@ def main() -> int:
         except Exception as _e:
             print(f"\n⚠ 读断点失败：{_e}，从头跑")
 
+    # ---- 刷本：**放在最前**（2026-11-25 用户要求）----
+    # 刷本是唯一的资源获取步骤（花电量，掉盘/掉材料）。
+    # 放最后的话，前面所有升级步骤只能吃仓库剩的，吃不到当天新刷的。
+    if "farm" not in skip and not args.no_farm:
+        n = charge_now()
+        print(f"\n--- 刷本 --- 电量 {n}")
+        if args.run and n >= FARM_COST:
+            # 2026-11-24 合并：od_farm.py 的独有参数已并进 od_material_farm.py，
+            # 两个总控统一走同一个刷本入口，避免行为不一致。
+            # 用缺口计划选副本（不是写死拂晓行纪）
+            dungeon = "机师与叛甲"
+            times = 1
+            if gap_plan and gap_plan.get("farms"):
+                dungeon = gap_plan["farms"][0]["dungeon"]
+                times = max(1, gap_plan["farms"][0].get("times", 1))
+                print(f"    按缺口选：{dungeon} × {times}")
+            run("刷本", [str(HERE / "od_material_farm.py"), "--patrol", dungeon,
+                        "--times", str(times), "--run"], 3600)
+            # 2026-11-24 修：zzz_mark.py 点的是仓库底部弃置按钮（已失效，是灰的）。
+            # 改走实测可用的链路：升级→判定→标记(R键)→拆解。
+            # 刷本拿到素材后再转化一次（材料可双向转化，缺什么补什么）
+            run("刷后转化", [str(HERE / "zzz_convert.py"), "--all", "--confirm"], 1800)
+        elif not args.run:
+            print("  [计划] 电量够就刷本 → 标记弃置 → 拆解")
+        else:
+            print(f"  电量 {n} < {FARM_COST}，跳过刷本")
+
+
     for label, key, cmd, timeout in steps:
         if key in skip:
             print(f"\n--- {label} --- 跳过")
@@ -335,30 +363,6 @@ def main() -> int:
             print("    [!] 没做成事" + (f"（{why}）" if why else "（可能材料/资源不足）"))
         else:
             print(f"    [OK] 实际完成：{'  '.join(notes)}")
-
-    if "farm" not in skip and not args.no_farm:
-        n = charge_now()
-        print(f"\n--- 刷本 --- 电量 {n}")
-        if args.run and n >= FARM_COST:
-            # 2026-11-24 合并：od_farm.py 的独有参数已并进 od_material_farm.py，
-            # 两个总控统一走同一个刷本入口，避免行为不一致。
-            # 用缺口计划选副本（不是写死拂晓行纪）
-            dungeon = "机师与叛甲"
-            times = 1
-            if gap_plan and gap_plan.get("farms"):
-                dungeon = gap_plan["farms"][0]["dungeon"]
-                times = max(1, gap_plan["farms"][0].get("times", 1))
-                print(f"    按缺口选：{dungeon} × {times}")
-            run("刷本", [str(HERE / "od_material_farm.py"), "--patrol", dungeon,
-                        "--times", str(times), "--run"], 3600)
-            # 2026-11-24 修：zzz_mark.py 点的是仓库底部弃置按钮（已失效，是灰的）。
-            # 改走实测可用的链路：升级→判定→标记(R键)→拆解。
-            # 刷本拿到素材后再转化一次（材料可双向转化，缺什么补什么）
-            run("刷后转化", [str(HERE / "zzz_convert.py"), "--all", "--confirm"], 1800)
-        elif not args.run:
-            print("  [计划] 电量够就刷本 → 标记弃置 → 拆解")
-        else:
-            print(f"  电量 {n} < {FARM_COST}，跳过刷本")
 
     # ---- 驱动盘：刷本之后统一处理一次 ----
     # 内含：盘点 → 缺口 → 调律 → 训练（带初始判定+止损）→ 换装 → 回收

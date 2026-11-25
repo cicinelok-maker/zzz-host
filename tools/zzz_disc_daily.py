@@ -462,7 +462,27 @@ def main() -> int:
                               [_want, "--slot", str(_slot), "--times", "1"],
                               3600)
             if "调律获得" in out_t or "定向" in out_t:
-                print(f"      ✔ 已调")
+                # **定向只定位置，主词条是随机的**（用户 2026-11-25 指出）。
+                # 一次定向 = 6 母盘，出来主词条错了就是白花。
+                # 所以调完必须重新读一遍，确认主词条对这个角色有用。
+                print(f"      ✔ 已调（校验主词条…）")
+                try:
+                    _st_after = read_status(args.agent)
+                    _sl = next((x for x in (_st_after.get("slots") or [])
+                                if x.get("slot") == _slot), None)
+                    if _sl:
+                        _mv = _sl.get("main_verdict") or "?"
+                        _mn = _sl.get("main") or "?"
+                        if _mv == "bad":
+                            print(f"      ✘ 主词条无效：{_mn}")
+                            print(f"        **这次定向白花了** —— 位置对了但主词条随机，"
+                                  f"出来是这个角色用不上的")
+                            print(f"        （定向只保证位置，不保证主词条）")
+                            actions.append(f"调律{_slot}号位主词条无效")
+                        else:
+                            print(f"      ✔ 主词条 {_mn}（{_mv}）可用")
+                except Exception as _e:
+                    print(f"      ⚠ 校验主词条失败：{_e}（可能读取超时，不下结论）")
             else:
                 print(f"      ⚠ 没看到产出，可能母盘不足或界面不对")
 
