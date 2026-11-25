@@ -1,0 +1,22 @@
+{
+  "name": "zzz-host-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "绝区零角色养成托管 —— 把 zzz-host 的 CLI 工具接成 DSH 可调用的工具",
+  "exports": {
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

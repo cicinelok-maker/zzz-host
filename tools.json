@@ -1,0 +1,1026 @@
+{
+ "schema_version": 1,
+ "project": "zzz-host",
+ "description": "绝区零角色养成托管：驱动盘判断 / 养成规划 / 电量分配",
+ "prerequisites": {
+  "one_dragon": {
+   "required": true,
+   "why": "OCR 和刷本",
+   "check": "python tools/check_config.py"
+  },
+  "game_running": {
+   "how": "python tools/zzz_launch.py"
+  }
+ },
+ "quick_check": "python tools/check_config.py && python tools/smoke_test.py",
+ "main_entry": {
+  "tool": "zzz_daily",
+  "cmd": "python tools/zzz_daily.py <agent> --run",
+  "note": "产物会花电量和材料。先跑不带 --run 的看计划。"
+ },
+ "recommended_flow": [
+  "python tools/check_config.py",
+  "python tools/zzz_launch.py",
+  "python tools/zzz_status.py <agent> --json",
+  "python tools/zzz_disc_daily.py <agent>",
+  "python tools/zzz_daily.py <agent> --run"
+ ],
+ "state_schema": {
+  "state/status_<agent>.json": {
+   "agent": "str 角色名",
+   "main_set": "str 四件套",
+   "total": "float 质量分（口径B：存在1+升级N）",
+   "blue_total": "int 有效副词条个数（游戏标蓝的数量）",
+   "slots": "[{slot:int, set:str, level:int, main:str, eff:float, blue:int, main_verdict:good|weak|bad|unknown, detail:[str]}]"
+  },
+  "state/plan.json": {
+   "agent": "str",
+   "main_set": "str",
+   "sec_set": "str",
+   "main_count": "int",
+   "plan": "[{slot:int, from:str, to:str, eff:float, reason:str}]"
+  },
+  "state/disc_progress.json": {
+   "_type": "list[记录]",
+   "记录": "{ts:str, agent:str, 蓝条:int, 质量分:float, 动作:[str], 位号:[{slot,set,eff,blue}]}"
+  }
+ },
+ "exit_code_convention": {
+  "0": "成功",
+  "1": "一般失败",
+  "2": "配置缺失或参数错误",
+  "3": "选不中角色",
+  "4": "到不了目标界面",
+  "5": "等窗口/条件超时",
+  "6": "需要人工登录",
+  "7": "等进入游戏超时",
+  "8": "读不到数据"
+ },
+ "tools": [
+  {
+   "name": "capture_fp_we",
+   "cmd": "python tools/capture_fp_we.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3,
+    4
+   ],
+   "purpose": "补录今天新进过的 4 个界面指纹：",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "check_config",
+   "cmd": "python tools/check_config.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    1
+   ],
+   "purpose": "检查路径/OneDragon OCR/角色配置/飞书",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "disc_gaps",
+   "cmd": "python tools/disc_gaps.py",
+   "args": [
+    {
+     "flag": "--agent"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2
+   ],
+   "purpose": "缺口 #2 + #3 的实现",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "explain_crit",
+   "cmd": "python tools/explain_crit.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "全歪判定逻辑 + 全中判定，用真实数据展示",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "filter_terms",
+   "cmd": "python tools/filter_terms.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [
+    0
+   ],
+   "purpose": "驱动盘筛选面板的词条选项地图",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "gap_analysis",
+   "cmd": "python tools/gap_analysis.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "分析距离小毕业还差多少，差在哪个位号",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "gen_tools_doc",
+   "cmd": "python tools/gen_tools_doc.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [
+    0
+   ],
+   "purpose": "生成全体工具清单：名字、行数、用途、子命令、关键参数",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "live",
+   "cmd": "python tools/live.py",
+   "args": [
+    {
+     "flag": "--probe"
+    },
+    {
+     "flag": "--enter"
+    },
+    {
+     "flag": "--enter-loop"
+    },
+    {
+     "flag": "--click-text"
+    },
+    {
+     "flag": "--click-tpl"
+    },
+    {
+     "flag": "--shot"
+    },
+    {
+     "flag": "--wait"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "purpose": "真机操作：识屏 → 点文字/模板 → 再截一张确认",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "od_material_farm",
+   "cmd": "python tools/od_material_farm.py",
+   "args": [
+    {
+     "flag": "--training"
+    },
+    {
+     "flag": "--patrol"
+    },
+    {
+     "flag": "--challenge"
+    },
+    {
+     "flag": "--hunt"
+    },
+    {
+     "flag": "--times"
+    },
+    {
+     "flag": "--mission"
+    },
+    {
+     "flag": "--cards"
+    },
+    {
+     "flag": "--level"
+    },
+    {
+     "flag": "--from-gaps"
+    },
+    {
+     "flag": "--run"
+    },
+    {
+     "flag": "--instance"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--patrol-type"
+    },
+    {
+     "flag": "--plan-only"
+    },
+    {
+     "flag": "--loop"
+    },
+    {
+     "flag": "--use-backup"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2,
+    3
+   ],
+   "purpose": "刷本（区域巡防/专业挑战室/实战模拟室）",
+   "outputs": [],
+   "requires": [
+    "game_running",
+    "one_dragon"
+   ],
+   "idempotent": false,
+   "destructive": true,
+   "note": "消耗电量"
+  },
+  {
+   "name": "pick_agent",
+   "cmd": "python tools/pick_agent.py",
+   "args": [
+    {
+     "pos": "name"
+    },
+    {
+     "flag": "--list"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "代理人选择：按「等级标签」定位头像，不猜坐标",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "run_dismantle",
+   "cmd": "python tools/run_dismantle.py",
+   "args": [
+    {
+     "pos": "agent"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3,
+    4
+   ],
+   "purpose": "完整拆解流程（实测版）：",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "selfcheck",
+   "cmd": "python tools/selfcheck.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "兼容性自检：所有工具能不能正常加载，有没有互相冲突",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "show_discs_v2",
+   "cmd": "python tools/show_discs_v2.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "展示 discs_v2.json 的解析明细",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "smoke_test",
+   "cmd": "python tools/smoke_test.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "全部工具的语法和导入自检",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_convert",
+   "cmd": "python tools/zzz_convert.py",
+   "args": [
+    {
+     "flag": "--slot"
+    },
+    {
+     "flag": "--all"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--confirm"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "材料转化：低级↔高级双向（用户 2026-11-24 确认）",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_core",
+   "cmd": "python tools/zzz_core.py",
+   "args": [
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--out"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "核心技：A~F 六个圈的等级、材料需求、材料来源",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_cost",
+   "cmd": "python tools/zzz_cost.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--all"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2
+   ],
+   "purpose": "成本估算（重写版）：按实际等级/技能状态算，不套固定值",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_daily",
+   "cmd": "python tools/zzz_daily.py",
+   "args": [
+    {
+     "flag": "--force-unknown"
+    },
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--run"
+    },
+    {
+     "flag": "--no-farm"
+    },
+    {
+     "flag": "--skip"
+    },
+    {
+     "flag": "--wengine-times"
+    },
+    {
+     "flag": "--level-times"
+    },
+    {
+     "flag": "--need-skill"
+    },
+    {
+     "flag": "--need-core"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "完整日常：盘点→缺口→电量→刷本→养成→记账→汇报",
+   "outputs": [
+    "state/disc_progress.json"
+   ],
+   "requires": [
+    "game_running"
+   ],
+   "idempotent": false,
+   "destructive": true,
+   "note": "会真的花电量和材料"
+  },
+  {
+   "name": "zzz_disc_cycle",
+   "cmd": "python tools/zzz_disc_cycle.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--train"
+    },
+    {
+     "flag": "--recycle"
+    },
+    {
+     "flag": "--keep-min"
+    },
+    {
+     "flag": "--slots"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "驱动盘全自动循环：升级 → 判定 → 标记弃置 → 拆解",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_disc_daily",
+   "cmd": "python tools/zzz_disc_daily.py",
+   "args": [
+    {
+     "flag": "--force-unknown"
+    },
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--run"
+    },
+    {
+     "flag": "--no-farm"
+    },
+    {
+     "flag": "--train-n"
+    },
+    {
+     "flag": "--batch-n"
+    },
+    {
+     "flag": "--report"
+    },
+    {
+     "flag": "--keep-battery"
+    },
+    {
+     "flag": "--need-skill"
+    },
+    {
+     "flag": "--need-core"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    2,
+    3
+   ],
+   "purpose": "只管驱动盘的每日养成（带电量规划和趋势）",
+   "outputs": [
+    "state/disc_progress.json"
+   ],
+   "requires": [
+    "game_running"
+   ],
+   "idempotent": false,
+   "destructive": true
+  },
+  {
+   "name": "zzz_disc_train",
+   "cmd": "python tools/zzz_disc_train.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--train"
+    },
+    {
+     "flag": "--no-stop-loss"
+    },
+    {
+     "flag": "--slots"
+    },
+    {
+     "flag": "--max-steps"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3,
+    4
+   ],
+   "purpose": "驱动盘训练循环：升级 → 读词条 → 判断留/弃",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_disc_v2",
+   "cmd": "python tools/zzz_disc_v2.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--out"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "读仓库里所有盘（逐位号 + 滚动采集）",
+   "outputs": [
+    "od_test/discs_v2.json"
+   ],
+   "requires": [
+    "game_running"
+   ],
+   "idempotent": true,
+   "destructive": false,
+   "slow": "5-40 分钟"
+  },
+  {
+   "name": "zzz_equip",
+   "cmd": "python tools/zzz_equip.py",
+   "args": [
+    {
+     "flag": "--slot"
+    },
+    {
+     "flag": "--set"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--level"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3,
+    4,
+    6
+   ],
+   "purpose": "给某个位号装指定的盘",
+   "outputs": [],
+   "requires": [
+    "game_running"
+   ],
+   "idempotent": true,
+   "destructive": true
+  },
+  {
+   "name": "zzz_farm_plan",
+   "cmd": "python tools/zzz_farm_plan.py",
+   "args": [
+    {
+     "flag": "--battery"
+    },
+    {
+     "flag": "--run"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2
+   ],
+   "purpose": "刷本规划：先出清单，再批量刷，不是撞一个补一个",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_grind",
+   "cmd": "python tools/zzz_grind.py",
+   "args": [
+    {
+     "flag": "--force-unknown"
+    },
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--run"
+    },
+    {
+     "flag": "--rounds"
+    },
+    {
+     "flag": "--target"
+    },
+    {
+     "flag": "--wait-charge"
+    },
+    {
+     "flag": "--patience"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "多轮收敛：一直跑到目标条数或资源耗尽",
+   "outputs": [
+    "state/disc_progress.json"
+   ],
+   "requires": [
+    "game_running"
+   ],
+   "idempotent": false,
+   "destructive": true
+  },
+  {
+   "name": "zzz_launch",
+   "cmd": "python tools/zzz_launch.py",
+   "args": [
+    {
+     "flag": "--check"
+    },
+    {
+     "flag": "--timeout"
+    },
+    {
+     "flag": "--no-enter"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "purpose": "确保游戏开着（没开就启动 + 自动点进入游戏）",
+   "outputs": [],
+   "requires": [
+    "game_exe"
+   ],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_level",
+   "cmd": "python tools/zzz_level.py",
+   "args": [
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--auto"
+    },
+    {
+     "flag": "--times"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3,
+    4
+   ],
+   "purpose": "角色升级（代理人培训）",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_mcp",
+   "cmd": "python tools/zzz_mcp.py",
+   "args": [],
+   "json_output": true,
+   "exit_codes": [
+    0
+   ],
+   "purpose": "MCP 服务器：把这套 CLI 工具暴露给任何 MCP 客户端（DSH / Claude / Cursor…）",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_plan",
+   "cmd": "python tools/zzz_plan.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--apply"
+    },
+    {
+     "flag": "--secondary"
+    },
+    {
+     "flag": "--out"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "purpose": "算 4+2 最优换装方案（主词条错的盘会被排除）",
+   "outputs": [
+    "state/plan.json"
+   ],
+   "requires": [
+    "game_running",
+    "status_<agent>.json"
+   ],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_resource",
+   "cmd": "python tools/zzz_resource.py",
+   "args": [
+    {
+     "flag": "--json"
+    },
+    {
+     "flag": "--need"
+    },
+    {
+     "flag": "--timeout"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    1,
+    2
+   ],
+   "purpose": "资源体检 + 等回体",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_skill",
+   "cmd": "python tools/zzz_skill.py",
+   "args": [
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--max"
+    },
+    {
+     "flag": "--out"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "技能 / 核心技 强化：读材料需求 → 判断够不够 → 自动升级",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_skill_target",
+   "cmd": "python tools/zzz_skill_target.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--all"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2
+   ],
+   "purpose": "技能升级目标等级：按角色岗位给性价比推荐",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_status",
+   "cmd": "python tools/zzz_status.py",
+   "args": [
+    {
+     "flag": "--force-unknown"
+    },
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--json"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    2,
+    3,
+    4
+   ],
+   "purpose": "读角色当前状态：6 个位号的主词条/副词条/有效值 + 等级 + 技能",
+   "outputs": [
+    "state/status_<agent>.json"
+   ],
+   "requires": [
+    "game_running"
+   ],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_tune",
+   "cmd": "python tools/zzz_tune.py",
+   "args": [
+    {
+     "pos": "set_name"
+    },
+    {
+     "flag": "--times"
+    },
+    {
+     "flag": "--slot"
+    },
+    {
+     "flag": "--dry"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    4,
+    5,
+    6
+   ],
+   "purpose": "音像店调律（纯键鼠，走手机入口，支持定向分区）",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_wengine",
+   "cmd": "python tools/zzz_wengine.py",
+   "args": [
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--times"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--agent"
+    },
+    {
+     "flag": "--times"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    1,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "purpose": "音擎强化 + 改装（突破）——改版：一次选一个，在面板里升到底",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
+   "name": "zzz_who",
+   "cmd": "python tools/zzz_who.py",
+   "args": [
+    {
+     "flag": "--force-unknown"
+    },
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--ready"
+    },
+    {
+     "flag": "--graduated"
+    },
+    {
+     "flag": "--scan"
+    },
+    {
+     "flag": "--menu"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2,
+    3,
+    4
+   ],
+   "purpose": "角色选择器：列出所有能养的角色 + 各自进度，用来「点名字」",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  }
+ ]
+}

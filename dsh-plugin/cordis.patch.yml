@@ -1,0 +1,24 @@
+# zzz-host MCP 接入
+#
+# 把 zzz-host 的 MCP 服务器挂到 DSH 上。
+#
+# ⚠️ 装之前改两个地方：
+#   1 cwd       → 你的 zzz-host 目录（绝对路径）
+#   2 command   → 能跑 python 3.11+ 的解释器（不是 OneDragon 的也行，
+#                  MCP 服务器本身只依赖标准库）
+#
+# 改完再 plugin_manager install_bundle。
+
+- insert:
+    - id: zzz-host-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: zzzhost
+        transport: stdio
+        command: python
+        args:
+          - tools/zzz_mcp.py
+        cwd: C:\path\to\zzz-host
+        env:
+          PYTHONIOENCODING: utf-8
+        failOnStartupError: true

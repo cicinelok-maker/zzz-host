@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "ZZZ character progression",
+    "description": "Inspect one agent's build, find what it lacks, and decide which dungeon to farm today. Drive-disc main/substat evaluation, 4+2 set planning, battery allocation, and a daily progression loop. Requires OneDragon and zzz-host installed separately.",
+    "detail": "docs/DETAIL.md"
+  }
+}

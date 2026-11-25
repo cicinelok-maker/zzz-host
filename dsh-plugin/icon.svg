@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#12161f"/>
+  <!-- 驱动盘：圆环 + 中心 -->
+  <circle cx="32" cy="32" r="19" fill="none" stroke="#26a0e9" stroke-width="3.5"/>
+  <circle cx="32" cy="32" r="10" fill="none" stroke="#3b82f6" stroke-width="2"/>
+  <circle cx="32" cy="32" r="3.6" fill="#26a0e9"/>
+  <!-- 六个位号的定位点 -->
+  <circle cx="32" cy="13" r="2.1" fill="#7dd3fc"/>
+  <circle cx="48.5" cy="22.5" r="2.1" fill="#7dd3fc"/>
+  <circle cx="48.5" cy="41.5" r="2.1" fill="#7dd3fc"/>
+  <circle cx="32" cy="51" r="2.1" fill="#7dd3fc"/>
+  <circle cx="15.5" cy="41.5" r="2.1" fill="#7dd3fc"/>
+  <circle cx="15.5" cy="22.5" r="2.1" fill="#7dd3fc"/>
+  <!-- 提升箭头 -->
+  <path d="M44 14 L50 14 L50 20" fill="none" stroke="#34d399" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 14 L40 24" fill="none" stroke="#34d399" stroke-width="2.6"
+        stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,175 @@
+{
+  "_note": "成本/权重都是可校准的近似值：版本更新后按实测改这里，引擎只负责相对排序与电量预算。",
+  "account": {
+    "nickname": "YOUR_NICKNAME",
+    "uid": "000000000",
+    "stamina_cap": 240,
+    "battery_pack": 60,
+    "battery_stock": 12,
+    "daily_denny": 60000,
+    "denny_stock": 1200000
+  },
+  "denny_per_stamina": 5000,
+  "reset": {
+    "daily_hour": 4,
+    "weekly_weekday": 0,
+    "biweekly_anchor": "2026-11-16"
+  },
+  "cost": {
+    "level": [
+      {
+        "from": 1,
+        "to": 40,
+        "stamina": 460,
+        "denny": 110000
+      },
+      {
+        "from": 40,
+        "to": 50,
+        "stamina": 700,
+        "denny": 190000
+      },
+      {
+        "from": 50,
+        "to": 60,
+        "stamina": 1180,
+        "denny": 360000
+      }
+    ],
+    "core": [
+      {
+        "from": 1,
+        "to": 3,
+        "stamina": 120,
+        "denny": 60000
+      },
+      {
+        "from": 3,
+        "to": 5,
+        "stamina": 200,
+        "denny": 120000
+      },
+      {
+        "from": 5,
+        "to": 6,
+        "stamina": 160,
+        "denny": 95000
+      }
+    ],
+    "skill": [
+      {
+        "from": 1,
+        "to": 6,
+        "stamina": 140,
+        "denny": 40000
+      },
+      {
+        "from": 6,
+        "to": 9,
+        "stamina": 280,
+        "denny": 110000
+      },
+      {
+        "from": 9,
+        "to": 11,
+        "stamina": 320,
+        "denny": 160000
+      },
+      {
+        "from": 11,
+        "to": 12,
+        "stamina": 240,
+        "denny": 130000
+      }
+    ],
+    "wengine": [
+      {
+        "from": 1,
+        "to": 40,
+        "stamina": 380,
+        "denny": 90000
+      },
+      {
+        "from": 40,
+        "to": 50,
+        "stamina": 520,
+        "denny": 150000
+      },
+      {
+        "from": 50,
+        "to": 60,
+        "stamina": 900,
+        "denny": 300000
+      }
+    ],
+    "disc_main": {
+      "stamina": 420,
+      "denny": 120000
+    },
+    "disc_level_per_point": {
+      "stamina": 0,
+      "denny": 32000
+    }
+  },
+  "gain": {
+    "level": 1.0,
+    "core": 0.7,
+    "skill": 1.15,
+    "wengine": 0.85,
+    "discs": 1.05
+  },
+  "role_weight": {
+    "强攻": 1.0,
+    "异常": 0.93,
+    "击破": 0.8,
+    "支援": 0.76,
+    "防护": 0.62,
+    "命破": 1.0
+  },
+  "team_weight": {
+    "主队": 1.18,
+    "二队": 1.0,
+    "替补": 0.82,
+    "仓管": 0.55
+  },
+  "stages": [
+    {
+      "id": 1,
+      "name": "基础成型",
+      "level": 50,
+      "core": 4,
+      "skill_key": 8,
+      "skill_other": 6,
+      "wengine": 50,
+      "disc": 12
+    },
+    {
+      "id": 2,
+      "name": "主力成型",
+      "level": 60,
+      "core": 5,
+      "skill_key": 10,
+      "skill_other": 8,
+      "wengine": 60,
+      "disc": 15
+    },
+    {
+      "id": 3,
+      "name": "满配",
+      "level": 60,
+      "core": 6,
+      "skill_key": 12,
+      "skill_other": 10,
+      "wengine": 60,
+      "disc": 15
+    }
+  ],
+  "graduation": {
+    "level": 60,
+    "core": "F",
+    "skill_key": 12,
+    "skill_other": 10,
+    "wengine": 60,
+    "disc": 15
+  }
+}

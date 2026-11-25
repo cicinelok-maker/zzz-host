@@ -1,0 +1,26 @@
+{
+  "_说明": "复制成 config.json 并改成本机实际路径。config.json 已被 .gitignore 排除。",
+
+  "one_dragon_home": "E:\\OneDragon\\ZenlessZoneZero-OneDragon-v2.6.1-Full",
+  "_one_dragon_home说明": "OneDragon 的安装目录（含 src 和 plugins 子目录）",
+
+  "zzz_python": "",
+  "_zzz_python说明": "留空则用 one_dragon_home\\.venv\\Scripts\\python.exe",
+
+  "od_home": "E:\\OneDragon\\zzz-clean",
+  "_od_home说明": "刷本用的配置目录（另一个 OneDragon 副本），留空则用 one_dragon_home",
+
+  "game_exe": "A:\\miHoYo Launcher\\games\\ZenlessZoneZero Game\\ZenlessZoneZero.exe",
+  "_game_exe说明": "绝区零客户端 exe 路径",
+
+  "default_agent": "佩洛伊斯",
+  "_default_agent说明": "默认养成的角色（要在 tools/disc_meta.json 里有配置）",
+
+  "feishu": {
+    "_说明": "飞书通知是可选功能，不填就不发通知",
+    "app_id": "",
+    "app_secret": "",
+    "chat_id": "",
+    "enabled": false
+  }
+}

@@ -1,0 +1,128 @@
+"""词表纠错 + 值域校验：让 OCR 结果从「可能错」变成「可信」。
+
+为什么需要
+==========
+游戏里的属性名是**封闭集合**（就那二十来个）。OCR 偶尔会把
+「暴击率」读成「暴击卒」、「穿透值」读成「穿透直」。
+用编辑距离把它纠正回白名单，成本几乎为零，能挡掉大部分脏数据。
+
+值域校验同理：等级只能是 0~15，百分比只能是 0~100，强化次数 +1~+5。
+超范围直接判为读错。
+"""
+from __future__ import annotations
+
+# ---------- 封闭词表 ----------
+# 顺序 = 出现频率优先级（编辑距离打平时，前面的优先）
+STATS = [
+    # 高频副词条
+    "攻击力", "暴击率", "暴击伤害", "生命值", "防御力",
+    "穿透值", "异常精通", "穿透率", "攻击力百分比",
+    # 主词条专用
+    "以太伤害", "物理伤害", "火属性伤害", "冰属性伤害",
+    "电属性伤害", "风属性伤害", "流明伤害", "属性伤害",
+    # 少见
+    "冲击力", "能量自动回复", "异常掌控",
+]
+
+# 带「伤害加成」后缀的主词条也能认
+STATS_MAIN_EXTRA = ["以太伤害加成", "物理伤害加成", "火属性伤害加成",
+                    "冰属性伤害加成", "电属性伤害加成", "风属性伤害加成"]
+
+SETS = [
+    "拂晓行纪", "谶羽之誓", "荆棘玫瑰", "自由蓝调", "獠牙重金属",
+    "激素朋克", "摇摆爵士", "呼啸沙龙", "啄木鸟电音", "灵魂摇滚",
+    "折枝剑歌", "静听嘉音", "震星迪斯科", "雷暴重金属", "极地重金属",
+    "炎狱重金属", "混沌重金属", "混沌爵士", "原始朋克", "河豚电音",
+    "拂晓生花", "流光咏叹", "云岿如我", "月光骑士颂", "沧浪行歌",
+    "雪兔梦游仙境", "囚徒手记", "法厄同之歌", "如影相随",
+]
+
+AGENTS = [
+    "佩洛伊斯", "蕾米埃尔", "维琳娜", "安比", "苍角", "简", "丽娜",
+]
+
+
+def _edit_distance(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def correct(text: str, vocab: list[str], max_dist: int = 1) -> str:
+    """把 text 纠正到 vocab 里最接近的词；纠不动就原样返回。"""
+    t = (text or "").strip()
+    if not t:
+        return t
+    if t in vocab:
+        return t
+    # 包含关系优先（OCR 常带多余前后缀）
+    for v in vocab:
+        if v in t:
+            return v
+    best, best_d = t, 99
+    for v in vocab:
+        d = _edit_distance(t, v)
+        if d < best_d:
+            best, best_d = v, d
+    return best if best_d <= max_dist else t
+
+
+def stat_name_of(text: str) -> str:
+    """从「暴击卒 2.4%」里取出属性名部分「暴击卒」"""
+    t = (text or "").strip()
+    for sep in (" +", " ", "　"):
+        i = t.find(sep)
+        if i > 0:
+            return t[:i]
+    return t
+
+
+def split_stat(text: str) -> tuple[str, str]:
+    """拆成 (属性名, 数值部分)，都会做纠错"""
+    t = (text or "").strip()
+    name = stat_name_of(t)
+    rest = t[len(name):].strip()
+    return correct(name, STATS + STATS_MAIN_EXTRA, max_dist=1), rest
+
+
+def correct_set(text: str) -> str:
+    return correct(text, SETS, max_dist=1)
+
+
+# ---------- 值域校验 ----------
+def valid_level(v) -> bool:
+    try:
+        return 0 <= int(v) <= 15
+    except Exception:
+        return False
+
+
+def valid_percent(v) -> bool:
+    try:
+        f = float(str(v).rstrip("%"))
+        return 0.0 <= f <= 100.0
+    except Exception:
+        return False
+
+
+def parse_number(s: str) -> float | None:
+    """从「攻击力 +2 9%」这类字符串里取出数值；取不到返回 None"""
+    import re
+    if not s:
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*%?", s)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except Exception:
+        return None

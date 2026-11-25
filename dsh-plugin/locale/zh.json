@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "绝区零养成托管",
+    "description": "指定一个角色，查它现在什么水平、缺什么、今天该刷哪个本。驱动盘主词条/副词条判断、4+2 套装规划、电量分配、每日养成闭环。需要自行安装 OneDragon 和 zzz-host。",
+    "detail": "docs/DETAIL.md"
+  }
+}

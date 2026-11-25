@@ -1,0 +1,354 @@
+"""刷本规划：先出清单，再批量刷，不是撞一个补一个。
+
+## 现在的问题（用户指出的「缺啥就立刻刷」）
+
+`zzz_auto.py` 是**反应式**的：
+```
+执行动作 → 失败 → 看到「材料不足」→ 立刻刷一次 → 不管够不够
+```
+
+具体坏处：
+
+1. **一次只刷一趟**。缺 20 个认证章，刷一趟给 3 个，然后下一轮又失败又刷一趟，
+   一轮一停，效率极低。
+
+2. **不先试免费手段**。材料转化（低阶转高阶）是免费的，应该在刷之前先做。
+
+3. **不按属性合并**。物理角色有 5 个（凯撒/派派/潘引壶/猫又/简），
+   它们共用「特化物理芯片」。该一次刷够 5 个人的量，不是每人各刷一次。
+
+4. **不知道总量**。没有「这个月要刷多少电」的全局视图，只能撞墙。
+
+5. **电量浪费在低价值目标上**。核心技 F 要 960 电，等级 60→60 只要 0 电，
+   应该先做便宜的。但反应式逻辑先撞上哪个就刷哪个。
+
+## 正确做法
+
+```
+1. 汇总清单：所有角色 × 所有系统 → 缺什么、缺多少
+2. 按属性合并：同属性共用材料，数量相加
+3. 先免费后付费：能转化的先转化
+4. 批量刷：算出一共要刷几次，一次刷完
+5. 按性价比排：先刷便宜且卡住进度的
+```
+
+## 用法
+
+    python tools/zzz_farm_plan.py                # 出清单
+    python tools/zzz_farm_plan.py --battery 240  # 按电量预算排
+    python tools/zzz_farm_plan.py --run          # 真的按清单批量刷
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+BASE = HERE.parent
+
+# 实测确认的公式（从 OneDragon 源码报错里挖出来的）：
+#   实战模拟室 电量 = 怪物卡数量 × 20
+#   card_num = int(self.card_num) * 20     ← charge_plan_config.py:69
+# 所以 5 张卡 = 100 电。卡越多资源越多，电量也线性增加。
+# 结论：在电量够的前提下尽量拉满卡数，减少刷本次数（省时间）。
+CARDS_DEFAULT = __import__("core.game_cfg", fromlist=["x"]).CARDS_DEFAULT
+CARD_BATTERY = __import__("core.game_cfg", fromlist=["x"]).CHARGE_PER_CARD
+
+# 材料 → 副本（单次电量 / 单次产出）
+DUNGEON = {
+    "特化芯片": {"cmd": ["--training", "代理人技能", "--cards", str(CARDS_DEFAULT)],
+                 "电量": CARD_BATTERY * CARDS_DEFAULT, "产出": 8 * CARDS_DEFAULT,   # 每卡 8 个芯片
+                 "名称": f"实战模拟室·代理人技能（{CARDS_DEFAULT}卡）"},
+    "认证章":   {"cmd": ["--training", "基础材料", "--cards", str(CARDS_DEFAULT)],
+                 "电量": CARD_BATTERY * CARDS_DEFAULT, "产出": 3 * CARDS_DEFAULT,   # 每卡 3 个认证章
+                 "名称": f"实战模拟室·基础材料（{CARDS_DEFAULT}卡）"},
+    "高维数据": {"cmd": ["--challenge"], "电量": 40, "产出": 5,
+                 "名称": "专业挑战室"},
+    "刻命残蜕": {"cmd": ["--hunt"], "电量": 0, "产出": 2,
+                 "名称": "恶名狩猎（每周3次免费）"},
+    "蓄电池":   {"cmd": ["--patrol", "机师与叛甲"], "电量": 60, "产出": 12,
+                 "名称": "区域巡防"},
+    "驱动盘":   {"cmd": ["--patrol", "机师与叛甲"], "电量": 60, "产出": 2,
+                 "名称": "区域巡防·刷盘"},
+}
+
+# 套装 → 区域巡防副本
+# 权威来源：disc_meta.json 的「套装副本」（2026-11-25 从 moegirl wiki + Game8 核对）。
+# 之前这里硬编码过一份，有 4 处错（云岿如我/原始朋克/极地重金属/自由蓝调/雷暴重金属），
+# 而且缺 2.x 的新套装。现在统一从 disc_meta 读，不再各写一份。
+def _load_patrol_by_set() -> dict:
+    try:
+        _d = json.loads((HERE / "disc_meta.json").read_text(encoding="utf-8"))
+        m = dict(_d.get("套装副本") or {})
+        # 别名归一（自由爵士 = 自由蓝调）
+        for alias, official in (_d.get("套装别名") or {}).items():
+            if official in m:
+                m[alias] = m[official]
+        if m:
+            return m
+    except Exception:
+        pass
+    return {}
+
+
+PATROL_BY_SET = _load_patrol_by_set()
+DEFAULT_PATROL = "机师与叛甲"
+
+# 技能目标（按岗位）
+SKILL_TARGETS = {
+    "强攻": {"普通攻击": 12, "特殊技": 12, "连携技": 12, "闪避": 8, "支援技": 8},
+    "异常": {"特殊技": 12, "连携技": 12, "普通攻击": 10, "闪避": 8, "支援技": 8},
+    "击破": {"特殊技": 12, "连携技": 12, "闪避": 8, "普通攻击": 8, "支援技": 6},
+    "支援": {"特殊技": 12, "连携技": 10, "支援技": 8, "普通攻击": 6, "闪避": 6},
+    "防护": {"特殊技": 12, "连携技": 10, "闪避": 8, "普通攻击": 6, "支援技": 6},
+    "命破": {"特殊技": 12, "连携技": 12, "普通攻击": 10, "闪避": 8, "支援技": 8},
+}
+# 技能芯片：每个技能等级差需要多少（粗略，含各阶合计）
+CHIP_PER_LEVEL = 12
+# 等级认证章：每档晋升
+ASCEND_CERT = {20: 4, 30: 20, 40: 20, 50: 30}
+# 核心技高维数据
+CORE_DATA = {"D": 9, "E": 15, "F": 30}
+CORE_RELIC = {"D": 2, "E": 3, "F": 4}
+
+
+def load(p: Path) -> dict:
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def collect() -> dict[str, dict]:
+    """汇总所有角色的缺口，按材料类型合并。"""
+    meta = load(HERE / "disc_meta.json").get("角色") or {}
+    elems = load(BASE / "state" / "agent_elements.json")
+    need: dict[str, dict] = {}
+
+    def add(mat: str, amount: int, who: str):
+        if amount <= 0:
+            return
+        d = need.setdefault(mat, {"数量": 0, "角色": []})
+        d["数量"] += amount
+        d["角色"].append(who)
+
+    for name, info in elems.items():
+        lv_digits = re.sub(r"\D", "", str((info or {}).get("等级", "")))
+        lv = int(lv_digits) if lv_digits else 1
+        attr = (info or {}).get("属性", "") or "?"
+        st = load(BASE / "state" / f"status_{name}.json")
+        # 没体检过的角色不参与统计——否则「slots 是空」会被当成 6 个位号全空，
+        # 驱动盘缺口会虚高（实测虚高到 296 个）
+        if not st:
+            continue
+
+        # 1) 等级认证章
+        cert = sum(v for k, v in ASCEND_CERT.items() if k > lv)
+        if cert:
+            add("认证章", cert, f"{name}(升{lv}→60)")
+
+        # 2) 技能芯片（按岗位目标）
+        cfg = meta.get(name) or {}
+        role = cfg.get("岗位", "强攻").split("/")[0]
+        tgt = SKILL_TARGETS.get(role, SKILL_TARGETS["强攻"])
+        skills = st.get("skills") or {}
+        gap = 0
+        for sname, val in (skills.items() if isinstance(skills, dict) else []):
+            digits = re.sub(r"\D", "", str(val))
+            cur = int(digits[:2]) if len(digits) >= 2 else 0
+            gap += max(0, tgt.get(sname, 8) - cur)
+        if gap:
+            add(f"特化{attr}芯片", gap * CHIP_PER_LEVEL, f"{name}(技能差{gap}级)")
+
+        # 3) 核心技
+        core = load(BASE / "state" / "core_status.json")
+        unlocked = [k for k, v in core.items()
+                    if isinstance(v, dict) and v.get("unlocked")]
+        if len(unlocked) < 6:
+            add("高维数据", sum(CORE_DATA.values()), f"{name}(核心技)")
+            add("刻命残蜕", sum(CORE_RELIC.values()), f"{name}(核心技)")
+
+        # 4) 音擎：没有实测数据就不瞎加（之前每人硬加 380 是错的，
+        #    13 个角色加起来 4940，而实际大多数音擎已经满级）
+        eng = load(BASE / "state" / f"wengine_{name}.json")
+        if eng and eng.get("batt_need"):
+            add("蓄电池", int(eng["batt_need"]), f"{name}(音擎)")
+
+        # 5) 驱动盘：有空位就需要刷盘，按套装选区域巡防
+        slots = st.get("slots") or []
+        have = {s["slot"] for s in slots if s.get("set")}
+        empty = [s for s in range(1, 7) if s not in have]
+        if empty:
+            # 一个空位平均要刷 4 次才能凑出能用的盘
+            add("驱动盘", len(empty) * 4, f"{name}(空{empty})")
+
+    return need
+
+
+def plan_rows(need: dict, meta: dict) -> list[dict]:
+    rows = []
+    for mat, d in need.items():
+        key = "特化芯片" if mat.startswith("特化") else mat
+        cfg = DUNGEON.get(key)
+        if not cfg:
+            rows.append({"材料": mat, "数量": d["数量"], "副本": "？",
+                         "次数": 0, "电量": 0, "角色": d["角色"]})
+            continue
+
+        cmd = list(cfg["cmd"])
+        name = cfg["名称"]
+
+        # 驱动盘/蓄电池这类要按套装选具体副本，不能写死
+        if key in ("蓄电池", "驱动盘"):
+            sets = set()
+            for who in d["角色"]:
+                agent = who.split("(")[0]
+                s = (meta.get(agent) or {}).get("四件套")
+                if s:
+                    sets.add(s)
+            picks = [PATROL_BY_SET.get(s, DEFAULT_PATROL) for s in sets] or [DEFAULT_PATROL]
+            # 用第一个需要的套装（多个套装时要分开刷）
+            dungeon = picks[0]
+            cmd = ["--patrol", dungeon]
+            name = f"区域巡防·{dungeon}"
+            if len(set(picks)) > 1:
+                name += f"（还有 {len(set(picks)) - 1} 个套装要另外刷）"
+
+        runs = -(-d["数量"] // cfg["产出"])
+        rows.append({"材料": mat, "数量": d["数量"], "副本": name,
+                     "次数": runs, "电量": runs * cfg["电量"],
+                     "角色": d["角色"], "cmd": cmd})
+    rows.sort(key=lambda r: r["电量"])
+    return rows
+
+
+def both_dungeons(agent: str) -> list[str]:
+    """返回该角色该刷的两个区域巡防副本：主套的 + 副套的。
+
+    用户 2026-11-24：「你可以两个副本一起刷，哪个盘子好用哪个」
+    """
+    import json
+    meta = json.loads((HERE / "disc_meta.json").read_text(encoding="utf-8"))
+    cfg = (meta.get("角色") or {}).get(agent) or {}
+    main_set = cfg.get("四件套", "")
+    alts = cfg.get("两件套候选") or cfg.get("二件套候选") or []
+    out = []
+    for sname in [main_set] + alts[:1]:
+        d = PATROL_BY_SET.get(sname)
+        if d and d not in out:
+            out.append(d)
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--battery", type=int, default=240, help="电量预算")
+    ap.add_argument("--run", action="store_true")
+    args = ap.parse_args()
+
+    need = collect()
+    if not need:
+        print("没有缺口数据，先跑体检")
+        return 2
+    meta = load(HERE / "disc_meta.json").get("角色") or {}
+
+    # ---- 第 0 步：先跑材料转化（免费的）----
+    # 低阶材料转高阶不花电量，刷之前先榨干这部分
+    print("=" * 56)
+    print("第 0 步：材料转化（免费，先做）")
+    print("=" * 56)
+    if args.run:
+        import os
+        import subprocess
+        from core.paths import one_dragon_python, one_dragon_env
+        PY = one_dragon_python()
+        env = dict(os.environ)
+        env.update(one_dragon_env())
+        try:
+            r = subprocess.run([PY, "-u", str(HERE / "zzz_convert.py"),
+                                "--all", "--confirm"],
+                               cwd=str(BASE), env=env, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=1800)
+            out = (r.stdout or "") + (r.stderr or "")
+            done = out.count("已确认转化")
+            print(f"  转化 {'成功' if r.returncode == 0 else '失败'}，"
+                  f"转化了 {done} 项")
+            for line in out.splitlines():
+                if "转化" in line and "→" in line:
+                    print(f"    {line.strip()}")
+        except Exception as e:
+            print(f"  转化异常：{e}")
+    else:
+        print("  [计划] 会跑 zzz_convert.py --all --confirm")
+
+    rows = plan_rows(need, meta)
+
+    print(f"{'材料':<14} {'需要':>5} {'副本':<18} {'次数':>4} {'电量':>5}")
+    print("-" * 56)
+    total_batt = 0
+    for r in rows:
+        print(f"{r['材料']:<14} {r['数量']:>5} {r['副本']:<18} "
+              f"{r['次数']:>4} {r['电量']:>5}")
+        total_batt += r["电量"]
+    print("-" * 56)
+    print(f"{'合计':<14} {'':>5} {'':>18} {'':>4} {total_batt:>5}")
+    print(f"\n按 {args.battery} 电/轮算，需要 {total_batt / max(1, args.battery):.0f} 轮满电")
+    print(f"约 {total_batt / max(1, args.battery) * 24:.0f} 小时（6分钟回1电）")
+
+    # 电量预算内能刷多少刷多少（允许只刷一部分，不必凑满一整项）
+    print(f"\n电量预算 {args.battery} 内，按性价比（便宜优先）分配：")
+    used = 0
+    picked = []
+    for r in rows:
+        if r["电量"] == 0:
+            picked.append({**r, "本次次数": r["次数"]})
+            print(f"  ✔ {r['材料']}（免费，{r['次数']} 次）")
+            continue
+        if r.get("cmd") is None:
+            continue
+        per_run = r["电量"] // max(1, r["次数"])
+        if per_run <= 0:
+            continue
+        left = args.battery - used
+        if left < per_run:
+            continue
+        # 这次最多刷几次
+        can = min(r["次数"], left // per_run)
+        if can <= 0:
+            continue
+        used += can * per_run
+        picked.append({**r, "本次次数": can})
+        print(f"  ✔ {r['材料']} 刷 {can}/{r['次数']} 次（{can * per_run} 电）")
+    if not picked:
+        print("  （预算不够刷任何一项，先等电量或降低目标）")
+    print(f"  用掉 {used}/{args.battery} 电")
+
+    if args.run:
+        print("\n按清单批量刷…")
+        import os
+        import subprocess
+        from core.paths import one_dragon_python, one_dragon_env
+        PY = one_dragon_python()
+        env = dict(os.environ)
+        env.update(one_dragon_env())
+        for r in picked:
+            if not r.get("cmd"):
+                continue
+            cmd = [PY, "-u", str(HERE / "od_material_farm.py")] + r["cmd"] + \
+                  ["--times", str(min(r["次数"], 3)), "--run"]
+            print(f"  刷 {r['材料']}：{' '.join(r['cmd'])}")
+            try:
+                subprocess.run(cmd, cwd=str(BASE), env=env, timeout=3600)
+            except Exception as e:
+                print(f"    失败：{e}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,91 @@
+# ============================================================
+#  会被提交的：tools/ + core/ + 文档 + 配置模板
+#  其他都是运行时数据 / 历史残留 / 第三方二进制，全部排除
+# ============================================================
+
+# ===== 运行时数据（含 UID / chat_id / 养成记录）=====
+state/
+*.jsonl
+journal/
+od_test/
+shots/
+*.png
+*.jpg
+
+# ===== 个人配置（含飞书凭证）=====
+feishu_conf.json
+# 飞书是本机可选功能，不进发布版
+tools/feishu.py
+tools/feishu_img.py
+tools/feishu_conf.json
+paths.json
+config.local.json
+.env
+.env.*
+
+# ===== 第三方二进制（283 MB，不能进 git）=====
+tools_ext/
+*.zip
+*.exe
+*.dll
+*.pyd
+
+# ===== 历史残留（早期版本的入口/数据，已被 tools/ 取代）=====
+out/
+backups/
+od_plugin/
+auto/
+legacy/
+graduate.py
+od_bridge.py
+zzz_host.py
+roster.json
+roster.json.bak-*
+roster.demo.json
+roster.imported.json
+DELIVERY.md
+HANDOFF-vision.md
+ONEDRAGON.md
+DISC_CHAIN.md
+TASKS.md
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ===== 备份 =====
+*.bak
+*.bak2
+*.bak3
+*.bak-*
+*.broken
+*_backup_*/
+
+# 历史版本（80+ 个已归档文件，不发布）
+tools/_legacy/
+
+# ===== 本机专属的文件（发布版不带）=====
+# 飞书桥的启动脚本：硬编码了本机路径，且依赖不在发布集里的 feishu.py
+tools/run_feishu_agent.ps1
+tools/run_feishu_listen.ps1
+# 一次性脚本：只用来标定单张图里的坐标
+tools/capture_fp_we.py
+# 个人目标清单：每人不同，发布版留空
+# （文件本身仍提交，内容是空的；这里防止误加回去）
