@@ -6261,3 +6261,144 @@ R20 未验证        9（「未知界面」的正常处理，误报）
 
 **判断标准：任何新加的机制，都要问「谁调用它」和「它解决的那个问题真的存在吗」。**
 两个答案都得有，否则就是死代码。
+
+## git init + 首次提交（用户 2026-11-25）
+
+用户：**「直接push发布吧，话说你是自己开了个账号吗」**
+
+### 先回答：没有
+
+**我没有 GitHub 账号，从没建过。**
+
+本机查证：
+```
+git            2.56.0.windows.2   ✔ 装了
+git 身份        cicin / cininelok@gmail.com   （你自己的配置）
+gh CLI          没装
+.git-credentials  没有
+gh hosts.yml    没有
+.ssh 目录       没有
+```
+
+**所以 push 不了 —— 不是我不愿意，是没有任何凭证。**
+
+### 但能做的都做了：本地提交已完成
+
+```
+f60d6d3  初始发布：绝区零角色养成托管
+110 files changed, 27801 insertions(+)
+仓库大小 594 KB
+```
+
+### 提交前又清了一轮（差点漏掉）
+
+**1 个人信息**
+```
+config.json    nickname "YG" → "YOUR_NICKNAME"
+               uid  "100000000" → "000000000"
+targets.json   agents ["佩洛伊斯"] → []     ← 我的账号角色
+```
+
+**2 排除 3 个不该发的文件**
+```
+tools/run_feishu_agent.ps1    硬编码我的绝对路径，依赖 feishu.py（不在发布集）
+tools/run_feishu_listen.ps1   同上
+tools/capture_fp_we.py        一次性脚本，写死「佩洛伊斯」
+```
+
+**3 18 个审计脚本的硬编码 BASE**
+```python
+BASE = pathlib.Path(r"C:\Users\cicin\Documents\...")     ← 别人下载后跑会崩
+BASE = pathlib.Path(__file__).resolve().parent.parent    ← 改后
+```
+
+**4 .gitignore 去重**（85 行 → 82 行，feishu.py 那几行重复了两遍）
+
+### 改这一批又踩了 3 个坑
+
+**坑 1 `audit_patterns.py` / `audit_all.py` 缺 `import pathlib`**
+我把 `BASE = Path(...)` 改成 `pathlib.Path(...)`，
+但这些文件是 `from pathlib import Path` 风格，没 `import pathlib`。
+→ `NameError: name 'pathlib' is not defined`，冒烟立刻抓到。
+
+**坑 2 `audit_all.py` 等 3 个文件同时有两种写法**
+批量替换时只检查了「有没有 import pathlib」，没检查「有没有 from pathlib import Path」。
+→ 又补一轮。
+
+**坑 3 `audit_portable.py` 的 PATTERNS 被自己的替换打坏**
+它里面有：
+```python
+PATTERNS = [(r"C:\Users\cicin[^\s\"')]*", "本机用户目录"), ...]
+```
+这些是**用来搜索硬编码路径的正则**，本来就该含那个字符串。
+我的替换想把它改掉 → 字符串被截断 → `unterminated string literal`。
+→ 改成运行时拼：
+```python
+_USER = "[A-Za-z0-9_]+"      # 任意用户名，不写死
+```
+**顺带这个改动让检查更通用了** —— 现在能查任何用户名，不只 cicin。
+
+### 干净副本最终验证（不设 PYTHONPATH）
+
+```
+110 个文件
+✔ check_config     exit=0
+✔ smoke_test       exit=0   11/11
+✔ audit_self       exit=0
+✔ audit_patterns   exit=0   规则 A/B/C/D 全 0
+✔ audit_all        exit=0   冲突常量 0
+✔ zzz_who          exit=0
+全绿
+```
+
+### push 你需要做三选一
+
+**A 用 gh CLI（最省事）**
+```powershell
+winget install GitHub.cli
+gh auth login            # 浏览器登录
+gh repo create zzz-host --public --source . --push
+```
+
+**B 手动建仓库 + PAT**
+1. github.com 建个空仓库（别加 README）
+2. 生成 Personal Access Token（repo 权限）
+3. 然后：
+```powershell
+git remote add origin https://<你的用户名>:<TOKEN>@github.com/<你的用户名>/zzz-host.git
+git push -u origin main
+```
+
+**C SSH**
+```powershell
+ssh-keygen -t ed25519
+# 把 ~/.ssh/id_ed25519.pub 贴到 GitHub → Settings → SSH keys
+git remote add origin git@github.com:<你的用户名>/zzz-host.git
+git push -u origin main
+```
+
+**三样都需要你的 GitHub 身份。我这边没有任何可用凭证。**
+
+### 教训（第六十五次）
+
+**「清理个人信息」比想象中难 —— 因为「我的用法」会渗进「通用的代码」。**
+
+我一开始以为清掉 `paths.json` 和 `feishu_conf.json` 就够了。
+实际扫出来 20 个文件含 `cicin`：
+- 18 个审计脚本硬编码 BASE
+- 2 个文档里的示例路径
+
+**这些都是「写的时候图省事」，但别人下载就跑不了。**
+
+判断标准：**发布前扫的不该只是「密钥」，还要扫「本机路径 / 用户名 / 账号数据」。**
+密钥会让人警觉，路径不会 —— 但路径同样让别人的项目跑不起来。
+
+### 另一个教训
+
+**批量改代码时，「两种等价写法」是最容易踩的坑。**
+
+`import pathlib` vs `from pathlib import Path` —— 功能一样，写法不同。
+我的替换只考虑了一种，结果 3 个文件崩。
+**而且如果不是冒烟测试真的去 import 每个模块，这个错会带到发布版里。**
+
+判断标准：**批量替换前，先 grep 一遍「这个符号有几种导入写法」。**

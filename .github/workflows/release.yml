@@ -1,0 +1,197 @@
+name: Release
+
+# 打 tag（v*）就自动：自检 → 打源码包 → 建 Release
+# 手动触发也可以（workflow_dispatch）
+#
+# ⚠️ CI 里没有 OneDragon（283 MB），所以只跑「不需要 OCR 和游戏」的检查：
+#    smoke_test / audit_self / audit_lessons / audit_patterns / selftest_audit
+#    check_config 需要真装 OneDragon，CI 里跳过（本地跑）
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（如 v1.0.0）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================ 自检
+  verify:
+    name: 自检
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 冒烟：只跑 --help，不需要 OneDragon
+      - name: 冒烟（工具能 import、参数正确）
+        run: python tools/smoke_test.py
+
+      # 这三条是纯静态扫描，不需要游戏
+      - name: 项目规矩
+        run: python tools/audit_self.py
+
+      - name: 教训体检
+        run: python tools/audit_lessons.py
+
+      - name: bug 模式
+        run: python tools/audit_patterns.py
+
+      - name: 扫描器自测（确认检查本身可信）
+        run: python tools/selftest_audit.py
+
+      # disc_meta.json 的结构完整性 —— 不依赖 OneDragon
+      - name: 角色数据完整性
+        shell: python
+        run: |
+          import json, pathlib, sys
+          d = json.loads(pathlib.Path("tools/disc_meta.json").read_text(encoding="utf-8"))
+          chars = d.get("角色") or {}
+          print(f"角色 {len(chars)} 个")
+          assert len(chars) >= 60, f"角色数异常：{len(chars)}"
+          bad = []
+          for n, i in chars.items():
+            for k in ("定位", "有效副词条"):
+              if not i.get(k):
+                bad.append(f"{n} 缺 {k}")
+            if not (i.get("四件套") or i.get("两件套候选")):
+              bad.append(f"{n} 没配套装")
+          if bad:
+            print("✘ 数据不全：")
+            for b in bad[:20]:
+              print("  " + b)
+            sys.exit(1)
+          print("✔ 64 个角色数据完整")
+
+      # 发布包里不能有个人数据
+      - name: 确认没有个人数据
+        shell: pwsh
+        run: |
+          $bad = @()
+          Get-ChildItem -Recurse -File -Include *.py,*.md,*.json,*.ps1 |
+            Where-Object { $_.FullName -notmatch '\\\.git\\' } |
+            ForEach-Object {
+              $t = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
+              if ($t -match 'cicin' -or $t -match 'cli_[a-zA-Z0-9]{12,}') {
+                $bad += $_.FullName
+              }
+            }
+          if ($bad.Count -gt 0) {
+            Write-Host "✘ 发现个人数据："
+            $bad | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          Write-Host "✔ 没有个人数据"
+
+  # ============================================================ 发布
+  release:
+    name: 建 Release
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 定版本
+        id: v
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ver=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "ver=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+          echo "版本: $(cat $GITHUB_OUTPUT | grep ver | cut -d= -f2)"
+
+      - name: 打源码包
+        shell: bash
+        run: |
+          V="${{ steps.v.outputs.ver }}"
+          # 排掉运行时产物和本机专属文件
+          zip -r "zzz-host-${V}.zip" . \
+            -x '.git/*' \
+            -x 'state/*' 'od_test/*' 'shots/*' 'journal/*' \
+            -x '*.pyc' '__pycache__/*' '*.bak' '*.bak-*' \
+            -x 'paths.json' 'feishu_conf.json' 'targets.json' \
+            -x 'tools/feishu.py' 'tools/feishu_img.py' \
+            -x 'tools/run_feishu_agent.ps1' 'tools/run_feishu_listen.ps1' \
+            -x 'tools/capture_fp_we.py' \
+            -x '_legacy/*' '*.png' '*.jpg'
+          ls -lh *.zip
+          # 确认关键文件在包里
+          unzip -l "zzz-host-${V}.zip" | grep -E 'README.md|INSTALL.md|AGENTS.md|disc_meta.json' || {
+            echo "✘ 关键文件缺失"; exit 1; }
+
+      - name: 建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.ver }}
+          name: "Release ${{ steps.v.outputs.ver }}"
+          body: |
+            ## 前置依赖
+
+            **必须先装 OneDragon** —— 本项目用它的 OCR 模块读游戏画面、用它的刷本模块。
+
+            - 下载「**完整包**」而不是源码包：
+              https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/releases
+            - 解压到任意目录，记下路径
+
+            环境：Windows / 游戏 1920x1080 / 游戏窗口在前台。
+
+            ## 安装
+
+            ```powershell
+            # 1 解压本项目
+            # 2 复制配置模板
+            Copy-Item paths.example.json paths.json
+            # 3 改 paths.json：one_dragon_home / game_exe
+            # 4 验证
+            python tools/check_config.py
+            ```
+
+            ## 第一次用
+
+            ```powershell
+            python tools/zzz_launch.py          # 启动游戏（约 72 秒）
+            python tools/zzz_who.py --scan      # 扫账号角色，出菜单
+            python tools/zzz_daily.py <角色> --run
+            ```
+
+            看有哪些角色可以养：`python tools/zzz_who.py`
+
+            ## 已知限制
+
+            | 限制 | 说明 |
+            |---|---|
+            | 必须 1920x1080 | 坐标按此分辨率标定 |
+            | Windows only | 用 Win32 API（BitBlt / SendInput） |
+            | 不能自动登录 | 账号密码/扫码要人工 |
+            | 别并发跑 | 两个会动游戏的工具同时跑会互相干扰 |
+            | 需要游戏前台 | 最小化或被遮挡会失败 |
+
+            ## 数据说明
+
+            64 个角色的 4+2 配装：10 个手工实测 / 54 个攻略查证，
+            每条都标了 `_来源`。发现不对直接改 `tools/disc_meta.json`。
+
+            详见 [README.md](README.md)、[INSTALL.md](INSTALL.md)、[AGENTS.md](AGENTS.md)
+            （最后一个是给 AI agent 看的用法说明）。
+
+            __不要下载 Source code，用上面的 zip。__
+          files: |
+            zzz-host-${{ steps.v.outputs.ver }}.zip
+          generate_release_notes: false
+          prerelease: ${{ contains(steps.v.outputs.ver, '-beta') }}
