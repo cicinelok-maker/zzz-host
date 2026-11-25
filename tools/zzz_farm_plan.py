@@ -284,6 +284,41 @@ def collect() -> dict[str, dict]:
 
 
 
+def _materials() -> dict:
+    """读 materials.json（材料总表）。读不到返回空。"""
+    try:
+        import json as _j
+        return _j.loads((HERE / "materials.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _cost_from_table(mat: str, role: str = "", attr: str = ""):
+    """从 materials.json 查材料 → 副本 + 电量/产出（每次刷本口径）。
+
+    只用于**旧 DUNGEON 表没有的新材料**（音擎组件、角色经验、镀剂）。
+    已有材料的数字沿用 DUNGEON（那里是实测调过的），不覆盖。
+    """
+    M = _materials()
+    if not M:
+        return None
+
+    if mat.endswith("组件"):                    # 音擎组件
+        node = M.get("音擎") or {}
+        return {"副本": (node.get("副本") or "实战模拟室·音擎改装（{职业}试验）").format(
+                   职业=role or "强攻"),
+                "电量": node.get("电量", 100), "产出": node.get("产出", 15)}
+    if mat == "角色经验":
+        node = M.get("角色经验") or {}
+        return {"副本": node.get("副本", "实战模拟室·基础材料（代理人经验）"),
+                "电量": node.get("电量", 100), "产出": node.get("产出", 15)}
+    if mat == "镀剂":
+        node = (M.get("驱动盘") or {}).get("镀剂") or {}
+        return {"副本": node.get("副本", "实战模拟室·基础材料（镀剂专项）"),
+                "电量": node.get("电量", 100), "产出": node.get("产出", 15)}
+    return None
+
+
 def plan_rows(need: dict, meta: dict) -> list[dict]:
     rows = []
     for mat, d in need.items():
@@ -311,6 +346,20 @@ def plan_rows(need: dict, meta: dict) -> list[dict]:
                 "角色": d["角色"],
                 "cmd": ["--patrol", _dg],
             })
+            continue
+
+        # 新材料（旧 DUNGEON 表没有的）走 materials.json；
+        # 已有材料沿用 DUNGEON —— 那里的数字是实测调过的，不拿表覆盖它。
+        _role = ""
+        for _who in (d.get("角色") or [])[:1]:
+            _ag = _who.split("(")[0]
+            _role = ((meta.get(_ag) or {}).get("定位") or "").split("/")[0]
+        _new = _cost_from_table(mat, _role)
+        if _new:
+            _runs = -(-d["数量"] // max(1, int(_new["产出"])))
+            rows.append({"材料": mat, "数量": d["数量"], "副本": _new["副本"],
+                         "次数": _runs, "电量": _runs * int(_new["电量"]),
+                         "角色": d["角色"], "cmd": []})
             continue
 
         key = "特化芯片" if mat.startswith("特化") else mat
