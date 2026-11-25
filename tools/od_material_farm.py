@@ -104,6 +104,30 @@ def main() -> int:
     args = ap.parse_args()
 
     plans = from_gaps() if args.from_gaps else build_plans(args)
+
+    # **周本有次数上限**（恶名狩猎每周 3 次），刷完就刷不到东西。
+    # 不查的话：调进去游戏显示「次数已用完」，工具报「没做成事」，
+    # 用户以为工具坏了，反复重试。**资源上限和工具故障要能分开报。**
+    try:
+        from core import weekly as _wk
+        _kept = []
+        for _cat, _name, _n in plans:
+            if _cat in ("恶名狩猎", "哨站后勤"):
+                _ok, _why = _wk.can_run(_cat)
+                print(f"  {_cat}：{_why}")
+                if not _ok:
+                    print(f"    → 跳过 {_cat}（不是工具坏了，是本周次数用完了）")
+                    continue
+            _kept.append((_cat, _name, _n))
+        plans = _kept
+        if not plans:
+            print("\n所有要刷的东西都用完次数了：")
+            for _k, _v in _wk.status().items():
+                print(f"  {_k}: {_v['used']}/{_v['limit']}（剩 {_v['left']}）")
+            print("  下周一会重置")
+            return 0
+    except Exception as _e:
+        print(f"  （周本次数检查跳过：{_e}）")
     if not plans:
         print("没指定要刷什么。用 --training / --challenge / --hunt，或 --from-gaps")
         return 2
@@ -160,6 +184,17 @@ def main() -> int:
     result = app.execute()
     print(f"\n执行结果：{result}")
     ctx.run_context.stop_running()
+
+    # 真跑完了才记周本次数
+    try:
+        from core import weekly as _wk
+        for _cat, _name, _n in plans:
+            if _cat in ("恶名狩猎", "哨站后勤"):
+                _wk.record(_cat)
+                _u = _wk.used(_cat)
+                print(f"  记一次 {_cat}：本周 {_u}/{_wk.LIMITS.get(_cat, '?')}")
+    except Exception as _e:
+        print(f"  （记周本次数失败：{_e}）")
     return 0
 
 
