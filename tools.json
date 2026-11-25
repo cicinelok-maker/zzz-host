@@ -763,6 +763,29 @@
    "destructive": true
   },
   {
+   "name": "zzz_guide",
+   "cmd": "python tools/zzz_guide.py",
+   "args": [
+    {
+     "flag": "--json"
+    },
+    {
+     "flag": "--out"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    3,
+    4
+   ],
+   "purpose": "读游戏内「养成指南 → 养成材料明细」—— 官方材料缺口表",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "zzz_launch",
    "cmd": "python tools/zzz_launch.py",
    "args": [
