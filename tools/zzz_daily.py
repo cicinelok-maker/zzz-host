@@ -86,7 +86,8 @@ OUTCOME_RULES = {
     "技能升级": [(r"已升级", "升级")],
     "核心技": [(r"核心技.*?(?:已解锁|已升级|节点)", "核心技"),
                 (r"当前\s*[A-F]", "读到状态")],
-      "驱动盘": [(r"号位已换装", "换装")],
+    "核心技读取": [(r"已解锁", "已解锁"), (r"[A-F]\s*:", "读到")],
+    "驱动盘": [(r"号位已换装", "换装")],
 }
 
 
@@ -250,7 +251,13 @@ def main() -> int:
         ("技能升级", "skill", [str(HERE / "zzz_skill.py"), "upgrade",
                             "--agent", args.agent], 2400),
         # 2026-11-24 补：核心技之前漏在步骤外，但 --skip 里却列了 core
-        ("核心技", "core", [str(HERE / "zzz_core.py"), "read", "--agent", args.agent], 1800),
+        # 2026-11-26 改：以前调 read（只读不升），文档却写「读取/升级」。
+        # 现在 zzz_core.py 真有了 upgrade 子命令，改成真升。
+        ("核心技", "core", [str(HERE / "zzz_core.py"), "upgrade",
+                          "--agent", args.agent, "--times", "1"], 2400),
+        # 升完再读一次，把 A~F 状态写进 state/core_status.json
+        ("核心技读取", "core_read", [str(HERE / "zzz_core.py"), "read",
+                              "--agent", args.agent], 1800),
         # 驱动盘那步挪到刷本之后（见下），这样刷到的盘当轮就能处理，
         # 而且一轮只训一次盘。
     ]

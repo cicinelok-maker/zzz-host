@@ -178,13 +178,93 @@ def read_all(ui: Ui, m: Machine, agent: str, with_mat: bool) -> dict:
     return out
 
 
+def materials_ok(info: dict) -> tuple[bool, str]:
+    """材料够不够。costs 是 [[有, 需], ...]。"""
+    if not info.get("unlocked", True):
+        return False, "前置天赋未解锁"
+    costs = info.get("costs") or []
+    if not costs:
+        return False, "读不到材料需求"
+    for have, need in costs:
+        if have < need:
+            return False, f"材料不足（{have}/{need}）"
+    return True, "材料够"
+
+
+def upgrade_one(ui: Ui, xy: tuple[int, int], key: str) -> tuple[bool, str]:
+    """点开一个核心技圈 → 判断材料 → 升一次。返回 (成没成, 说明)。"""
+    vs, inp = ui.vs, ui.inp
+    vs.frame(force=True)
+    inp.click(xy[0], xy[1], wait=1.8)
+    vs.frame(force=True)
+    txt = vs.text(R_PANEL)
+    if "核心技" not in txt:
+        return False, "面板没打开"
+
+    info = parse_panel(txt + " " + vs.text(R_COST))
+    ok, why = materials_ok(info)
+    if not ok:
+        return False, why
+
+    c = vs.find("确定", (600, 780, 1600, 1000))
+    if not c:
+        c = vs.find("确定", (0, 0, 1920, 1080))
+    if not c:
+        return False, "找不到「确定」按钮"
+
+    before = info.get("costs")
+    inp.click(c["cx"], c["cy"], wait=1.8)
+    vs.frame(force=True)
+
+    txt2 = vs.text(R_PANEL)
+    info2 = parse_panel(txt2 + " " + vs.text(R_COST))
+    after = info2.get("costs")
+    if after and before and after != before:
+        return True, f"已升（{before} → {after}）"
+    return False, "点了但没看到变化"
+
+
+def do_upgrade(ui: Ui, m: Machine, agent: str, times: int) -> dict:
+    """给 A~F 六个圈各升 times 次。"""
+    vs, inp = ui.vs, ui.inp
+    if not goto_skill_tab(ui, m, agent):
+        return {"error": "到不了技能页"}
+
+    live = locate.core_nodes(vs)
+    if live:
+        print(f"  核心技 OCR 定位到 {len(live)} 个圈")
+
+    report = {}
+    for key, xy in CORES.items():
+        xy = live.get(key, xy)
+        done = 0
+        last = ""
+        for _ in range(max(1, times)):
+            ok, why = upgrade_one(ui, xy, key)
+            last = why
+            if ok:
+                done += 1
+                print(f"  {key} 圈：{why}")
+            else:
+                print(f"  {key} 圈：{why}" + (f"（本次已升 {done} 次）" if done else ""))
+                break
+            live2 = locate.core_nodes(vs)
+            xy = live2.get(key, xy)
+        report[key] = {"upgraded": done, "note": last}
+        inp.key("esc", wait=1.2)
+    return report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for c in ("read", "material"):
+    for c in ("read", "material", "upgrade"):
         p = sub.add_parser(c)
         p.add_argument("--agent", default=_DEFAULT_AGENT)
         p.add_argument("--out", default=str(BASE / "state" / "core_status.json"))
+        if c == "upgrade":
+            p.add_argument("--times", type=int, default=1,
+                           help="每个核心技最多升几次（默认 1）")
     args = ap.parse_args()
 
     vs, inp = Vision(), Input()
@@ -202,6 +282,20 @@ def main() -> int:
     Path(args.out).write_text(json.dumps(data, ensure_ascii=False, indent=2),
                               encoding="utf-8")
     print(f"\n已写入 {args.out}")
+    if args.cmd == "upgrade":
+        rep = do_upgrade(ui, m, args.agent, getattr(args, "times", 1) or 1)
+        if rep.get("error"):
+            print("\n" + rep["error"])
+            return 3
+        total = sum(v.get("upgraded", 0) for v in rep.values())
+        print("\n=== 核心技升级结果 ===")
+        for k, v in rep.items():
+            print(f"  {k}: 升了 {v.get('upgraded', 0)} 次　{v.get('note', '')}")
+        print(f"合计升了 {total} 次")
+        if total == 0:
+            print("  （一次都没升成 —— 材料不够或前置未解锁，看上面每圈的原因）")
+        return 0
+
     if args.cmd == "material":
         print("\n材料来源汇总：")
         for k, v in data.items():
