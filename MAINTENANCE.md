@@ -44,6 +44,7 @@ sample_marked_discs.py  ...
 | `pause.py` | **暂停/断点/续跑**：失焦不等于失败，Ctrl+C 不等于丢工作 |
 | `weekly.py` | **周本免费次数**：免费额度 ≠ 总上限，用完只是变贵 |
 | `inventory.py` | **材料库存记账**：刷完记到手多少，缺口按「还差多少」算 |
+| `material_nav.py` | **材料弹窗 → 传送副本**：读 [获取] 按钮坐标并点它，副本导航不用硬编码 |
 | 词条数值表 | `core/disc_stats.py` |
 | 属性词表 | `core/vocab.py` |
 | 盘位坐标 | `core/slots.py` |
