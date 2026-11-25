@@ -40,6 +40,10 @@ sample_marked_discs.py  ...
 | `agent_cfg.py` | **角色配置统一入口**：具体角色 → 职业模板回退（任意角色可跑） |
 | `agent_name.py` | **角色名归一**：去书名号 / 繁转简 / 别名（不去「·」前缀） |
 | `paths.py` | **路径配置**：三层查找（env → paths.json → 自动探测） |
+| `focus.py` | **窗口焦点保护**：注入输入前确认游戏在前台，失焦抛 FocusLost |
+| `pause.py` | **暂停/断点/续跑**：失焦不等于失败，Ctrl+C 不等于丢工作 |
+| `weekly.py` | **周本免费次数**：免费额度 ≠ 总上限，用完只是变贵 |
+| `inventory.py` | **材料库存记账**：刷完记到手多少，缺口按「还差多少」算 |
 | 词条数值表 | `core/disc_stats.py` |
 | 属性词表 | `core/vocab.py` |
 | 盘位坐标 | `core/slots.py` |

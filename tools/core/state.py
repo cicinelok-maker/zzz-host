@@ -76,3 +76,57 @@ def load_meta(agent: str = "") -> dict:
         print(f"  已配置的角色：{have}")
         raise SystemExit(2)
     return cfg
+
+
+# ============================================================ 状态新鲜度
+# 所有状态文件都该带时间戳。三天前读的 slots 算出来的缺口是错的，
+# 但文件看起来完全正常 —— 这是最容易被当成「工具坏了」的一类问题。
+
+# 各类状态的「多久算过期」（小时）
+STALE_HOURS = {
+    "status": 24,        # 驱动盘/技能/等级 —— 一天一读够
+    "core": 48,          # 核心技要进技能页逐圈点，5 分钟一次，两天
+    "wengine": 48,
+}
+
+_TS_KEY = "_ts"
+
+
+def stamp(data: dict) -> dict:
+    """给状态字典打时间戳（原地改 + 返回，方便链式）。"""
+    if isinstance(data, dict):
+        import time as _t
+        data[_TS_KEY] = _t.strftime("%Y-%m-%dT%H:%M:%S")
+    return data
+
+
+def age_hours(data: dict) -> float | None:
+    """这份状态多久以前写的（小时）。没有时间戳返回 None。"""
+    if not isinstance(data, dict):
+        return None
+    ts = data.get(_TS_KEY)
+    if not ts:
+        return None
+    try:
+        import datetime as _dt
+        then = _dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
+        return (_dt.datetime.now() - then).total_seconds() / 3600.0
+    except Exception:
+        return None
+
+
+def check_fresh(data: dict, kind: str = "status", label: str = "") -> bool:
+    """检查是否过期。过期就打警告到 stderr，返回 True=新鲜的。"""
+    import sys as _s
+    age = age_hours(data)
+    limit = STALE_HOURS.get(kind, 24)
+    if age is None:
+        print(f"  ⚠ {label or kind} 状态没有时间戳，不知道是多久前读的"
+              f"（建议重跑一次）", file=_s.stderr)
+        return False
+    if age > limit:
+        print(f"  ⚠ {label or kind} 状态是 {age:.1f} 小时前的（超过 {limit} 小时）"
+              f"—— 算出来的缺口可能已经不准，建议重跑一次", file=_s.stderr)
+        return False
+    return True
+

@@ -294,9 +294,10 @@ def main() -> int:
                      "action": "equip" if need else "keep"})
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(
+    from core.state import stamp as _stamp
+    Path(args.out).write_text(json.dumps(_stamp(
         {"agent": args.agent, "main_set": main_set, "sec_set": sec_set,
-         "main_count": main_count, "plan": plan}, ensure_ascii=False, indent=2),
+         "main_count": main_count, "plan": plan}, ensure_ascii=False, indent=2)),
         encoding="utf-8")
     print(f"\n计划已写入 {args.out}")
 

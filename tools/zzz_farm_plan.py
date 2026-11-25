@@ -329,7 +329,25 @@ def plan_rows(need: dict, meta: dict) -> list[dict]:
         rows.append({"材料": mat, "数量": d["数量"], "副本": name,
                      "次数": runs, "电量": runs * cfg["电量"],
                      "角色": d["角色"], "cmd": cmd})
-    rows.sort(key=lambda r: r["电量"])
+    # ---- 排序：**过期优先，不是便宜优先** ----
+    # 以前的 key 只有电量，把「周本免费次数（会过期）」和
+    # 「专业挑战室（永远在）」当成同一类东西。
+    #
+    # 优先级：
+    #   0 周本（免费次数过期作废）
+    #   1 免费材料转化（0 电且不占次数）
+    #   2 卡住其他系统的
+    #   3 剩下的按电量升序
+    def _rank(r: dict) -> tuple:
+        _mat = r.get("材料", "")
+        _bat = r.get("电量", 0)
+        if _mat == "刻命残蜕":
+            return (0, 0)                    # 周本，最先
+        if _bat == 0:
+            return (1, 0)                    # 免费
+        return (2, _bat)                     # 其余按电量
+
+    rows.sort(key=_rank)
     return rows
 
 

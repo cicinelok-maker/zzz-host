@@ -259,10 +259,13 @@ def main() -> int:
         sk = {}
         for k, v in (skill_lv.items() if isinstance(skill_lv, dict) else []):
             sk[k] = v
-        out.write_text(json.dumps({"agent": args.agent, "total": total,
-                                   "slots": result, "skills": sk,
-                                   "char_level": char_lv},
-                                  ensure_ascii=False, indent=2),
+        # 打时间戳 —— 三天前读的状态算出来的缺口是错的，但文件看着正常。
+        # 见 core/state.py 的 check_fresh()。
+        from core.state import stamp as _stamp
+        _payload = {"agent": args.agent, "total": total,
+                    "slots": result, "skills": sk,
+                    "char_level": char_lv}
+        out.write_text(json.dumps(_stamp(_payload), ensure_ascii=False, indent=2),
                        encoding="utf-8")
         print(f"\n已写入 {out}")
     print()

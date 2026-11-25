@@ -134,6 +134,103 @@ def run_from_targets(agents: list[str], run_it: bool, max_n: int = 0) -> int:
     return 0
 
 
+def _snap_all(agent: str) -> dict:
+    """把各系统的当前状态抓一份快照，用于跑前/跑后对比。
+
+    **读不到的写 None，不要写 0** —— 「0」和「没读到」混了会得出假结论。
+    """
+    snap = {}
+
+    # 驱动盘 / 技能 / 角色等级 —— 都在 status_<角色>.json
+    try:
+        from zzz_disc_daily import read_status as _rs
+        st = _rs(agent) or {}
+        slots = st.get("slots") or []
+        snap["驱动盘_蓝条"] = sum(x.get("blue") or 0 for x in slots) if slots else None
+        # 主词条无效的位号价值按 0（硬门槛）
+        snap["驱动盘_质量分"] = (round(sum(
+            0.0 if x.get("main_verdict") == "bad" else (x.get("eff") or 0)
+            for x in slots), 1) if slots else None)
+        _sk = st.get("skills")
+        if isinstance(_sk, dict) and _sk:
+            _tot = 0
+            for v in _sk.values():
+                import re as _re
+                _d = _re.sub(r"\D", "", str(v))
+                _tot += int(_d[:2]) if len(_d) >= 2 else 0
+            snap["技能_总等级"] = _tot
+        else:
+            snap["技能_总等级"] = None
+        snap["角色等级"] = st.get("char_level") or None
+    except Exception as _e:
+        print(f"    （抓驱动盘/技能快照失败：{_e}）")
+
+    # 核心技 —— costs 里还差多少
+    try:
+        from core.state import check_fresh as _cf
+        from pathlib import Path as _P
+        _cp = BASE / "state" / f"core_status_{agent}.json"
+        if not _cp.exists():
+            _cp = BASE / "state" / "core_status.json"
+        if _cp.exists():
+            import json as _j
+            _cd = _j.loads(_cp.read_text(encoding="utf-8"))
+            _cf(_cd, "core", f"核心技({agent})")
+            _lack = 0
+            for _k, _v in _cd.items():
+                if _k.startswith("_") or not isinstance(_v, dict):
+                    continue
+                for _pair in (_v.get("costs") or []):
+                    try:
+                        _h, _n = int(_pair[0]), int(_pair[1])
+                    except Exception:
+                        continue
+                    if _h < _n:
+                        _lack += _n - _h
+            snap["核心技_总缺口"] = _lack
+        else:
+            snap["核心技_总缺口"] = None
+    except Exception:
+        snap["核心技_总缺口"] = None
+
+    # 音擎
+    try:
+        import json as _j2
+        _wp = BASE / "state" / f"wengine_{agent}.json"
+        if _wp.exists():
+            _wd = _j2.loads(_wp.read_text(encoding="utf-8"))
+            snap["音擎_等级"] = _wd.get("level") or _wd.get("等级")
+        else:
+            snap["音擎_等级"] = None
+    except Exception:
+        snap["音擎_等级"] = None
+
+    # 材料库存
+    try:
+        from core import inventory as _inv
+        _items = {k: v for k, v in _inv.snapshot().items() if k != "_ts"}
+        snap["库存_种类"] = len(_items) if _items else None
+        snap["库存_总数"] = (sum(int((v or {}).get("有", 0)) for v in _items.values())
+                            if _items else None)
+    except Exception:
+        snap["库存_种类"] = None
+        snap["库存_总数"] = None
+
+    return snap
+
+
+def _diff(before: dict, after: dict) -> list[tuple[str, object, object]]:
+    """对比两份快照。只返回有变化的（None 不算变化）。"""
+    out = []
+    for k in before:
+        b, a = before.get(k), after.get(k)
+        if b is None or a is None:
+            continue
+        if a != b:
+            out.append((k, b, a))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-targets", action="store_true",
@@ -388,6 +485,24 @@ def main() -> int:
 
     # 收尾：记账 + 汇报
     if args.run:
+        # **对比全部系统，不只驱动盘。**
+        # 以前只报 蓝条/质量分，其他六个系统的成果全丢 —— 用户看不出进度。
+        try:
+            _after = _snap_all(args.agent)
+            _chg = _diff(_snap_before, _after)
+            print("\n=== 本轮变化（全部系统）===")
+            if not _chg:
+                print("  （没有可对比的变化 —— 要么没做成事，要么两边都没读到）")
+            for _k, _b, _a in _chg:
+                print(f"  {_k:<14} {_b} → {_a}")
+            if _snap_before.get("材料库存_总数") is not None:
+                from core import inventory as _iv
+                _ag = _iv.age_hours()
+                if _ag is not None and _ag > 48:
+                    print(f"  ⚠ 材料库存是 {_ag:.0f} 小时前的记录，可能已经不准")
+        except Exception as _e:
+            print(f"  （全系统对比跳过：{_e}）")
+
         try:
             from zzz_disc_daily import read_status, append_progress
             st2 = read_status(args.agent)

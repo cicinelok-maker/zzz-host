@@ -170,6 +170,14 @@ def read_all(ui: Ui, m: Machine, agent: str, with_mat: bool) -> dict:
                 d = read_material(vs, inp, (mx, 926))
                 if d["name"]:
                     mats.append(d)
+                    # 顺手记库存 —— read_material 已经从弹窗读到「当前拥有 ×N」，
+                    # 不记下来就白读了（inventory 是 P2 的数据层）。
+                    try:
+                        from core import inventory as _inv
+                        _inv.record(d["name"], int(d.get("have") or 0),
+                                    source="zzz_core material")
+                    except Exception:
+                        pass
             info["materials"] = mats
         out[key] = info
         print(f"  {key}: 被动={info['passive'] or '?'} "
@@ -284,7 +292,8 @@ def main() -> int:
     if not args.out:
         args.out = str(BASE / "state" / f"core_status_{args.agent}.json")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(data, ensure_ascii=False, indent=2),
+    from core.state import stamp as _stamp
+    Path(args.out).write_text(json.dumps(_stamp(data), ensure_ascii=False, indent=2),
                               encoding="utf-8")
     print(f"\n已写入 {args.out}")
     if args.cmd == "upgrade":
