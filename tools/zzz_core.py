@@ -313,6 +313,10 @@ def main() -> int:
     if args.cmd == "material":
         print("\n材料来源汇总：")
         for k, v in data.items():
+            # **跳过元数据** —— stamp() 加的 _ts 是字符串，
+            # 不加这个判断会炸 AttributeError: str has no attribute get（实测踩过）
+            if k.startswith("_") or not isinstance(v, dict):
+                continue
             for mat in v.get("materials") or []:
                 print(f"  {mat['name']}（拥有{mat['have']}） → "
                       f"{' / '.join(mat['sources']) or '未读到来源'}")
