@@ -72,6 +72,30 @@ TRANSITIONS: list[Transition] = [
                verify=("邮件", "代理人"), verify_region=R_ALL,
                note="START 打开菜单"),
 
+    # ============ 更多功能 / 养成指南 ============
+    # 「更多」必须限定在底部图标栏找 —— 全屏找可能命中别处的同名文字
+    Transition("主菜单", "更多功能",
+               [Action("click_text", "更多", region=(0, 950, 1920, 1080), wait=2.0)],
+               verify=("更多功能", "养成指南"), verify_region=R_ALL,
+               note="菜单底部图标栏点「更多」@(317,1040)"),
+
+    Transition("更多功能", "养成指南",
+               [Action("click_text", "养成指南", region=(0, 0, 1920, 1080), wait=2.5)],
+               # **等它加载完** —— 加载中只有一条 'Q'，verify 会失败
+               verify=("养成材料计算",), verify_region=R_ALL,
+               note="点养成指南 @(1133,474)，加载约 3 秒"),
+
+    # 回程：**只能 ESC** —— 这个全屏面板 B 键无效（实测）
+    Transition("养成指南", "更多功能",
+               [Action("key", "esc", wait=2.0)],
+               verify=("更多功能",), verify_region=R_ALL,
+               note="全屏面板只有 ESC 能关，B 无效"),
+
+    Transition("更多功能", "主菜单",
+               [Action("key", "esc", wait=1.8)],
+               verify=("邮件", "代理人"), verify_region=R_ALL,
+               note="ESC 回主菜单"),
+
     # 主菜单 → 仓库（默认落在音擎页，驱动盘要靠下面的切页转移）
     Transition("主菜单", "音擎仓库",
                # 必须限定在底部图标栏区域内找「仓库」，
@@ -315,13 +339,13 @@ TRANSITIONS: list[Transition] = [
     # 调律界面的 ESC 出口不固定，用循环动作退到世界
     Transition("调律界面", "世界",
                [Action("esc_to_world", n=8, wait=1.5)],
-               verify=("前往任务目标",), verify_region=(0, 0, 1400, 1080),
+               verify=("快捷轮盘", "相机"), verify_region=(0, 0, 1400, 1080),
                note="循环 ESC 直到大世界"),
 
     # 主菜单 → 世界（ESC 关菜单）
     Transition("主菜单", "世界",
                [Action("key", "esc", wait=1.8)],
-               verify=("前往任务目标",), verify_region=(0, 0, 1400, 1080),
+               verify=("快捷轮盘", "相机"), verify_region=(0, 0, 1400, 1080),
                note="ESC 关闭主菜单"),
 
     # 回退路径：实测左上角返回箭头 (120,52) 才可靠，B 键在这些页面无效
@@ -343,7 +367,7 @@ TRANSITIONS: list[Transition] = [
                # ESC 是开关：按两次会又打开菜单，所以只按一次，
                # 没到目标就让 go_to 的下一轮重试
                [Action("key", "esc", wait=1.6)],
-               verify=("前往任务目标",), verify_region=(0, 0, 1400, 1080),
+               verify=("快捷轮盘", "相机"), verify_region=(0, 0, 1400, 1080),
                note="连按 B/ESC 脱离"),
 ]
 class Machine:

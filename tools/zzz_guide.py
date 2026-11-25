@@ -101,43 +101,37 @@ def _to_world(ui: Ui, tries: int = 6) -> bool:
 
 
 def open_guide(ui: Ui) -> bool:
-    """进「养成指南」。成功返回 True。"""
+    """进「养成指南」。**走 Machine.go_to**（状态机 + BFS 路径规划）。
+
+    转移表在 `core/machine.py` 的 TRANSITIONS：
+        大世界 → 主菜单（ESC）
+        主菜单 → 更多功能（点「更多」）
+        更多功能 → 养成指南（点「养成指南」）
+
+    这样就不用在这里手写导航 —— 路径由状态机算。
+    """
+    from core.machine import Machine
+
     vs, inp = ui.vs, ui.inp
+
+    # 先回大世界（养成指南是全屏面板，B 无效，只能 ESC）
     if not _to_world(ui):
-        print("  ✘ 退不回大世界")
-        return False
+        # 退不回就再试 ESC 几次
+        for _ in range(3):
+            inp.key("esc", wait=1.5)
+            vs.frame(force=True)
+            if anchors.describe(vs) == "世界":
+                break
 
-    if anchors.describe(vs) != "主菜单":
-        inp.key("esc", wait=1.8)
-        vs.frame(force=True)
-    if anchors.describe(vs) != "主菜单":
-        print(f"  ✘ 打不开主菜单（{anchors.describe(vs)}）")
+    m = Machine(ui, verbose=True)
+    cur = anchors.describe(vs)
+    if cur == "养成指南":
+        return True
+    ok = m.go_to("养成指南")
+    if not ok:
+        print(f"  ✘ 到不了养成指南（当前 {anchors.describe(vs)}）")
         return False
-
-    hit = vs.find("更多", (0, 980, 800, 1080))
-    if not hit:
-        print("  ✘ 找不到「更多」")
-        return False
-    inp.click(hit["cx"], hit["cy"], wait=1.8)
-    vs.frame(force=True)
-
-    hit = vs.find("养成指南", (0, 0, 1920, 1080))
-    if not hit:
-        print("  ✘ 找不到「养成指南」")
-        return False
-    inp.click(hit["cx"], hit["cy"], wait=2.5)
-
-    for _ in range(10):
-        try:
-            vs.wait_still(quiet=0.4, timeout=2.0)
-        except Exception:
-            time.sleep(0.5)
-        vs.frame(force=True)
-        if "养成材料" in vs.text((0, 0, 1920, 1080)):
-            return True
-        time.sleep(0.6)
-    print("  ✘ 养成指南没加载出来")
-    return False
+    return True
 
 
 def switch_to_detail(ui: Ui) -> bool:

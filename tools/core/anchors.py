@@ -29,6 +29,10 @@ R_COMPENDIUM_TAB = (700, 140, 1680, 230)
 # 恶名狩猎 boss 详情页（点材料「[获取]恶名狩猎」传送过来的界面）
 # 特征：「剩余奖励次数」「周期剩余时间」「挑战奖励」
 R_HUNT_DETAIL = (300, 950, 1800, 1060)
+# 「更多功能」面板（主菜单点「更多」进来）
+R_MORE_MENU = (400, 180, 1600, 900)
+# 养成指南（全屏，加载约 3 秒）
+R_GUIDE = (200, 30, 1800, 400)
 R_HUNT_TITLE = (600, 150, 1400, 350)
 
 
@@ -129,6 +133,20 @@ ANCHORS: list[Anchor] = [
     Anchor("快捷手册", R_COMPENDIUM_TAB, must=("日常", "训练", "作战", "战术"),
            note="大世界按 F2；判据是五个页签里的四个（不含「目标」，那个词到处都有）"),
 
+    # 「更多功能」面板（主菜单 → 更多）
+    Anchor("更多功能", R_MORE_MENU,
+           must=("更多功能", "绳匠笔记", "养成指南"),
+           note="主菜单底部点「更多」@(317,1040)"),
+
+    # 养成指南（全屏覆盖层，加载约 3 秒）
+    # **判据用「养成材料计算」** —— 加载中的过渡画面只有一条 'Q'，
+    # 用长词会等到超时。这个词一出现就说明真的加载完了。
+    Anchor("养成指南", R_GUIDE,
+           must=("养成材料计算",),
+           note="更多功能 → 养成指南 @(1133,474)。"
+                "**这个面板 B 键关不掉，只有 ESC**。"
+                "两个 tab（需要获取的材料 / 养成材料明细）都算这个状态。"),
+
     Anchor("世界", R_BOTTOM_LEFT, must=("快捷轮盘", "相机"),
            note="大世界，左下角常驻快捷键提示（不用任务指引，它会消失）"),
 ]
@@ -159,13 +177,13 @@ def detect(vision, candidates: list[Anchor] | None = None) -> Anchor | None:
 
 
 def is_(vision, name: str) -> bool:
-    """先按指纹判，指纹不可信再按文字锚点。"""
-    fp_name = detect_by_fingerprint(vision)
-    if fp_name:
-        return fp_name == name
+    """**文字锚点优先，指纹兜底**（和 describe 保持一致）。"""
     for a in ANCHORS:
         if a.name == name:
-            return a.match(vision)
+            if a.match(vision):
+                return True
+            # 文字没中，再看指纹（可能这个界面没有文字特征）
+            return detect_by_fingerprint(vision) == name
     return False
 
 
@@ -180,9 +198,17 @@ def wait(vision, name: str, timeout: float = 10.0) -> bool:
 
 
 def describe(vision) -> str:
-    """优先用指纹判定，指纹不可信时退回文字锚点。"""
-    fp_name = detect_by_fingerprint(vision)
-    if fp_name:
-        return fp_name
-    a = detect(vision)
-    return a.name if a else "未知界面"
+    """**文字锚点优先，指纹兜底。**
+
+    为什么改（2026-11-26）：指纹是「打分最近者」，文字锚点是「must 全中」。
+    实测点「更多」后，文字锚点明明能命中「更多功能」，
+    但 `state/fingerprints.json` 里没有这个新面板，指纹把它归成了
+    「驱动盘拆解页」—— **精确的被模糊的盖住了。**
+
+    指纹的定位应该是「文字锚点认不出时兜底」，不是「优先」。
+    """
+    a = detect(vision)                   # 精确：must 全中
+    if a:
+        return a.name
+    fp_name = detect_by_fingerprint(vision)   # 兜底：打分最近
+    return fp_name or "未知界面"
