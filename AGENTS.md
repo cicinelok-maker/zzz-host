@@ -41,7 +41,7 @@ python tools/zzz_launch.py       # 启动 + 等窗口 + 点进入游戏，约 72
 python tools/check_config.py                    # 1 环境
 python tools/zzz_launch.py                      # 2 游戏
 python tools/zzz_status.py <agent> --json       # 3 读状态（必须先做）
-python tools/zzz_disc_daily.py <agent>          # 4 看计划（不动游戏）
+python tools/zzz_disc_daily.py <agent> --offline # 4 出计划（秒出，不碰游戏）
 python tools/zzz_daily.py <agent> --run         # 5 真跑
 ```
 
@@ -194,8 +194,9 @@ python tools/zzz_status.py 佩洛伊斯 --json
 ### 任务：今天该做什么（不动游戏）
 
 ```bash
-python tools/zzz_disc_daily.py 佩洛伊斯
+python tools/zzz_disc_daily.py 佩洛伊斯 --offline
 # 输出分 ①~④ 段：盘点 / 缺口 / 电量 / 动作建议
+# 加 --offline 是 0.5 秒；不加会读一次游戏，约 4 分钟
 ```
 
 ### 任务：跑一轮完整养成
