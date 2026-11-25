@@ -92,13 +92,29 @@ def wait_window(timeout: int = 120, interval: float = 2.0) -> dict | None:
     return None
 
 
-def ensure(timeout: int = 120) -> int:
+def _map_enter(rc: int) -> int:
+    """enter_game 的返回码 → 全局退出码（AGENTS.md 那张表）。
+
+    enter_game: 0=已到世界 1=没找到按钮 2=需要管理员 3=超时 6=需要登录
+    全局表:     0=成功     1=一般失败   2=配置缺失   7=等进入游戏超时 6=需人工登录
+    """
+    return {0: 0, 1: 1, 2: 2, 3: 7, 6: 6}.get(rc, rc)
+
+
+def ensure(timeout: int = 120, no_enter: bool = False) -> int:
     """确保游戏开着。返回 0 = 可以继续。"""
     w = game_running()
     if w:
         print(f"游戏已在运行：{w.get('title', '')} "
               f"@({w.get('x')},{w.get('y')}) {w.get('w')}x{w.get('h')}")
-        return 0
+        if no_enter:
+            return 0
+        # 窗口在不等于是可操作 —— 可能停在标题页/登录页。
+        # 只看 game_running() 就 return 0 会让用户以为好了，
+        # 接着跑 zzz_status 才卡住（报「选不中角色」看不出根因）。
+        print("确认游戏可操作…")
+        rc = enter_game(30)      # 已在大世界时第一轮就返回，约 1 秒
+        return _map_enter(rc)
 
     exe = find_exe()
     if not exe:
@@ -106,11 +122,11 @@ def ensure(timeout: int = 120) -> int:
         for p in CANDIDATES:
             print(f"  {p}")
         print("→ 请手动启动一次，或告我实际路径")
-        return 3
+        return 2      # 配置缺失（找不到客户端）
 
     print(f"游戏没开，启动：{exe}")
     if not launch(exe):
-        return 4
+        return 1      # 一般失败（启动不起来）
 
     print(f"等窗口出现（最多 {timeout} 秒）…")
     w = wait_window(timeout)
@@ -128,16 +144,18 @@ def ensure(timeout: int = 120) -> int:
 
     print("处理开始界面…")
     rc = enter_game(90)
-    if rc == 2:
-        return 6      # 需要登录
-    if rc == 3:
-        return 7      # 超时
-    return 0
+    return _map_enter(rc)
 
 
 # ---- 开始界面处理 ----
 ENTER_WORDS = ["点击进入游戏", "点击进入", "点击开始", "进入游戏", "开始游戏"]
-LOGIN_WORDS = ["登录", "账号", "密码", "扫码"]
+# 登录页的判据。
+# **不要放「登录」** —— 那词在游戏里到处都是（登录奖励/每日登录/登录活动），
+# 实测游戏日常面板就能命中，把普通界面误判成登录页。
+# 真正的登录页会**同时**有「账号」「密码」（或「扫码」），
+# 所以要求 >= 2 个同时出现，且不含宽泛词。
+LOGIN_STRONG = ["账号", "密码", "扫码", "验证码", "手机号"]
+LOGIN_NEED = 2          # 至少同时命中几个才算登录页
 
 
 def enter_game(timeout: int = 90) -> int:
@@ -161,7 +179,20 @@ def enter_game(timeout: int = 90) -> int:
 
     from core import Vision, Input, anchors
     vs, inp = Vision(), Input()
+
+    # 抢前台 —— 文件头 L25 一直写着「恢复前台」，但代码里从来没有。
+    # 窗口被别的程序挡住时，ImageGrab 抓到的是遮挡物，
+    # 「已到世界」会被误判成「不在世界」。
+    win = game_running()
+    if win:
+        try:
+            import live
+            live.foreground(win)
+            time.sleep(0.3)
+        except Exception:
+            pass
     t0 = time.time()
+    _back_count = 0
     while time.time() - t0 < timeout:
         vs.frame(force=True)
         state = anchors.describe(vs)
@@ -169,10 +200,13 @@ def enter_game(timeout: int = 90) -> int:
             print(f"  已到世界")
             return 0
 
-        txt = vs.text((0, 0, 1920, 1080))
-        for w in LOGIN_WORDS:
-            if w in txt:
-                print(f"  停在登录界面（看到「{w}」）")
+        # 只在「认不出界面」时才考虑登录页 ——
+        # describe() 能认出是哪个界面时，说明根本不是登录页。
+        if state == "未知界面":
+            txt = vs.text((0, 0, 1920, 1080))
+            hits = [w for w in LOGIN_STRONG if w in txt]
+            if len(hits) >= LOGIN_NEED:
+                print(f"  停在登录界面（看到 {hits}）")
                 print("  → 需要账号密码/扫码，这一步做不了，请手动登录一次")
                 return 6
 
@@ -185,9 +219,27 @@ def enter_game(timeout: int = 90) -> int:
                 clicked = True
                 break
         if not clicked:
+            if state != "未知界面" and _back_count < 3:
+                print(f"  当前 {state}，没看到进入按钮 —— 按 B 退出去")
+                # 认得出界面（说明不是登录页/黑屏），但不在世界 → 按 B 退。
+                # 用 B 不用 ESC：ESC 在有些界面会打开菜单，越按越远。
+                try:
+                    inp.pad_tap("b", wait=1.2)
+                except Exception:
+                    inp.key("esc", wait=1.5)
+                _back_count += 1
+                continue
             print(f"  当前 {state}，没看到进入按钮，等 3 秒…")
             time.sleep(3)
+            time.sleep(3)
     print("  等进入游戏超时")
+    print("  ── 可能的原因 ──")
+    print("  1 游戏停在某个菜单/面板里（不是标题页，也没有「进入游戏」按钮）")
+    print("     手动按 B 或 ESC 退回大世界，然后重新跑这个命令")
+    print("  2 或者直接用 --no-enter 跳过「点进入游戏」这一步：")
+    print("     python tools/zzz_launch.py --no-enter")
+    print("     （后面跑 zzz_status 时会自己导航到目标界面）")
+    print("  3 游戏在更新 / 弹了协议窗口")
     return 3
 
 
@@ -209,7 +261,7 @@ def main() -> int:
         print(f"客户端：{exe or '找不到'}")
         return 1
 
-    return ensure(args.timeout)
+    return ensure(args.timeout, no_enter=args.no_enter)
 
 
 if __name__ == "__main__":

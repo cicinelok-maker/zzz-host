@@ -60,7 +60,7 @@ import urllib.request
 API = "https://api.github.com"
 
 # 和 .gitignore 一致的排除规则
-IGN_DIRS = {".git", "state", "od_test", "shots", "__pycache__", ".venv", "venv",
+IGN_DIRS = {".git", ".local", "state", "od_test", "shots", "__pycache__", ".venv", "venv",
             "tools_ext", "out", "backups", "od_plugin", "auto", "legacy",
             "build", "dist", "_legacy", "journal", ".pytest_cache", ".idea"}
 IGN_FILES = [
@@ -112,23 +112,64 @@ def api(path: str, token: str, method: str = "GET", data: dict | None = None,
         return 0, {"error": str(e)}
 
 
+def _ignored(rel: pathlib.Path) -> bool:
+    """手写的排除规则（git 不知道的那些）。"""
+    if any(part in IGN_DIRS for part in rel.parts[:-1]):
+        return True
+    relstr = rel.as_posix()
+    return any(fnmatch.fnmatch(rel.name, pat) or fnmatch.fnmatch(relstr, pat)
+               for pat in IGN_FILES)
+
+
 def collect(root: pathlib.Path) -> list[pathlib.Path]:
-    """收集要发布的文件。"""
+    """收集要发布的文件。
+
+    **以 git 为准**：用 `git ls-files --cached --others --exclude-standard`。
+    那正好是「git 会提交什么」—— `.gitignore` 和 `.git/info/exclude`
+    都生效，本地私有文件不会被算进发布集。
+
+    以前用 `root.rglob("*")`，看不见 `.git/info/exclude`
+    （朋友用它在 `.local/` 放私有文件，结果照样进了发布集，
+    而且 audit_ship 静默通过）。
+
+    **判断「发布什么」只能有一个真相来源。** 手写规则永远会漏。
+
+    git 不可用（没装/不是仓库）时退回 rglob + 手写规则。
+    """
+    names = []
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard",
+             "-z"],
+            cwd=str(root), capture_output=True, timeout=30)
+        if r.returncode == 0:
+            names = [x for x in r.stdout.decode("utf-8", "replace").split("\0")
+                     if x]
+    except Exception:
+        names = []
+
+    if names:
+        out = []
+        for n in sorted(names):
+            f = root / n
+            rel = pathlib.Path(n)
+            if not f.is_file():
+                continue          # git 里记着但文件被删了
+            if _ignored(rel):
+                continue          # 手写规则再筛一遍（git 不管 *.png 那种）
+            out.append(rel)
+        return out
+
+    # 退回：git 不可用
     out = []
     for f in root.rglob("*"):
         if not f.is_file():
             continue
         rel = f.relative_to(root)
-        if any(p in IGN_DIRS for p in rel.parts[:-1]):
-            continue
-        relstr = rel.as_posix()
-        # GitHub API 要正斜杠，fnmatch 也要正斜杠才匹配得上 tools/xxx.py
-        if any(fnmatch.fnmatch(f.name, p) or fnmatch.fnmatch(relstr, p)
-               for p in IGN_FILES):
+        if _ignored(rel):
             continue
         out.append(rel)
     return sorted(out)
-
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="通过 GitHub API 发布")
