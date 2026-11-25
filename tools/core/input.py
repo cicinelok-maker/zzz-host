@@ -49,7 +49,8 @@ try:
 except Exception:
     pass
 
-import live  # noqa: E402
+import live
+from . import focus  # noqa: E402
 import vgamepad as vg  # noqa: E402
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -196,6 +197,11 @@ class Input:
         if not self.win:
             raise RuntimeError("没找到游戏窗口")
         self.ox, self.oy = self.win["x"], self.win["y"]
+        # 窗口句柄 —— 每次注入输入前要用它确认游戏在前台。
+        # 窗口被推到后台时，点击会落在别的程序上（用户实测踩过）。
+        self.hwnd = self.win.get("hwnd") or 0
+        # 焦点检查开关：调试时可以关（比如故意在后台测坐标换算）
+        self.guard = True
         # 不在初始化时创建虚拟手柄：VX360Gamepad() 一构造，Windows 就会
         # 报告「新控制器已连接」，游戏弹窗；进程退出又弹「已断开」。
         # 改成懒加载——第一次真正需要按手柄键时才建，
@@ -210,6 +216,34 @@ class Input:
             self._pad_obj = vg.VX360Gamepad()
         return self._pad_obj
 
+    def _guard(self, what: str = "") -> None:
+        """注入输入前确认游戏在前台。
+
+        失焦时先尝试抢回来（最多 2 次）；抢不回来抛 `focus.FocusLost`，
+        上层可以决定「等一下」还是「放弃」。
+
+        **不静默跳过** —— 静默跳过会让脚本以为点过了，继续往下走，
+        后面读画面全错，表现成「卡住」。
+        """
+        if not self.guard or not self.hwnd:
+            return
+        if focus.is_active(self.hwnd):
+            return
+        # 失焦了 —— 尝试抢回来
+        if focus.ensure(self.hwnd, tries=2, raise_on_fail=False):
+            return
+        raise focus.FocusLost(
+            f"游戏窗口不在前台（要做的动作：{what or '输入'}）\n"
+            f"  当前前台窗口句柄：{focus.active_hwnd()}，游戏：{self.hwnd}\n"
+            "  抢了 2 次没抢回来。可能别的程序一直抢焦点。\n"
+            "  怎么办：手动点一下游戏窗口，然后重跑（或加 --resume 从断点继续）")
+
+    def refocus(self) -> bool:
+        """外部显式抢前台（Ui.start 用）。失败不抛，返回 bool。"""
+        if not self.hwnd:
+            return True
+        return focus.ensure(self.hwnd, tries=3, raise_on_fail=False)
+
     # ================= 模式 =================
     def mouse_mode(self, wait: float = 0.25) -> None:
         """切到键鼠态。UI 自动化开始前调一次即可。
@@ -217,6 +251,7 @@ class Input:
         原理：在游戏窗口内做几次真实鼠标移动（MOUSEEVENTF_MOVE），
         游戏会把「最后一次输入设备」判定为鼠标。
         """
+        self._guard("切键鼠态")
         cx, cy = self.ox + 960, self.oy + 540
         user32.SetCursorPos(cx, cy)
         time.sleep(0.08)
@@ -228,12 +263,14 @@ class Input:
         self.mode = "mouse"
 
     def move(self, x: int, y: int) -> None:
+        self._guard("移动鼠标")
         user32.SetCursorPos(self.ox + x, self.oy + y)
         time.sleep(0.06)
 
     def click(self, x: int, y: int, *, wait: float = 0.35,
               hold: float = 0.06, button: str = "left") -> None:
         """点击游戏内坐标。默认参数是实测下来最稳的。"""
+        self._guard("点击")
         if not user32.SetCursorPos(self.ox + x, self.oy + y):
             check_send(0, f'鼠标移到 ({x},{y})')
         time.sleep(0.05)
@@ -246,12 +283,14 @@ class Input:
 
     def click_item(self, item: dict, **kw) -> None:
         """点一个 OCR 结果（含 cx/cy）"""
+        self._guard("点列表项")
         self.click(item["cx"], item["cy"], **kw)
 
 
 
     def wheel(self, notches: int, *, wait: float = 0.45) -> None:
         """滚轮：正数向上，负数向下。一格 = 120。"""
+        self._guard("滚轮")
         user32.mouse_event(WHEEL, 0, 0, int(notches * 120), 0)
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "mouse"
@@ -266,11 +305,13 @@ class Input:
         time.sleep(gap)
 
     def pad_tap(self, button: str, *, wait: float = 0.45) -> None:
+        self._guard("手柄按键")
         self._press_pad(button)
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "pad"
 
     def pad_taps(self, button: str, n: int, *, wait: float = 0.3) -> None:
+        self._guard("手柄连按")
         for _ in range(n):
             self._press_pad(button, gap=wait)
         self.mode = "pad"
@@ -282,6 +323,7 @@ class Input:
         **必须用扫描码**：实测游戏只认 KEYEVENTF_SCANCODE 形式的 SendInput，
         keybd_event 和虚拟键码形式都无效。
         """
+        self._guard("按键")
         scan = _scan(key)
         if not scan:
             return
@@ -301,4 +343,3 @@ class Input:
         check_send(min(n1, n2), f"按键 {key}")
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "mouse"
-

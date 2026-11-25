@@ -220,7 +220,12 @@ def main() -> int:
         log.log(f"{slot}号位", d0["set"] or "空", ok=bool(d0["set"]),
                 detail=f"Lv{d0['level']} 有效{eff}")
 
-    total = round(sum(r["eff"] for r in result), 1)
+    # **主词条是硬门槛**：主词条对这个角色没用的盘，副词条再好也是 0 价。
+    # 用户在 2026-11-25 明确：主词条不对，副词条再好也「是一坨狗屎」。
+    # 不归零的话总分虚高 —— 实跑踩过：4号位主防御力，eff 4.0 被算进 24.0，
+    # 换掉它之后总分「下降」，让人以为换装亏了。
+    total = round(sum(0.0 if r.get("main_verdict") == "bad" else r["eff"]
+                      for r in result), 1)
     blue_count = sum(r.get("blue", 0) for r in result)
     _occ = len([r for r in result if r.get("set") and r["set"] not in ("", "?")])
     print()

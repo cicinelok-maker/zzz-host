@@ -130,7 +130,27 @@ def main() -> int:
         cur_detail = vs.text((0, 0, 1920, 1080))
         cur_set = set_name_of(cur_detail, known_sets)
         cur_eff, _ = eff_of(cur_detail, good, half)
-        cur = {"set": cur_set, "eff": cur_eff,
+
+        # 当前这块盘的主词条也要校验 —— **主词条是硬门槛**。
+        # 主词条对这个角色没用的盘，副词条再好也是 0 价（用户 2026-11-25 明确）。
+        # 不归零的话：4号位「主防御力」的 eff 4.0 会被当真，
+        # 于是「换成主暴击率但副词条差」的正确换装会被拒绝。
+        from core.disc_main import verdict as _mv0
+        from core import vocab as _vb0
+        from core.game_cfg import element_of as _eo0
+        _cur_main = ""
+        if "主属性" in cur_detail:
+            _seg0 = cur_detail.split("主属性", 1)[1].split("副属性", 1)[0]
+            for _p0 in _seg0.split("|"):
+                _q0 = _p0.strip()
+                if any(_q0.startswith(k) for k in _vb0.STATS):
+                    _cur_main = _q0
+                    break
+        _cur_mvd, _ = _mv0(_cur_main, slot, (cfg.get("主词条") or {}),
+                           _eo0(args.agent))
+
+        cur = {"set": cur_set, "eff": cur_eff, "main": _cur_main,
+               "main_verdict": _cur_mvd,
                "level": (re.search(r"等级(\d+)/15", cur_detail) or [None, "?"])[1]}
 
         mlist, slist = [], []
@@ -230,7 +250,6 @@ def main() -> int:
         if cur_empty >= 2:
             print(f"  → 需要先补齐 {cur_empty} 个空位（定向调律或找盘）")
 
-    eff_loss_limit = args.eff_loss_limit
     plan = []
     for s in range(1, 7):
         kind, item = assign.get(s, (None, None))
@@ -241,39 +260,32 @@ def main() -> int:
         cur_eff = (slots[s]["cur"] or {}).get("eff", 0)
         cur_set = (slots[s]["cur"] or {}).get("set", "")
         cur_lv = (slots[s]["cur"] or {}).get("level", 0)
+        # **主词条是硬门槛**：主词条对这个角色没用的盘，副词条再好也是 0 价。
+        # 不归零的话会把 bad 主的盘当成「值 4 分」，从而拒绝正确的换装
+        # （2026-11-25 实跑踩过：4号位主防御力，eff 4.0 被当真）。
+        cur_verdict = (slots[s]["cur"] or {}).get("main_verdict", "")
+        if cur_verdict == "bad" and cur_eff:
+            print(f"  {s} 号位：当前盘主词条无效，有效值按 0 计"
+                  f"（原 {cur_eff:.1f}）")
+            cur_eff = 0
         # 换装判断要看两件事：
         #   1) 有效值变了没有
         #   2) 套装构成变了没有（4+2 的套装效果不算进 eff，但价值真实）
         #
-        # **但「套装变了就换」是个无上限的开关。** 2026-11-25 实跑：
-        # 为了凑 4+2，4 号位从 eff 4.0 换成 1.5（掉 2.5），6 号位掉 1.0，
-        # 总分 24.0 → 20.5。套装加成补不回这些。
-        # → 加一个「为了套装最多让步多少」的上限。
+        # **主词条是硬门槛**：当前盘主词条 bad → 它价值 0，
+        # 换掉它永远是提升，不需要任何「掉分容忍」。
+        # （cur_eff 在上面对 cur_verdict == "bad" 时已经归零）
         eff_better = item["eff"] > cur_eff
-        eff_drop = cur_eff - item["eff"]
         set_diff = item["set"] != cur_set
-
-        if eff_better:
-            need = True
-        elif set_diff and eff_drop <= eff_loss_limit:
-            need = True
-        else:
-            need = False
-
+        need = eff_better or set_diff
         why = []
-        if eff_better:
+        if cur_verdict == "bad":
+            why.append(f"主词条无效 → 换掉（有效 {item['eff']:.1f}）")
+        elif eff_better:
             why.append(f"有效 {cur_eff:.1f}→{item['eff']:.1f}")
         if set_diff:
-            if need and not eff_better:
-                why.append(f"为套装让步 -{eff_drop:.1f}")
-            elif not need:
-                why.append(f"套装 {cur_set or '空'}→{item['set']} "
-                           f"但要掉 {eff_drop:.1f}（超上限 {eff_loss_limit}）")
-            else:
-                why.append(f"套装 {cur_set or '空'}→{item['set']}")
+            why.append(f"套装 {cur_set or '空'}→{item['set']}")
         tag = (" → 换（" + "；".join(why) + "）") if need else " → 不换"
-        if not need and not why:
-            why.append("有效值和套装都没变好")
         print(f"  {s} 号位：{item['set']} Lv{item['level']} 有效 {item['eff']:.1f}"
               f"（当前 {cur_set or '空'} Lv{cur_lv} 有效 {cur_eff:.1f}）{tag}")
         plan.append({"slot": s, "set": item["set"], "level": item["level"],

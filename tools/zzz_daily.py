@@ -144,6 +144,10 @@ def main() -> int:
     ap.add_argument("agent", nargs="?",
                     help="角色名。用 --from-targets 时可以省略")
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="从上次中断的地方继续（读 state/run_checkpoint.json）")
+    ap.add_argument("--focus-wait", type=float, default=300.0,
+                    help="窗口失焦后等多少秒（默认 300），超时存断点退出")
     ap.add_argument("--no-farm", action="store_true")
     ap.add_argument("--skip", default="", help="跳过的步骤，逗号分隔：wengine,level,skill,core,disc,farm")
     ap.add_argument("--wengine-times", type=int, default=8, help="音擎批量轮数")
@@ -251,15 +255,77 @@ def main() -> int:
         # 而且一轮只训一次盘。
     ]
 
+    # 断点续跑：读上次没做完的步骤
+    _done_before = []
+    if getattr(args, "resume", False):
+        try:
+            from core import pause as _pause
+            _ck = _pause.load(args.agent)
+            if _ck:
+                _done_before = list(_ck.get("done") or [])
+                print(f"\n从断点续跑：已完成 {len(_done_before)} 步 {_done_before}")
+                print(f"  剩余 {len(_ck.get('pending') or [])} 步")
+        except Exception as _e:
+            print(f"\n⚠ 读断点失败：{_e}，从头跑")
+
     for label, key, cmd, timeout in steps:
         if key in skip:
             print(f"\n--- {label} --- 跳过")
             continue
+        if label in _done_before:
+            print(f"\n--- {label} --- 断点里已完成，跳过")
+            continue
         if not args.run:
             print(f"\n--- {label} --- [计划] {' '.join(cmd[0].split(chr(92))[-1:])}")
             continue
-        ok, out = run(label, cmd, timeout)
+
+        # **失焦不等于失败** —— 用户可能只是切去看个消息。
+        # 等他切回来，从这个步骤重跑（不是从整轮重跑）。
+        _attempt = 0
+        while True:
+            _attempt += 1
+            try:
+                ok, out = run(label, cmd, timeout)
+                break
+            except Exception as _e:
+                _ename = type(_e).__name__
+                if "FocusLost" not in _ename and "FocusLost" not in str(_e):
+                    raise
+                try:
+                    from core import pause as _pause
+                    from core import focus as _focus
+                    import live as _live
+                    _w = _live.find_window()
+                    _hwnd = _w.get("hwnd") if _w else 0
+                    if not _pause.on_focus_lost(_hwnd, args.focus_wait, label):
+                        raise
+                except Exception:
+                    print(f"  窗口没回来，存断点退出")
+                    from core import pause as _pause
+                    _pause.save(args.agent, _done_before, 
+                                [x[0] for x in steps if x[0] not in _done_before
+                                 and x[0] != label] + [label], "FocusLost")
+                    return 6
+                if _attempt >= 3:
+                    print(f"  {label} 试了 {_attempt} 次还是失焦，跳过")
+                    break
+
         n, notes = judge(label, out)
+
+        # 每步成功就落盘断点 —— 这样硬 Ctrl+C（甚至关窗口）也不丢进度。
+        # 只在内存里记的话，中断处理里拿不到 main() 的局部变量。
+        if ok:
+            _done_before.append(label)
+            try:
+                from core import pause as _pause
+                _pend = [x[0] for x in steps if x[0] not in _done_before]
+                if "farm" not in skip:
+                    _pend.append("刷本")
+                if "disc" not in skip:
+                    _pend.append("驱动盘")
+                _pause.save(args.agent, _done_before, _pend, "进行中")
+            except Exception:
+                pass
         if n == 0:
             why = ""
             for kw in ("材料不足", "打不开", "选不中", "不在 disc_meta", "找不到"):
@@ -353,4 +419,29 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Ctrl+C 不等于丢工作 —— 存个断点，下次 --resume 接着跑。
+    # 以前的版本直接死，做到一半的步骤全丢，而且不知道该从哪接。
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print()
+        print("=" * 60)
+        print("⏹  中断了（Ctrl+C）")
+        print("=" * 60)
+        try:
+            from core import pause as _pause
+            _agent = ""
+            # 从 argv 里猜角色名（第一个不像参数的）
+            import sys as _s
+            for _a in _s.argv[1:]:
+                if not _a.startswith("-"):
+                    _agent = _a
+                    break
+            _ck = pause.CKPT if hasattr(pause, "CKPT") else None
+            print(f"  已完成的步骤不会重跑 —— 断点存在 state/run_checkpoint.json")
+            print(f"  续跑：python tools/zzz_daily.py {_agent} --run --resume")
+            print()
+            print("  （如果你是在跑完整流程前中断的，没有断点文件，直接重跑即可）")
+        except Exception as _e:
+            print(f"  （存断点失败：{_e}）")
+        sys.exit(130)                    # 130 = SIGINT 的约定退出码
