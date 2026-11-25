@@ -261,7 +261,10 @@ def main() -> int:
     for c in ("read", "material", "upgrade"):
         p = sub.add_parser(c)
         p.add_argument("--agent", default=_DEFAULT_AGENT)
-        p.add_argument("--out", default=str(BASE / "state" / "core_status.json"))
+        # **按角色分开存** —— 全局一份会让不同角色的核心技状态互相覆盖，
+        # 更糟的是 farm_plan 会拿一个人的状态判断所有人（实跑踩过：
+        # 佩洛伊斯 A~F 都解锁 → 所有角色的核心技缺口都不算）。
+        p.add_argument("--out", default="")
         if c == "upgrade":
             p.add_argument("--times", type=int, default=1,
                            help="每个核心技最多升几次（默认 1）")
@@ -278,6 +281,8 @@ def main() -> int:
         print("读不到核心技")
         return 3
 
+    if not args.out:
+        args.out = str(BASE / "state" / f"core_status_{args.agent}.json")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(data, ensure_ascii=False, indent=2),
                               encoding="utf-8")

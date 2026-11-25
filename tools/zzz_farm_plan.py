@@ -113,6 +113,12 @@ SKILL_TARGETS = {
 CHIP_PER_LEVEL = 12
 # 等级认证章：每档晋升
 ASCEND_CERT = {20: 4, 30: 20, 40: 20, 50: 30}
+# 核心技面板 costs 的三项对应什么材料（2026-11-26 从实际数值对出来的）
+#   E: costs=[[1,3],[7,15],[3272482,100000]]
+#      刻命残蜕 1/3 · 高维数据 7/15 · 丁尼 3.2M/10万
+#   和 CORE_RELIC{E:3} / CORE_DATA{E:15} 完全对得上，所以是权威值。
+# 丁尼不进刷本清单（不值当单独刷），所以第三项留空。
+COST_KINDS = ["刻命残蜕", "高维数据", ""]
 # 核心技高维数据
 CORE_DATA = {"D": 9, "E": 15, "F": 30}
 CORE_RELIC = {"D": 2, "E": 3, "F": 4}
@@ -125,6 +131,19 @@ def load(p: Path) -> dict:
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _core_of(agent: str):
+    """读某个角色的核心技状态。None = 这个角色从没体检过（不能当「全部解锁」）。"""
+    per = BASE / "state" / f"core_status_{agent}.json"
+    if per.exists():
+        return load(per) or None
+    # 向后兼容：老版本只有一个全局文件，且没有角色字段。
+    # 只在「目录里没有任何按角色的文件」时才敢拿它当全局唯一真相。
+    glob = BASE / "state" / "core_status.json"
+    if glob.exists() and not list((BASE / "state").glob("core_status_*.json")):
+        return load(glob) or None
+    return None
 
 
 def collect() -> dict[str, dict]:
@@ -150,10 +169,14 @@ def collect() -> dict[str, dict]:
         if not st:
             continue
 
-        # 1) 等级认证章
+        # 1) 等级认证章 —— **按职业分**
+        # 实际是「代理人晋升」副本，7 个职业各一个演练：
+        #   锋御演练 / 命破演练 / 强攻演练 / 击破演练 / 异常演练 / 支援演练 / 防护演练
+        # 以前所有角色合并成一笔「认证章」去刷「基础材料」，那是错的。
         cert = sum(v for k, v in ASCEND_CERT.items() if k > lv)
         if cert:
-            add("认证章", cert, f"{name}(升{lv}→60)")
+            _role = (cfg.get("定位") or "").split("/")[0] or "强攻"
+            add(f"认证章_{_role}", cert, f"{name}({_role} 升{lv}→60)")
 
         # 2) 技能芯片（按岗位目标）
         cfg = meta.get(name) or {}
@@ -169,12 +192,35 @@ def collect() -> dict[str, dict]:
             add(f"特化{attr}芯片", gap * CHIP_PER_LEVEL, f"{name}(技能差{gap}级)")
 
         # 3) 核心技
-        core = load(BASE / "state" / "core_status.json")
-        unlocked = [k for k, v in core.items()
-                    if isinstance(v, dict) and v.get("unlocked")]
-        if len(unlocked) < 6:
-            add("高维数据", sum(CORE_DATA.values()), f"{name}(核心技)")
-            add("刻命残蜕", sum(CORE_RELIC.values()), f"{name}(核心技)")
+        # **必须读这个角色自己的状态。** 全局 core_status.json 只记了最后体检的那个角色，
+        # 拿它判断所有人会让核心技缺口整体消失（2026-11-26 实跑确认过）。
+        core = _core_of(name)
+        if core is None:
+            # 这个角色从没体检过核心技 —— 不知道缺多少，**标出来而不是当 0**
+            add("高维数据", sum(CORE_DATA.values()), f"{name}(核心技·未体检，按满额估)")
+            add("刻命残蜕", sum(CORE_RELIC.values()), f"{name}(核心技·未体检，按满额估)")
+        else:
+            # **用 costs 判断，不用 unlocked。**
+            # unlocked 只说明「解锁了」，解锁之后还要一层层升；
+            # 满级的那几个圈 costs 是空的，没满的 costs 里 have<need。
+            # 旧代码用 `len(unlocked) < 6`，A~F 全解锁时永远算不出缺口（实跑确认过）。
+            for ckey, cv in core.items():
+                if not isinstance(cv, dict):
+                    continue
+                for ci, pair in enumerate(cv.get("costs") or []):
+                    try:
+                        _have, _need = int(pair[0]), int(pair[1])
+                    except (TypeError, IndexError, ValueError):
+                        continue
+                    if _have >= _need:
+                        continue
+                    kind = COST_KINDS[ci] if ci < len(COST_KINDS) else ""
+                    if not kind:
+                        continue
+                    # 注意：这里不能用 need 当变量名 —— 它是外层那个 dict，
+                    # 覆盖掉就会 AttributeError: 'int' object has no attribute 'setdefault'
+                    add(kind, _need - _have,
+                        f"{name}(核心技{ckey} {_have}/{_need})")
 
         # 4) 音擎：没有实测数据就不瞎加（之前每人硬加 380 是错的，
         #    13 个角色加起来 4940，而实际大多数音擎已经满级）
@@ -182,13 +228,32 @@ def collect() -> dict[str, dict]:
         if eng and eng.get("batt_need"):
             add("蓄电池", int(eng["batt_need"]), f"{name}(音擎)")
 
-        # 5) 驱动盘：有空位就需要刷盘，按套装选区域巡防
+        # 5) 驱动盘：**按套装分副本**
+        # 以前不区分套装，全用 DUNGEON["驱动盘"] 那个写死的「机师与叛甲」，
+        # 48 次 × 60 电全算在同一个副本上 —— 而实际要刷好几个不同的巡防。
         slots = st.get("slots") or []
-        have = {s["slot"] for s in slots if s.get("set")}
+        have = {s.get("slot") for s in slots if s.get("set")}
         empty = [s for s in range(1, 7) if s not in have]
         if empty:
-            # 一个空位平均要刷 4 次才能凑出能用的盘
-            add("驱动盘", len(empty) * 4, f"{name}(空{empty})")
+            # 这个角色要哪些套装：四件套 + 两件套候选
+            _sets = []
+            if cfg.get("四件套"):
+                _sets.append(cfg["四件套"])
+            _sets.extend(cfg.get("两件套候选") or [])
+            # 一个空位平均刷 4 次才出能用的
+            _per = 4
+            if not _sets:
+                add("驱动盘_未配置", len(empty) * _per,
+                    f"{name}(空{empty}，但 disc_meta 里没配置套装)")
+            else:
+                for _sn in _sets:
+                    _dungeon = PATROL_BY_SET.get(_sn)
+                    if not _dungeon:
+                        add("驱动盘_无副本", len(empty) * _per,
+                            f"{name}(套装 {_sn} 查不到副本)")
+                        continue
+                    add(f"驱动盘_{_dungeon}", len(empty) * _per,
+                        f"{name}(空{empty} 要 {_sn})")
 
     return need
 
@@ -196,6 +261,32 @@ def collect() -> dict[str, dict]:
 def plan_rows(need: dict, meta: dict) -> list[dict]:
     rows = []
     for mat, d in need.items():
+        # ---- 新拆出来的材料名 → 副本 ----
+        # 认证章_强攻 → 实战模拟室·代理人晋升（强攻演练）
+        if mat.startswith("认证章_"):
+            _role = mat.split("_", 1)[1]
+            rows.append({
+                "材料": mat, "数量": d["数量"],
+                "副本": f"实战模拟室·代理人晋升（{_role}演练）",
+                "次数": -(-d["数量"] // max(1, 3 * CARDS_DEFAULT)),
+                "电量": (-(-d["数量"] // max(1, 3 * CARDS_DEFAULT))) * CARD_BATTERY * CARDS_DEFAULT,
+                "角色": d["角色"],
+                "cmd": ["--training", "代理人晋升", "--cards", str(CARDS_DEFAULT)],
+            })
+            continue
+        # 驱动盘_机师与叛甲 → 区域巡防·机师与叛甲
+        if mat.startswith("驱动盘_"):
+            _dg = mat.split("_", 1)[1]
+            _runs = -(-d["数量"] // 2)          # 每趟约出 2 个能用的盘
+            rows.append({
+                "材料": mat, "数量": d["数量"],
+                "副本": f"区域巡防·{_dg}",
+                "次数": _runs, "电量": _runs * 60,
+                "角色": d["角色"],
+                "cmd": ["--patrol", _dg],
+            })
+            continue
+
         key = "特化芯片" if mat.startswith("特化") else mat
         cfg = DUNGEON.get(key)
         if not cfg:
@@ -227,6 +318,14 @@ def plan_rows(need: dict, meta: dict) -> list[dict]:
                 name += f"（还有 {len(set(picks)) - 1} 个套装要另外刷）"
 
         runs = -(-d["数量"] // cfg["产出"])
+        # **周本要标跨周**：每周只有 3 次免费，13 次刷不完就得等下几周。
+        # 不标的话「0 电 13 次」看起来像一次就能搞定。
+        if key == "刻命残蜕":
+            from core.weekly import FREE_RUNS as _FR
+            _free = _FR.get("恶名狩猎", 3)
+            _weeks = -(-runs // max(1, _free))
+            _note = f"每周 {_free} 次免费，要 {_weeks} 周" if _weeks > 1 else f"每周 {_free} 次免费"
+            name = f"{name}　（{_note}）"
         rows.append({"材料": mat, "数量": d["数量"], "副本": name,
                      "次数": runs, "电量": runs * cfg["电量"],
                      "角色": d["角色"], "cmd": cmd})
