@@ -57,23 +57,6 @@ def _edit_distance(a: str, b: str) -> int:
     return prev[-1]
 
 
-def correct(text: str, vocab: list[str], max_dist: int = 1) -> str:
-    """把 text 纠正到 vocab 里最接近的词；纠不动就原样返回。"""
-    t = (text or "").strip()
-    if not t:
-        return t
-    if t in vocab:
-        return t
-    # 包含关系优先（OCR 常带多余前后缀）
-    for v in vocab:
-        if v in t:
-            return v
-    best, best_d = t, 99
-    for v in vocab:
-        d = _edit_distance(t, v)
-        if d < best_d:
-            best, best_d = v, d
-    return best if best_d <= max_dist else t
 
 
 def stat_name_of(text: str) -> str:
@@ -86,43 +69,8 @@ def stat_name_of(text: str) -> str:
     return t
 
 
-def split_stat(text: str) -> tuple[str, str]:
-    """拆成 (属性名, 数值部分)，都会做纠错"""
-    t = (text or "").strip()
-    name = stat_name_of(t)
-    rest = t[len(name):].strip()
-    return correct(name, STATS + STATS_MAIN_EXTRA, max_dist=1), rest
 
 
-def correct_set(text: str) -> str:
-    return correct(text, SETS, max_dist=1)
 
 
-# ---------- 值域校验 ----------
-def valid_level(v) -> bool:
-    try:
-        return 0 <= int(v) <= 15
-    except Exception:
-        return False
 
-
-def valid_percent(v) -> bool:
-    try:
-        f = float(str(v).rstrip("%"))
-        return 0.0 <= f <= 100.0
-    except Exception:
-        return False
-
-
-def parse_number(s: str) -> float | None:
-    """从「攻击力 +2 9%」这类字符串里取出数值；取不到返回 None"""
-    import re
-    if not s:
-        return None
-    m = re.search(r"(\d+(?:\.\d+)?)\s*%?", s)
-    if not m:
-        return None
-    try:
-        return float(m.group(1))
-    except Exception:
-        return None

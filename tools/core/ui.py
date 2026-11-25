@@ -70,16 +70,6 @@ class Ui:
         self.inp.click_item(hit, wait=wait)
         return True
 
-    def click_and_wait(self, keyword: str, region: Region,
-                       expect_region: Region, expect,
-                       timeout: float = 8.0) -> bool:
-        if not self.click_text(keyword, region):
-            return False
-        keys = (expect,) if isinstance(expect, str) else tuple(expect)
-        ok = self.vs.wait_for(expect_region, *keys, timeout=timeout)
-        if not ok:
-            print(f"  [ui] 点了「{keyword}」但没等到 {keys}")
-        return ok
 
     def click_until(self, keyword: str, region: Region,
                     expect_region: Region, expect: str,
@@ -120,17 +110,11 @@ class Ui:
             self.vs.frame(force=True)
         return self.vs.has(watch, keyword)
 
-    def scroll_top(self, region: Region, notches: int = 20) -> None:
-        """滚回顶部"""
-        self.inp.wheel(notches, wait=0.5)
-        self.vs.frame(force=True)
 
     # ---------- 手柄 ----------
     def press(self, button: str, wait: float = 0.45) -> None:
         self.inp.pad_tap(button, wait=wait)
 
-    def press_times(self, button: str, n: int, wait: float = 0.3) -> None:
-        self.inp.pad_taps(button, n, wait=wait)
 
     # ---------- 校验 ----------
     def wait_for(self, region: Region, *keywords: str, timeout: float = 8.0) -> bool:
@@ -149,10 +133,3 @@ class Ui:
         ok = self.vs.has(region, *keywords)
         self.inp.mouse_mode()
         return ok
-
-    # ---------- 组合动作 ----------
-    def click_filter_funnel(self, panel_region: Region, funnel_xy=(135, 922)) -> bool:
-        """打开筛选面板：点漏斗 → 验证面板出现"""
-        self.inp.click(*funnel_xy, wait=1.4)
-        return self.vs.wait_for(panel_region, "稀有度", timeout=4.0) or \
-               self.vs.wait_for(panel_region, "套装", timeout=2.0)

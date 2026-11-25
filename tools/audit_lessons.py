@@ -94,18 +94,33 @@ for name, (f, text) in ALL.items():
 
 # R03 同一常量多处定义 —— 删掉：每个文件定义自己的 BASE 是正常的，全误报
 
-# ---------------- R04 定义了不用的函数
+# ---------------- R04 定义了不用的函数 / 方法
+#
+# **类方法也要查**（2026-11-25 补）：以前只遍历 tree.body，
+# `Input.pad_stick` 这类方法完全看不到，结果 8 个死方法一直藏着。
 for name, (f, text) in ALL.items():
     try:
         tree = ast.parse(text)
     except SyntaxError:
         continue
+
+    def _check(fn, kind: str) -> None:
+        if fn.name.startswith("__") and fn.name.endswith("__"):
+            return                      # dunder 被隐式调用
+        if fn.name.startswith("_"):
+            return                      # 内部方法可能是回调
+        uses = sum(len(re.findall(rf"\b{fn.name}\b", t))
+                   for _, (_, t) in ALL.items())
+        if uses <= 1:
+            add("R04 死函数", name, f"{kind}{fn.name}")
+
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
-            uses = sum(len(re.findall(rf"\b{node.name}\b", t))
-                       for _, (_, t) in ALL.items())
-            if uses <= 1:
-                add("R04 死函数", name, node.name)
+        if isinstance(node, ast.FunctionDef):
+            _check(node, "")
+        elif isinstance(node, ast.ClassDef):
+            for sub in node.body:
+                if isinstance(sub, ast.FunctionDef):
+                    _check(sub, f"{node.name}.")
 
 # ---------------- R05 硬编码角色名（写死的，不是默认值）
 meta = json.loads((T / "disc_meta.json").read_text(encoding="utf-8"))

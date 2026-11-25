@@ -175,35 +175,8 @@ class Vision:
     def text(self, region: Region, **kw) -> str:
         return " | ".join(i["text"] for i in self.items(region, **kw))
 
-    def text_scaled(self, region: Region, scale: float = 2.0) -> str:
-        """小字区域用：放大后再读"""
-        return self.text(region, scale=scale)
 
-    def text_verified(self, region: Region, tries: int = 2,
-                      min_agree: int = 2) -> tuple[str, bool]:
-        """多帧投票：读两次结果一致才采信。返回 (文本, 是否可信)。"""
-        seen: dict[str, int] = {}
-        last = ""
-        for i in range(tries):
-            last = self.text(region)
-            seen[last] = seen.get(last, 0) + 1
-            if seen[last] >= min_agree:
-                return last, True
-            self.frame(force=True)
-            time.sleep(0.12)
-        best = max(seen.items(), key=lambda kv: kv[1])[0]
-        return best, seen[best] >= min_agree
 
-    def text_many(self, regions: dict[str, Region]) -> dict[str, str]:
-        """多区域读取。
-
-        **实测结论：并行没有收益。**
-        三个区域串行 808ms，开 4 线程并行 851ms（预热后仍然如此）——
-        ONNX 推理吃满 CPU，线程争用抵消了并行收益，再叠加 GIL。
-        所以这里老老实实串行；真正省时间的办法是「缩小区域」和「用模板/颜色」。
-        """
-        self.frame()
-        return {name: self.text(r) for name, r in regions.items()}
 
     def find(self, keyword: str, region: Region, exact: bool = False,
              **kw) -> dict | None:
@@ -216,18 +189,6 @@ class Vision:
         """返回区域内所有含 keyword 的文字块（含坐标）"""
         return [i for i in self.items(region) if keyword in i["text"]]
 
-    def find_corrected(self, keyword: str, region: Region,
-                       corrector=None) -> dict | None:
-        """容忍 OCR 错字的查找：先精确找，再纠错比对"""
-        hit = self.find(keyword, region)
-        if hit:
-            return hit
-        if corrector is None:
-            return None
-        for it in self.items(region):
-            if corrector(it["text"]) == keyword:
-                return it
-        return None
 
     def has(self, region: Region, *keywords: str) -> bool:
         t = self.text(region)
@@ -248,47 +209,9 @@ class Vision:
                           for i in (self.ocr.ocr(self.frame()) or [])
                           if getattr(i, "data", "").strip())
 
-    # ================= 颜色 =================
-    def color_at(self, x: int, y: int, radius: int = 4) -> tuple[int, int, int]:
-        """取点的平均 RGB（BGR→RGB）"""
-        img = self.frame()
-        patch = img[max(0, y - radius):y + radius, max(0, x - radius):x + radius]
-        if patch.size == 0:
-            return (0, 0, 0)
-        b, g, r = patch[:, :, 0].mean(), patch[:, :, 1].mean(), patch[:, :, 2].mean()
-        return (int(r), int(g), int(b))
 
-    def is_highlighted(self, x: int, y: int, radius: int = 18,
-                       thresh: float = 110) -> bool:
-        """是否块状高亮（选中项底色偏亮）"""
-        img = self.frame()
-        patch = img[max(0, y - radius):y + radius, max(0, x - radius):x + radius]
-        return bool(patch.size and patch[:, :, :3].mean() > thresh)
 
-    def rarity_at(self, x: int, y: int) -> str:
-        """按颜色判断稀有度：金=S 紫=A 蓝=B 其它=?"""
-        r, g, b = self.color_at(x, y, radius=6)
-        if r > 150 and g > 110 and b < 110:
-            return "S"
-        if r > 110 and b > 130 and g < 110:
-            return "A"
-        if b > 130 and r < 110:
-            return "B"
-        return "?"
 
-    def find_color(self, rgb: tuple[int, int, int], region: Region,
-                   tol: int = 26, min_ratio: float = 0.02) -> tuple[int, int] | None:
-        """在区域里找指定颜色，返回第一个匹配点（步进采样，快）"""
-        x0, y0, x1, y1 = region
-        sub = self.crop(region)
-        r, g, b = rgb
-        mask = ((np.abs(sub[:, :, 2].astype(int) - r) < tol) &
-                (np.abs(sub[:, :, 1].astype(int) - g) < tol) &
-                (np.abs(sub[:, :, 0].astype(int) - b) < tol))
-        if mask.mean() < min_ratio:
-            return None
-        ys, xs = np.nonzero(mask)
-        return (int(xs.mean()) + x0, int(ys.mean()) + y0)
 
     # ================= 模板 =================
     def template(self, name: str, region: Region | None = None,
@@ -341,28 +264,7 @@ class Vision:
                 min(1920, x1 + pad), min(1080, y1 + pad))
         return self.template(name, area, threshold=threshold)
 
-    def save_template(self, name: str, region: Region) -> Path:
-        import cv2
-        TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
-        path = TEMPLATE_DIR / f"{name}.png"
-        img = np.ascontiguousarray(self.crop(region))
-        ok, buf = cv2.imencode(".png", img)
-        if not ok:
-            raise RuntimeError(f"模板编码失败: {name}")
-        path.write_bytes(buf.tobytes())
-        return path
 
-    # ================= 变化检测 =================
-    def wait_change(self, region: Region, timeout: float = 8.0,
-                    thresh: float = 6.0) -> bool:
-        base = self.crop(region).astype("float32")
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            time.sleep(0.08)
-            cur = self.crop(region).astype("float32")
-            if float(np.abs(cur - base).mean()) > thresh:
-                return True
-        return False
 
     def wait_still(self, region: Region | None = None, quiet: float = 0.3,
                    timeout: float = 8.0, thresh: float = 3.0) -> bool:

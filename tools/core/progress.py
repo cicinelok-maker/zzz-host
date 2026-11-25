@@ -52,8 +52,6 @@ class Progress:
     def get(self, key: str, default=None):
         return (self.data.get("done") or {}).get(key, default)
 
-    def pending(self, keys: list[str]) -> list[str]:
-        return [k for k in keys if not self.done(k)]
 
     # ---------- 记录 ----------
     def mark(self, key: str, info: dict | None = None) -> None:

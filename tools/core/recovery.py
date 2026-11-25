@@ -78,27 +78,3 @@ def guard(fn: Callable, *, retries: int = 3, ui=None,
         if ui is not None and on_fail_reset:
             reset_to_world(ui)
     return False
-
-
-class ResourceGate:
-    """资源门控：电量/材料不够就别硬跑。"""
-
-    @staticmethod
-    def charge_enough(ui, minimum: int = 100,
-                      region=(600, 20, 900, 90)) -> bool:
-        """从左上角电量「xxx/240」判断是否够刷一次本"""
-        import re
-        txt = ui.vs.text(region)
-        m = re.search(r"(\d{2,3})\s*/\s*240", txt)
-        if not m:
-            return True          # 读不到就不拦
-        have = int(m.group(1))
-        ok = have >= minimum
-        if not ok:
-            print(f"  [gate] 电量 {have} < {minimum}，跳过")
-        return ok
-
-    @staticmethod
-    def material_enough(ui, detail_region, keyword="物品不足") -> bool:
-        """强化面板里出现「物品不足」就说明材料不够"""
-        return keyword not in ui.vs.text(detail_region)

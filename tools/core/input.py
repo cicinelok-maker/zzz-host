@@ -227,13 +227,6 @@ class Input:
         time.sleep(wait)
         self.mode = "mouse"
 
-    def pad_mode(self, wait: float = 0.4) -> None:
-        """切到手柄态（战斗、摄像机操作用）。"""
-        self._press_pad("up", gap=0.08)
-        time.sleep(wait)
-        self.mode = "pad"
-
-    # ================= 鼠标 =================
     def move(self, x: int, y: int) -> None:
         user32.SetCursorPos(self.ox + x, self.oy + y)
         time.sleep(0.06)
@@ -255,12 +248,7 @@ class Input:
         """点一个 OCR 结果（含 cx/cy）"""
         self.click(item["cx"], item["cy"], **kw)
 
-    def double_click(self, x: int, y: int, wait: float = 0.4) -> None:
-        self.click(x, y, wait=0.06, hold=0.04)
-        self.click(x, y, wait=wait, hold=0.04)
 
-    def right_click(self, x: int, y: int, wait: float = 0.35) -> None:
-        self.click(x, y, wait=wait, button="right")
 
     def wheel(self, notches: int, *, wait: float = 0.45) -> None:
         """滚轮：正数向上，负数向下。一格 = 120。"""
@@ -268,24 +256,6 @@ class Input:
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "mouse"
 
-    def drag(self, x1: int, y1: int, x2: int, y2: int, *,
-             steps: int = 14, wait: float = 0.4, hold_before: float = 0.12) -> None:
-        """按住从左点拖到右点（拖滚动条、滑块、列表）。"""
-        user32.SetCursorPos(self.ox + x1, self.oy + y1)
-        time.sleep(0.08)
-        user32.mouse_event(LDOWN, 0, 0, 0, 0)
-        time.sleep(hold_before)
-        for i in range(1, steps + 1):
-            x = int(x1 + (x2 - x1) * i / steps)
-            y = int(y1 + (y2 - y1) * i / steps)
-            user32.SetCursorPos(self.ox + x, self.oy + y)
-            time.sleep(0.025)
-        time.sleep(0.10)
-        user32.mouse_event(LUP, 0, 0, 0, 0)
-        time.sleep(_jit(wait) if self.jitter else wait)
-        self.mode = "mouse"
-
-    # ================= 手柄 =================
     def _press_pad(self, button: str, gap: float = 0.05, hold: float = 0.09) -> None:
         b = PAD[button]
         self._pad.press_button(b)
@@ -305,25 +275,7 @@ class Input:
             self._press_pad(button, gap=wait)
         self.mode = "pad"
 
-    def pad_trigger(self, side: str = "rt", value: int = 255, *, wait: float = 0.4) -> None:
-        fn = self._pad.right_trigger if side == "rt" else self._pad.left_trigger
-        fn(value=value)
-        self._pad.update()
-        time.sleep(0.09)
-        fn(value=0)
-        self._pad.update()
-        time.sleep(wait)
-        self.mode = "pad"
 
-    def pad_stick(self, x: float, y: float, *, hold: float = 0.4) -> None:
-        """左摇杆推一下（-1~1），用于角色移动/摄像机"""
-        self._pad.left_joystick_float(x_value_float=x, y_value_float=y)
-        self._pad.update()
-        time.sleep(hold)
-        self._pad.left_joystick_float(x_value_float=0, y_value_float=0)
-        self._pad.update()
-
-    # ================= 键盘 =================
     def key(self, key, *, wait: float = 0.3, hold: float = 0.06) -> None:
         """按键。key 可以是名字（"esc"/"tab"…）或扫描码整数。
 
@@ -350,35 +302,3 @@ class Input:
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "mouse"
 
-    def hold_key(self, key, seconds: float = 0.6) -> None:
-        """按住某个键一段时间（走路用）"""
-        scan = _scan(key)
-        if not scan:
-            return
-        down = _INPUT(type=INPUT_KEYBOARD)
-        down.u.ki = _KEYBDINPUT(wVk=0, wScan=scan, dwFlags=KEYEVENTF_SCANCODE,
-                                time=0, dwExtraInfo=None)
-        up = _INPUT(type=INPUT_KEYBOARD)
-        up.u.ki = _KEYBDINPUT(wVk=0, wScan=scan,
-                              dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
-                              time=0, dwExtraInfo=None)
-        ctypes.set_last_error(0)
-        n1 = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
-        time.sleep(seconds)
-        ctypes.set_last_error(0)
-        n2 = user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
-        check_send(min(n1, n2), f"按键 {key}")
-        time.sleep(0.1)
-        self.mode = "mouse"
-
-    def type_text(self, text: str, *, wait: float = 0.4) -> None:
-        """逐字符输入（ASCII；中文需用剪贴板）"""
-        for ch in text:
-            vk = user32.VkKeyScanW(ord(ch)) & 0xFF
-            if vk == 0xFF:
-                continue
-            user32.keybd_event(vk, 0, 0, 0)
-            time.sleep(0.01)
-            user32.keybd_event(vk, 0, 2, 0)
-            time.sleep(0.02)
-        time.sleep(wait)
