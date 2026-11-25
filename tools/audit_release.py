@@ -186,6 +186,7 @@ for rel in sorted(rel_set):
                 "tools/core/paths.py",      # ONE_DRAGON_GUESSES
                 "tools/zzz_launch.py",      # GAME_GUESSES
                 "daily.ps1",                # PowerShell 里的同一份猜测
+                "admin.ps1",                # 同上（提权脚本也要找 OneDragon）
                 "paths.example.json",       # 填法示例
                 "tools/audit_release.py",   # 本文件（docstring 里举了例子）
             }

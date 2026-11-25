@@ -21,7 +21,22 @@ class Ui:
 
     # ---------- 生命周期 ----------
     def start(self) -> None:
-        """准备工作：前台 + 键鼠态"""
+        """准备工作：权限闸 + 前台 + 键鼠态
+
+        **权限闸放这里**：所有会动游戏的工具都经过 Ui.start()。
+        `is_admin()` 是确定性查询，不依赖任何注入结果 ——
+        而 `SendInput` 的返回值在 UIPI 拦截下是看不出来的（返回 1）。
+        """
+        from .input import InputBlocked, is_admin
+        if not is_admin():
+            raise InputBlocked(
+                "✘ 需要管理员权限\n"
+                "  没有管理员权限时，Windows UIPI 会静默丢弃所有按键/点击，\n"
+                "  工具不会报错，而是白等到超时（实测 150~254 秒）。\n"
+                "  \n"
+                "  正确用法：右键终端 → 以管理员身份运行\n"
+                "  （或跑项目根的 .\\admin.ps1，它会自动提权重开）"
+            )
         import live
         live.foreground(self.vs.win)
         time.sleep(0.3)

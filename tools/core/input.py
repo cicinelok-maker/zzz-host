@@ -62,7 +62,8 @@ class InputBlocked(RuntimeError):
 
     Windows 的 UIPI（User Interface Privilege Isolation）会静默丢弃
     低完整性级别进程往高完整性级别窗口注入的输入。
-    SendInput 返回 0，GetLastError 给 ERROR_ACCESS_DENIED (5)。
+    **实测：UIPI 拦截时 SendInput 返回 1（成功），只有 GetLastError 是 5。**
+    消息是在目标的输入队列那侧被丢的，调用本身「成功」了。
     """
 
 
@@ -71,16 +72,31 @@ def _admin_hint() -> str:
             "或用项目的 .\\admin.ps1）")
 
 
-def check_send(ok: int, what: str) -> None:
-    """SendInput 返回 0 就抛 InputBlocked。"""
-    if ok:
+ERROR_ACCESS_DENIED = 5
+
+
+def check_send(ok: int, what: str, err: int | None = None) -> None:
+    """输入注入失败就抛 InputBlocked。
+
+    **两个信号都要看**（实测总结）：
+      · SendInput 返回 0     → 插入失败（极端情况，比如队列满）
+      · GetLastError == 5    → UIPI 拦了。**这种情况 SendInput 返回 1**，
+                               因为调用本身「成功送达系统」了，
+                               消息是在目标的输入队列那边被丢的。
+
+    所以只判返回值是不够的 —— 这是第一版的错误。
+
+    调用前必须 `ctypes.set_last_error(0)`，否则上一把的 5 会误报。
+    """
+    if err is None:
+        err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
+    if ok and err != ERROR_ACCESS_DENIED:
         return
-    err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
-    msg = [f"✘ 输入注入失败：{what} 没送到游戏窗口"]
-    if err == 5 or True:
-        msg.append(_admin_hint())
-    msg.append("  症状：工具会一直等到超时才报错（几分钟），不是立刻失败")
-    msg.append("  这是 Windows UIPI 拦的，不是游戏的问题")
+    why = ("被 Windows UIPI 拦了（进程权限低于游戏）"
+           if err == ERROR_ACCESS_DENIED else "系统拒绝插入事件")
+    msg = [f"✘ 输入注入失败：{what} {why}"]
+    msg.append(_admin_hint())
+    msg.append("  症状：不会报错，而是白等到超时（实测 150~254 秒）")
     raise InputBlocked("\n".join(msg))
 
 
@@ -325,8 +341,10 @@ class Input:
         up.u.ki = _KEYBDINPUT(wVk=0, wScan=scan,
                               dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
                               time=0, dwExtraInfo=None)
+        ctypes.set_last_error(0)
         n1 = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
         time.sleep(_jit(hold, 0.3) if self.jitter else hold)
+        ctypes.set_last_error(0)
         n2 = user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
         check_send(min(n1, n2), f"按键 {key}")
         time.sleep(_jit(wait) if self.jitter else wait)
@@ -344,8 +362,10 @@ class Input:
         up.u.ki = _KEYBDINPUT(wVk=0, wScan=scan,
                               dwFlags=KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
                               time=0, dwExtraInfo=None)
+        ctypes.set_last_error(0)
         n1 = user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
         time.sleep(seconds)
+        ctypes.set_last_error(0)
         n2 = user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
         check_send(min(n1, n2), f"按键 {key}")
         time.sleep(0.1)
