@@ -125,11 +125,51 @@ def rule_d(text: str):
     return hits
 
 
+
+def rule_e(text: str):
+    """用了 inp.click/key/pad_tap 注入输入，但文件里没有 ui.start()。
+
+    历史 bug：zzz_launch.py 直接 Vision(), Input() 然后 inp.click(...)，
+    没有 Ui.start() —— 权限闸（is_admin）就覆盖不到它。
+    普通权限下的表现：游戏起得来，然后在标题页白等满 120 秒，
+    最后报「等进入游戏超时」exit=3，看不出是权限问题。
+
+    闸只保护「走过闸的路径」；这条规则检查「谁没走」。
+    """
+    import re as _re
+    # 有实际输入注入吗（注释掉的不算）
+    code_only = "\n".join(l.split("#")[0] for l in text.splitlines())
+    if not _re.search(r"\binp\.(click|click_item|key|key_down|key_up|pad_tap|"
+                      r"pad_taps|wheel|scroll)\(", code_only):
+        return []
+    # 有 start() 吗
+    if _re.search(r"\.start\(\)", code_only):
+        return []
+    # 自己定义 Input 的模块（core/input.py）不算
+    if "class Input" in code_only:
+        return []
+    # 已有 is_admin 闸的也不算（zzz_launch 就是这种）
+    if "is_admin" in code_only:
+        return []
+    # 只在「自己构造 Input()」的地方报 ——
+    # click.py / locate.py / flows.py / machine.py 都是接收 ui/inp 参数的辅助函数，
+    # 调用方已经走过 Ui.start()，不是它们的问题。
+    if not _re.search(r"\bInput\(\)", code_only):
+        return []
+    # 标出第一次注入调用
+    for i, line in enumerate(text.splitlines(), 1):
+        code = line.split("#")[0]
+        if _re.search(r"\binp\.(click|click_item|key|pad_tap)\(", code):
+            return [(i, line.strip()[:70])]
+    return []
+
+
 RULES = [
     ("A", "rolls 类函数返回最少 1（口径B 重复计数）", rule_a),
     ("B", "破坏性动作做了 or 兜底（会执行错误动作）", rule_b),
     ("C", "用未验证能读到的面板标题判定", rule_c),
     ("D", "导航类点击后不验证是否到达", rule_d),
+    ("E", "注入了按键/点击但没走 Ui.start() 的权限闸", rule_e),
 ]
 
 

@@ -144,8 +144,21 @@ def enter_game(timeout: int = 90) -> int:
     """等窗口出来后，自动点「进入游戏」直到到世界。
 
     返回 0 = 已到世界，1 = 停在开始界面但没找到按钮，
-        2 = 需要登录（做不了），3 = 超时
+        6 = 需要登录（做不了），3 = 超时
     """
+    # 权限闸：这个函数要「点进入游戏」。注入被 UIPI 丢掉的话会白等满 timeout，
+    # 最后只报「超时」—— 看不出是权限问题（朋友实测普通权限下就是这样）。
+    # 它是所有人第一个跑的命令（AGENTS.md 五条命令的第 2 条），闸必须在这。
+    from core.input import is_admin
+    if not is_admin():
+        print("✘ 需要管理员权限")
+        print("  要点「点击进入游戏」—— 没有管理员权限时这个点击会被")
+        print("  Windows UIPI 静默丢弃，然后白等满超时，最后只报「超时」。")
+        print()
+        print("  正确用法：右键终端 → 以管理员身份运行")
+        print("  或跑项目根的：.\\admin.ps1")
+        return 2
+
     from core import Vision, Input, anchors
     vs, inp = Vision(), Input()
     t0 = time.time()
@@ -161,7 +174,7 @@ def enter_game(timeout: int = 90) -> int:
             if w in txt:
                 print(f"  停在登录界面（看到「{w}」）")
                 print("  → 需要账号密码/扫码，这一步做不了，请手动登录一次")
-                return 2
+                return 6
 
         clicked = False
         for w in ENTER_WORDS:
