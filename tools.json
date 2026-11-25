@@ -418,13 +418,20 @@
      "flag": "--agent"
     },
     {
+     "flag": "--goto"
+    },
+    {
      "flag": "--out"
+    },
+    {
+     "flag": "--times"
     }
    ],
    "json_output": false,
    "exit_codes": [
     0,
-    3
+    3,
+    4
    ],
    "purpose": "核心技：A~F 六个圈的等级、材料需求、材料来源",
    "outputs": [],
@@ -474,6 +481,12 @@
      "flag": "--run"
     },
     {
+     "flag": "--resume"
+    },
+    {
+     "flag": "--focus-wait"
+    },
+    {
      "flag": "--no-farm"
     },
     {
@@ -496,7 +509,8 @@
    "exit_codes": [
     0,
     2,
-    3
+    3,
+    6
    ],
    "purpose": "角色养成一轮：盘点→缺口→电量→刷本→养成→记账→汇报",
    "outputs": [
@@ -652,6 +666,34 @@
    "idempotent": true,
    "destructive": false,
    "slow": "5-40 分钟"
+  },
+  {
+   "name": "zzz_enka",
+   "cmd": "python tools/zzz_enka.py",
+   "args": [
+    {
+     "pos": "uid"
+    },
+    {
+     "flag": "--write"
+    },
+    {
+     "flag": "--status"
+    },
+    {
+     "flag": "--json"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "从 Enka API 读账号数据（zzzcaculator.top 提供的代理接口）",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
   },
   {
    "name": "zzz_equip",
@@ -832,6 +874,9 @@
     },
     {
      "flag": "--apply"
+    },
+    {
+     "flag": "--eff-loss-limit"
     },
     {
      "flag": "--secondary"
@@ -1056,6 +1101,15 @@
     },
     {
      "flag": "--history"
+    },
+    {
+     "flag": "--add-agent"
+    },
+    {
+     "flag": "--role"
+    },
+    {
+     "flag": "--element"
     }
    ],
    "json_output": false,
