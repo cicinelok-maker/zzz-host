@@ -193,10 +193,30 @@ def main() -> int:
         print(f"   {json.dumps(repo, ensure_ascii=False)[:400]}")
         return 4
 
+    # ---- 2b 确保仓库非空
+    # GitHub 的 Git Data API 不允许在完全空的仓库上建 blob（报 409 Git Repository is empty）。
+    # 先用 Contents API 塞一个初始文件，让仓库有一个提交。
+    code, probe = api(f"/repos/{owner}/{args.repo}/contents/README-PLACEHOLDER.md",
+                      token)
+    if code == 404:
+        print("· 仓库是空的，先建初始提交…")
+        code2, r2 = api(f"/repos/{owner}/{args.repo}/contents/.keep", token,
+                        "PUT", {
+                            "message": "init",
+                            "content": base64.b64encode(b"").decode("ascii"),
+                        })
+        if code2 in (200, 201):
+            print("✔ 初始提交已建")
+        else:
+            print(f"✘ 建初始提交失败（HTTP {code2}）")
+            print(f"   {json.dumps(r2, ensure_ascii=False)[:300]}")
+            return 4
+
     # ---- 3 传文件（blob）
     print()
     print("── 传文件 ──")
     tree = []
+    skipped = []
     t0 = time.time()
     for i, rel in enumerate(files, 1):
         content = (root / rel).read_bytes()
@@ -205,7 +225,19 @@ def main() -> int:
         code, blob = api(f"/repos/{owner}/{args.repo}/git/blobs", token,
                          "POST", {"content": b64, "encoding": "base64"})
         if code != 201 or not isinstance(blob, dict):
+            # 409 有两种可能，要分清（我第一次就搞混了）：
+            #   a) 仓库是空的 → "Git Repository is empty"（前面 2b 已处理）
+            #   b) token 缺 workflow 权限 → 只有 .github/workflows/ 下会这样
+            msg = (blob or {}).get("message", "") if isinstance(blob, dict) else ""
+            if code == 409 and "empty" in msg.lower():
+                print(f"  ✘ {rel}: 仓库还是空的（2b 没生效？）")
+                return 4
+            if code == 409 and rel.as_posix().startswith(".github/workflows/"):
+                print(f"  ⚠ {rel.as_posix()} 跳过（token 缺 workflow 权限）")
+                skipped.append(rel.as_posix())
+                continue
             print(f"  ✘ {rel}（HTTP {code}）")
+            print(f"     {json.dumps(blob, ensure_ascii=False)[:200]}")
             return 5
         tree.append({"path": rel.as_posix(), "mode": "100644",
                      "type": "blob", "sha": blob["sha"]})
@@ -247,6 +279,14 @@ def main() -> int:
         return 7
     commit_sha = commit["sha"]
     print(f"✔ 提交 {commit_sha[:8]}")
+    if skipped:
+        print()
+        print(f"⚠ 跳过了 {len(skipped)} 个文件（token 缺 workflow 权限）：")
+        for x in skipped:
+            print(f"     {x}")
+        print("   要发这些，两种办法：")
+        print("     a 重新生成 token，在 repo 之外再勾 workflow")
+        print("     b 手动在网页上新建这个文件（内容见本地）")
 
     # ---- 6 建分支 main
     code, ref = api(f"/repos/{owner}/{args.repo}/git/refs", token, "POST",

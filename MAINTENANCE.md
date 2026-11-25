@@ -6557,3 +6557,141 @@ OneDragon 是 GUI 应用，用户不装 Python → 必须打包 exe（1.4 GB）�
 
 判断标准：**在 CI 配置里写任何命令前，先在本地把那行命令原样跑一遍。**
 不是「跑类似的」，是**原样**。
+## 「直接发布」卡在哪（用户 2026-11-25）
+
+用户：**「那你现在直接发布」**
+
+### 我又彻底查了一遍凭证
+
+```
+GITHUB_TOKEN / GH_TOKEN    没有
+Windows 凭据管理器          没有 github 条目
+_netrc / .netrc            没有
+git config                 只有 user.name/email，无 credential helper
+gh / hub / git-credential  全都没装
+```
+
+**一个都没有。**
+
+试着装 gh CLI：`winget install GitHub.cli` → 下载失败（InternetOpenUrl failed）。
+直接下 zip → `github.com:443` 连接超时。
+
+### 但查网络时发现一件关键的事
+
+```
+github.com:443          ✘ 不通（3 次都失败）
+github.com:22           ✔ 通（SSH）
+ssh.github.com:443      ✔ 通
+api.github.com:443      ✔ 通（HTTP 200，返回了 zen 消息）
+codeload.github.com     ✔ 通
+raw.githubusercontent   ✔ 通
+www.baidu.com           ✔ 通
+gitee.com               ✔ 通
+```
+
+DNS 解析出了 `198.51.44.8` / `198.51.45.8` 这类**假 IP** —— 典型的 DNS 污染。
+
+**`git push` 走 `github.com:443`，所以推不上去。**
+**但 GitHub 的 Git Data API 全在 `api.github.com` 上，而那个是通的。**
+
+### 所以写了 publish_github.py
+
+```
+POST /user/repos              建仓库
+POST .../git/blobs            传文件（base64）
+POST .../git/trees            建目录树
+POST .../git/commits          建提交
+POST .../git/refs             建分支
+```
+
+**全部走 api.github.com，不需要 github.com。**
+
+```bash
+set GITHUB_TOKEN=ghp_xxx
+python tools/publish_github.py --repo zzz-host --dry-run   # 预览
+python tools/publish_github.py --repo zzz-host             # 真发
+```
+
+**验证过的部分：**
+- 无 token → 明确提示去哪生成、要什么权限（exit 2）
+- 假 token → `HTTP 401 Bad credentials`（exit 3）
+- 文件收集 → 112 个，和 `git ls-files` 对齐，968 KB
+- 敏感文件排除 → `roster.json` / `paths.json` / `feishu*` 都排掉了
+
+**没验证的部分：真拿 token 推一次。** 因为没 token。
+
+### 写这个工具时踩的坑
+
+**坑 1 排除规则和 .gitignore 不一致**
+`collect()` 一开始收 125 个文件，git 只有 111 个。
+多出来的包括：
+```
+roster.json            ← 含我的账号角色数据！
+roster.demo.json
+graduate.py / od_bridge.py
+DELIVERY.md / TASKS.md / ONEDRAGON.md
+```
+→ 补齐排除列表（从 111 vs 125 对齐到 112 vs 112）
+
+**坑 2 路径分隔符**
+`collect()` 返回 Windows 的 `tools\xxx.py`，`git ls-files` 返回 `tools/xxx.py`。
+直接做集合差集，**111 个全被判成「多出来」，96 个被判成「少了」**。
+→ 统一用 `f.as_posix()`。
+
+而且 GitHub API 本身也要求正斜杠 —— 这个坑不修，上传的路径会全错。
+
+**坑 3 targets.json 该不该发**
+它原来是 `{"agents": ["佩洛伊斯"]}`（我的账号），我清成了空模板。
+清空后它就是个**有用的模板**（说明这个文件干什么），应该发。
+→ 从排除列表里拿掉。
+
+### 现在的状态
+
+```
+本地 git        3 个提交，112 个文件
+工作流          .github/workflows/release.yml（tag 触发 → 自检 → 建 Release）
+发布工具        tools/publish_github.py（API 推送）
+自检            冒烟 11/11，tools.json 37 个工具，规矩5 全登记
+```
+
+### 唯一缺的东西：一个 token
+
+我无法自己生成 —— token 必须由人登录 GitHub 后签发。
+
+**你只需要做一步：**
+```
+https://github.com/settings/tokens
+→ Generate new token (classic)
+→ 勾 repo
+→ 复制 ghp_xxxxx 发给我
+```
+
+**或者**你自己贴进去也行：
+```powershell
+cd <项目目录>
+$env:GITHUB_TOKEN = "ghp_xxxxx"
+python tools/publish_github.py --repo zzz-host
+```
+
+### 教训（第六十七次）
+
+**「没权限」和「没通路」是两件事，修好其中一件有一件不通也发不出去。**
+
+这次一开始我以为只是「没凭证」。
+再查一层发现 **`github.com:443` 本身就不通** —— 就算有 token，`git push` 也会卡死。
+
+**但因为多查了一层，发现 `api.github.com` 是通的，于是有了替代方案。**
+
+判断标准：**推不动的时候，别只查「我有没有权限」，也查「这条路本身通不通」。**
+两个都查完，才可能找到「换条路」这种解法。
+
+### 另一个教训
+
+**写「复制粘贴 IGNO      RE」这种逻辑时，必须和真实来源对账。**
+
+`collect()` 的排除列表是我凭印象写的，和 `.gitignore` 不一致，
+结果把 `roster.json`（含账号数据）算进了发布集。
+
+**如果我没做「collect vs git ls-files 对账」这一步，这东西会带着账号数据发出去。**
+
+判断标准：**两套「同一件事」的规则，必须有一处自动对账。**
