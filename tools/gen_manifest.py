@@ -43,7 +43,7 @@ META = {
         "idempotent": True,
     },
     "zzz_daily.py": {
-        "purpose": "完整日常：盘点→缺口→电量→刷本→养成→记账→汇报",
+        "purpose": "角色养成一轮：盘点→缺口→电量→刷本→养成→记账→汇报",
         "outputs": ["state/disc_progress.json"],
         "requires": ["game_running"],
         "idempotent": False,
@@ -65,7 +65,10 @@ META = {
         "destructive": True,
     },
     "zzz_launch.py": {
-        "purpose": "确保游戏开着（没开就启动 + 自动点进入游戏）",
+        # 7 是 _map_enter 映射出来的（enter_game 超时 → 等进入游戏超时），
+        # 正则扫不到字面量 return 7，所以显式声明。
+        "exit_codes": [0, 1, 2, 3, 5, 6, 7],
+        "purpose": "启动游戏 + 等窗口 + 点「进入游戏」到世界；已在运行时也会确认可操作",
         "outputs": [],
         "requires": ["game_exe"],
         "idempotent": True,
@@ -159,10 +162,14 @@ def scan_tool(p: pathlib.Path) -> dict | None:
     # 有没有 --json
     has_json = '"--json"' in s or "'--json'" in s
 
-    # 退出码
-    codes = sorted({int(x) for x in re.findall(r"return (\d)\b", s)})
-
     meta = META.get(p.name, {})
+
+    # 退出码。
+    # 默认靠正则扫 `return N`，但间接返回（比如 _map_enter(rc) 映射表里的 7）
+    # 扫不出来。所以 META 可以显式覆盖。
+    codes = meta.get("exit_codes")
+    if not codes:
+        codes = sorted({int(x) for x in re.findall(r"return (\d)\b", s)})
     return {
         "name": name,
         "cmd": f"python tools/{p.name}",
