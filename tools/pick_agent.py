@@ -114,7 +114,16 @@ def reset_to_world(ui: Ui, max_esc: int = 6) -> bool:
         return True
 
     for i in range(max_esc):
-        # 优先手柄 B：它在大世界没有副作用（不像 ESC 会开菜单）
+        # 用手柄 B（Xbox 的返回键，走 vgamepad 虚拟手柄）。
+        # **不调 pad_mode()** —— 那个函数发的是「方向键上」，
+        # 作用是把游戏切到手柄态，但副作用是会移动菜单的选中项。
+        #
+        # 代价：Ui.start() 把游戏切成了键鼠态，所以第一次 B 可能被游戏
+        # 当成「切换到手柄态」的信号吃掉，要按 2~3 次才真生效。
+        # 实测（朋友那边）从主菜单退出去要按 3 次。
+        #
+        # **这个取舍是有意的**：慢一点 vs 可能移动菜单选中项。
+        # B 在任何界面都无副作用，方向键上有。所以选慢。
         try:
             inp.pad_tap("b", wait=1.0)
         except Exception:
