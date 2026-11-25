@@ -76,15 +76,49 @@ def current_name(vs: Vision) -> str:
     return _read_name(vs)
 
 
+def _describe_stable(vs, tries: int = 2, gap: float = 0.18) -> str:
+    """连判几次，任一次认出就用它。
+
+    抢前台/切换画面后的第一帧经常是过渡画面。
+    单次判定失败不代表「不在大世界」，可能只是「还没画好」。
+    """
+    last = "未知界面"
+    for i in range(max(1, tries)):
+        try:
+            vs.frame(force=True)
+        except Exception:
+            pass
+        last = anchors.describe(vs)
+        if last != "未知界面":
+            return last
+        if i + 1 < tries:
+            time.sleep(gap)
+    return last
+
+
 def reset_to_world(ui: Ui, max_esc: int = 6) -> bool:
+    """退回大世界。
+
+    **不要在第一帧判不出来时就按键。** ESC 在大世界会打开菜单，
+    越按画面越不像大世界 —— 实测会反复重试白花 28 秒。
+    所以：先多判几次；确实要按键时，优先用手柄 B（无副作用），ESC 兜底。
+    """
     vs, inp = ui.vs, ui.inp
-    for _ in range(max_esc):
-        vs.frame(force=True)
-        if anchors.describe(vs) == "世界":
+
+    # 第一轮：只判不按。画面可能还在过渡。
+    if _describe_stable(vs, tries=3, gap=0.2) == "世界":
+        return True
+
+    for i in range(max_esc):
+        # 优先手柄 B：它在大世界没有副作用（不像 ESC 会开菜单）
+        try:
+            inp.pad_tap("b", wait=1.2)
+        except Exception:
+            inp.key("esc", wait=1.5)      # 手柄不可用才用 ESC
+        if _describe_stable(vs, tries=2, gap=0.15) == "世界":
             return True
-        inp.key("esc", wait=1.5)
-    vs.frame(force=True)
-    return anchors.describe(vs) == "世界"
+
+    return _describe_stable(vs, tries=3, gap=0.2) == "世界"
 
 
 def _scan_portraits(vs: Vision) -> list[tuple[int, int]]:

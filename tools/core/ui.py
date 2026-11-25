@@ -29,18 +29,34 @@ class Ui:
         """
         from .input import InputBlocked, is_admin
         if not is_admin():
-            raise InputBlocked(
-                "✘ 需要管理员权限\n"
-                "  没有管理员权限时，Windows UIPI 会静默丢弃所有按键/点击，\n"
-                "  工具不会报错，而是白等到超时（实测 150~254 秒）。\n"
-                "  \n"
-                "  正确用法：右键终端 → 以管理员身份运行\n"
-                "  （或跑项目根的 .\\admin.ps1，它会自动提权重开）"
-            )
+            # 打印干净的消息 + SystemExit(2)，不抛裸异常 ——
+            # 那样新手看到 400 行堆栈，最后那段话被埋在最底下。
+            # SystemExit 不打印 traceback，退出码也对。
+            print("✘ 需要管理员权限")
+            print("  没有管理员权限时，Windows UIPI 会静默丢弃所有按键/点击，")
+            print("  工具不报错，而是白等到超时（实测 150~254 秒）。")
+            print()
+            print("  正确用法：右键终端 → 以管理员身份运行")
+            print("  或跑项目根的：.\\admin.ps1")
+            print("    它会自动提权重开，并列出常用命令")
+            raise SystemExit(2)
         import live
         live.foreground(self.vs.win)
-        time.sleep(0.3)
+        # 抢前台之后游戏有焦点切换 + 淡入动画。固定 sleep(0.3) 不够 ——
+        # 第一帧常常是过渡画面，describe() 会判成「未知界面」，
+        # 而 reset_to_world 拿到「未知」就会立刻按 ESC，
+        # ESC 在大世界是「打开菜单」，越按越不像 → 反复重试（实测多花 28 秒）。
+        # 用 wait_still 等画面真的不动，比猜一个固定秒数可靠。
+        try:
+            self.vs.wait_still(quiet=0.25, timeout=2.5)
+        except Exception:
+            time.sleep(0.5)          # wait_still 不可用时退回固定等待
         self.inp.mouse_mode()
+        # 切输入模式本身也会让画面变一下，再稳一次
+        try:
+            self.vs.wait_still(quiet=0.2, timeout=1.5)
+        except Exception:
+            time.sleep(0.3)
         self.vs.frame(force=True)
 
     # ---------- 点击 ----------
