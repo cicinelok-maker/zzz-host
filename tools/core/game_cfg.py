@@ -122,4 +122,12 @@ ANY_ELEMENT_AGENTS = {"蕾米埃尔"}
 
 def element_of(agent: str) -> str:
     """角色的属性伤害类型。查不到返回空串（不做属性判定）。"""
+    # 本地覆盖层优先（用户自己的角色，不改发布集）
+    try:
+        from core import characters as _chars
+        _loc = _chars.get(str(agent))
+        if _loc.get("属性"):
+            return _loc["属性"]
+    except Exception:
+        pass
     return AGENT_ELEMENT.get(agent, "")

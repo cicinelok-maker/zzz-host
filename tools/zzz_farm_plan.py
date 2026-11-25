@@ -159,6 +159,8 @@ def collect() -> dict[str, dict]:
         d["数量"] += amount
         d["角色"].append(who)
 
+    _unk = set()
+
     for name, info in elems.items():
         lv_digits = re.sub(r"\D", "", str((info or {}).get("等级", "")))
         lv = int(lv_digits) if lv_digits else 1
@@ -168,6 +170,7 @@ def collect() -> dict[str, dict]:
         # 驱动盘缺口会虚高（实测虚高到 296 个）
         if not st:
             continue
+        cfg = meta.get(name) or {}
 
         # 1) 等级认证章 —— **按职业分**
         # 实际是「代理人晋升」副本，7 个职业各一个演练：
@@ -179,7 +182,14 @@ def collect() -> dict[str, dict]:
             add(f"认证章_{_role}", cert, f"{name}({_role} 升{lv}→60)")
 
         # 2) 技能芯片（按岗位目标）
-        cfg = meta.get(name) or {}
+        # **未知角色要警告，不能静默按强攻算。**
+        # 认证章/音擎组件都按职业，猜错了整份清单都错。
+        try:
+            from core.agent_cfg import is_known as _ik
+            if not _ik(name):
+                _unk.add(name)
+        except Exception:
+            pass
         role = cfg.get("岗位", "强攻").split("/")[0]
         tgt = SKILL_TARGETS.get(role, SKILL_TARGETS["强攻"])
         skills = st.get("skills") or {}
@@ -255,7 +265,23 @@ def collect() -> dict[str, dict]:
                     add(f"驱动盘_{_dungeon}", len(empty) * _per,
                         f"{name}(空{empty} 要 {_sn})")
 
+    if _unk:
+        print()
+        print("=" * 66)
+        print(f"⚠ 有 {len(_unk)} 个角色不在角色库里：{sorted(_unk)}")
+        print("=" * 66)
+        print("  这些角色按【强攻】模板算，可能不准：")
+        print("    · 认证章   → 会算成「强攻演练/先行者」")
+        print("    · 音擎组件 → 会算成「强攻组件」")
+        print("    · 技能芯片 → 按读到的属性算（这个准）")
+        print()
+        print("  补数据（不改发布集，pull 不冲突）：")
+        print("    python tools/zzz_who.py --add-agent <角色> --role <定位> --element <属性>")
+        print("    或直接编辑 state/characters.local.json")
+        print("=" * 66)
+        print()
     return need
+
 
 
 def plan_rows(need: dict, meta: dict) -> list[dict]:

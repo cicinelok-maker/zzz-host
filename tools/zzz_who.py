@@ -448,7 +448,29 @@ def main() -> int:
                     help="输出聊天友好的角色菜单")
     ap.add_argument("--history", action="store_true",
                     help="看养成进度曲线（配合角色名）")
+    ap.add_argument("--add-agent", default="",
+                        help="把一个角色加进本地覆盖层（不改发布集）")
+    ap.add_argument("--role", default="", help="配合 --add-agent：定位")
+    ap.add_argument("--element", default="", help="配合 --add-agent：属性")
     args = ap.parse_args()
+
+    # --add-agent：加进本地覆盖层（state/characters.local.json）
+    if args.add_agent:
+        from core import characters as _chars
+        _c = {}
+        if args.role:
+            _c["定位"] = args.role
+        if args.element:
+            _c["属性"] = args.element
+        if not _c:
+            print("至少给 --role 和 --element")
+            print("  例：python tools/zzz_who.py --add-agent 新角色 --role 异常 --element 以太")
+            return 2
+        print(_chars.add(args.add_agent, _c))
+        print()
+        print("有效副词条/主词条/套装还没填，缺口判定会用职业模板兜底。")
+        print(f"要更准就编辑 {_chars.LOCAL}")
+        return 0
 
     if args.history:
         if not args.agent:

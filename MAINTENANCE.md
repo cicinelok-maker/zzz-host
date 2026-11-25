@@ -45,6 +45,7 @@ sample_marked_discs.py  ...
 | `weekly.py` | **周本免费次数**：免费额度 ≠ 总上限，用完只是变贵 |
 | `inventory.py` | **材料库存记账**：刷完记到手多少，缺口按「还差多少」算 |
 | `material_nav.py` | **材料弹窗 → 传送副本**：读 [获取] 按钮坐标并点它，副本导航不用硬编码 |
+| `characters.py` | **本地角色覆盖层**：用户自己的角色补充，不改发布集（pull 不冲突） |
 | 词条数值表 | `core/disc_stats.py` |
 | 属性词表 | `core/vocab.py` |
 | 盘位坐标 | `core/slots.py` |

@@ -102,6 +102,15 @@ def cfg_of(name: str, warn: bool = False, strict: bool = False) -> dict:
     tpls = m.get("职业模板") or {}
 
     own = dict(chars.get(canon) or chars.get(name) or {})
+    # **本地覆盖层优先** —— 用户自己的角色补充（state/characters.local.json）。
+    # 不改发布集文件，pull 不会冲突。逐字段覆盖，不是整条替换。
+    try:
+        from core import characters as _chars
+        _local = _chars.get(canon) or _chars.get(name) or {}
+        if _local:
+            own.update(_local)
+    except Exception:
+        pass
     role = role_of(name)
     tpl = dict(tpls.get(role) or tpls.get(DEFAULT_ROLE) or {})
 
@@ -266,5 +275,14 @@ def resolve_agent(name: str, allow_unknown: bool = False) -> str:
 
 
 def is_known(name: str) -> bool:
+    """这个角色有没有配装知识（发布集库 或 本地覆盖层，任一有就算）。"""
     from core.agent_name import canonical_agent
-    return canonical_agent(name) in (meta().get("角色") or {})
+    canon = canonical_agent(name)
+    if canon in (meta().get("角色") or {}):
+        return True
+    # 本地覆盖层里也算「认识」—— 用户自己补的角色
+    try:
+        from core import characters as _chars
+        return _chars.has(canon) or _chars.has(name)
+    except Exception:
+        return False
