@@ -948,6 +948,35 @@ class TestDataConsistency(unittest.TestCase):
         missing = sorted(used - set(disc_main.ELEM_FAMILY))
         self.assertEqual(missing, [], f"这些属性在 ELEM_FAMILY 里没有：{missing}")
 
+    def test_disc_meta_chip_table_matches_materials(self):
+        """`disc_meta.技能芯片` 必须和 `materials.json` 的权威映射一致（BUG-129）。
+
+        ## 这张表原来 10 项里错了 6 项
+
+        ```
+        流明 → 特化以太芯片    ← 错（流明不是以太）
+        火   → 特化火芯片      ← 错（火属性芯片叫「引燃」）
+        冰   → 特化冰芯片      ← 错（叫「冰结」）
+        电   → 特化电芯片      ← 错（叫「电击」）
+        风   → 特化风芯片      ← 错（叫「风蚀」）
+        烈霜 → 特化冰芯片      ← 错（同样该是「冰结」，但键名也不对）
+        ```
+
+        而它**零消费者** —— 所以错了很久没人发现。
+        现在按 `materials.json` 派生，并在这里钉住一致性。
+        """
+        import json
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        dm = json.loads((root / "disc_meta.json").read_text(encoding="utf-8"))
+        mt = json.loads((root / "materials.json").read_text(encoding="utf-8"))
+        names = (mt.get("技能芯片") or {}).get("属性名") or {}
+        want = {a: f"特化{n}芯片" for a, n in names.items()}
+        got = dm.get("技能芯片") or {}
+        self.assertEqual(got, want,
+                         f"disc_meta.技能芯片 和 materials.json 不一致："
+                         f"差异 {[(k, got.get(k), want.get(k)) for k in set(got) | set(want) if got.get(k) != want.get(k)]}")
+
     def test_sub_base_subset_of_stats(self):
         """副词条基础值表必须是词条白名单的子集。"""
         from core import vocab
