@@ -1,73 +1,62 @@
-"""灰色头像 = 未解锁：**用通道差，不用饱和度**。
+"""灰色头像 → 改成「看徽章」：S/A = 已拥有，锁 = 未解锁。
 
-## 用户说的（2026-11-26 09:40）
+## 用户的确认（2026-11-26 10:43）
 
-> 选人界面如果头像是灰色的那就是没解锁的
+> 全都是已拥有的，看到那个带锁的图标了吗，那个就是未解锁的角色，
+> 如果显示 s/a 就是解锁的
 
-## 第一版错在哪（重要）
+## 我前面两版都错了
 
-我第一版用 **HSV 的 S 通道（饱和度）**，结果完全分不开：
+**第一版**：用 HSV 饱和度判「灰」→ **错**。深色/白毛角色饱和度本来就低（33~41），
+和「被去色」分不开。
 
-```
-粉发角色   饱和度 147
-金发角色   饱和度 138
-白发角色   饱和度  41      ← 和「灰色」一个水平
-黑发角色   饱和度  33      ← 和「灰色」一个水平
-```
+**第二版**：用通道差判「去色」→ **也错**。68 个格子里
+「深色角色 67%」和「疑似去色 80%」中间没有空隙，阈值定不下来。
 
-**因为「饱和度低」和「被去色」是两件事** ——
-深色系/白毛角色本来饱和度就低，但它们不是灰色的。
+**两版都是「猜图像特征」。真正的判据用户一句话就说了：看徽章。**
 
-## 正确的度量：通道差
+## 徽章在哪、长什么样（实测坐标）
 
-去色的图像每个像素 **R≈G≈B** → `max(R,G,B) - min(R,G,B)` 接近 0。
-而黑发角色虽然暗，R/G/B 的差别还在（偏蓝/偏暖），差值不是 0。
-
-实测（同一张截图，12 个格子）：
+截图 `roster_top.png`（1920x1080），11 个格子在
+**「`等级N` 标签左侧 95px、同一行」**那块取样：
 
 ```
-            灰像素占比   平均通道差
-粉发角色        4%        68.9
-金发角色       26%        66.4
-白发角色       51%        12.7
-深色角色       67%        12.1
-疑似去色       80%         7.5     ← 这个真的像未解锁
-（背景，不是卡）100%         0.0
+点                亮饱和像素占比   色相   饱和   亮度
+(1585, 201)         41.9%        21    242   238
+(1202, 202)         45.7%        22    245   235
+(1428, 320)         46.3%        21    242   236
+(1283, 470)         40.2%        20    247   238
+… 全部一致
 ```
 
-**灰像素占比 = 通道差 < 12 的像素比例。**
+**色相 20~22 = 橙色 = S 级徽章。饱和 241+ / 亮度 232+ = 非常鲜明的色块。**
 
-## 现在的状态：能用来看，但阈值还没定死
+而锁图标是**白灰色**（饱和低、亮度中），和这个特征完全不同。
 
-「疑似去色 80%」和「深色角色 67%」挨得太近（80 vs 67），
-**没有 ground truth 就定不了阈值**。
+## 判据
 
-所以：`portrait.py` 提供 **`rank()` 排序输出**，让人眼确认哪个是灰的，
-而不是直接给一个「灰/不灰」的判断。
-
-**在确认之前，`list_agents` 不调用它。**
-（判错了会把「已拥有」标成「未解锁」，比现在靠「有没有等级文字」更糟。）
-
-## 用法
-
-```powershell
-python tools/core/portrait.py            # 站在代理人列表上，按「最像灰」排序
+```
+在 (标签x - 95, 标签y) 取 ±22 的方形
+  → 统计「饱和 > 150 且 亮度 > 150」的像素占比
+  → 占比 > 5%  = 有彩色徽章 = S/A 级 = **已拥有**
+  → 占比 ≤ 5%  = 没有彩色徽章 = 锁 = **未解锁**
 ```
 
-输出形如：
-```
-按「灰像素占比」排序（越高越像未解锁）：
-  (1439,1004)   80%   通道差  7.5   ← 最像
-  (1283, 470)   67%   通道差 12.1
-  ...
-```
+**这是「正向检测」**（找到一个明确的东西就判定），
+不是「阈值切分」（在两个挨着的值之间画线）—— 后者才是我前两版失败的原因。
+
+## 还没验证的
+
+**未解锁的卡片我这张截图里一个都没有**（用户说全是已拥有的）。
+所以「锁的占比到底是多少」还没有实测样本。
+
+但正向逻辑是对的：**找到彩色徽章 = 拥有**，找不到 = 未解锁（或者这个格子根本不是卡）。
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
@@ -75,52 +64,66 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
-# 通道差低于这个值算「灰像素」
-GREY_DIFF = 12
+# 徽章位置：`等级N` 标签左侧多少个像素
+BADGE_DX = -95
+# 取样窗口半宽
+HALF = 22
+# 「亮且饱和」的阈值
+SAT_MIN = 150
+VAL_MIN = 150
+# 占比超过这个就算有徽章
+FRAC_MIN = 0.05
 
 
-def grey_stats(vs, cx: int, cy: int,
-               up: int = 95, down: int = 15, half: int = 38) -> tuple[float, float]:
-    """取「标签上方那块头像区域」的 (灰像素占比, 平均通道差)。
+def badge_frac(vs, label_pt: tuple[int, int]) -> float:
+    """在 `等级N` 标签左侧取样，返回「亮饱和像素」占比。
 
-    ## 为什么 up=95 / down=15
+    `label_pt` 是 `_scan_portraits` 返回的点，那个点等于「标签位置 - 40px」，
+    所以真实标签位置是 `(x, y + 40)`。
 
-    实测 `_scan_portraits` 返回的点是「`等级N` 标签位置 - 40px」，
-    而**标签在卡片的底部**。头像主体在标签上方约 20~110px。
-    所以取 `[cy-up, cy-down]` = 标签上方 95px 到 15px 这一段。
-
-    ## 为什么 half=38
-
-    卡片宽度约 110~150px，取中心 ±38px 能盖住脸和头发的主要色块，
-    又不会吃到左右相邻的卡片。
-
-    Returns (-1, -1) = 取不到（越界或没有帧）。
+    返回 -1 = 取不到。
     """
     img = getattr(vs, "_img", None)
     if img is None:
-        return -1.0, -1.0
+        return -1.0
+    import cv2
     h, w = img.shape[:2]
-    y0, y1 = max(0, cy - up), min(h, cy - down)
-    x0, x1 = max(0, cx - half), min(w, cx + half)
-    if y1 <= y0 or x1 <= x0:
-        return -1.0, -1.0
-    patch = img[y0:y1, x0:x1].astype(np.int16)
-    diff = patch.max(axis=2) - patch.min(axis=2)
-    return float((diff < GREY_DIFF).mean()), float(diff.mean())
+    cx = label_pt[0] + BADGE_DX
+    cy = label_pt[1] + 40            # 标签真实 y
+    x0, x1 = max(0, cx - HALF), min(w, cx + HALF)
+    y0, y1 = max(0, cy - HALF), min(h, cy + HALF)
+    if x1 <= x0 or y1 <= y0:
+        return -1.0
+    patch = img[y0:y1, x0:x1]
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    S = hsv[:, :, 1]
+    V = hsv[:, :, 2]
+    m = (S > SAT_MIN) & (V > VAL_MIN)
+    return float(m.mean())
 
 
-def rank(vs, pts: list[tuple[int, int]]) -> list[dict]:
-    """给每个格子打「灰像素占比」，按从高到低排序。
+def is_owned(vs, label_pt: tuple[int, int]) -> bool | None:
+    """S/A 徽章在 → 已拥有；不然 → 未解锁。
 
-    **不做「灰/不灰」的结论** —— 只给排序，让人眼判断。
-    等有了 ground truth 再加阈值。
+    返回 None = 取不到（没帧/越界），调用方别当 False 用。
     """
-    rows = []
+    f = badge_frac(vs, label_pt)
+    if f < 0:
+        return None
+    return f > FRAC_MIN
+
+
+def scan(vs, pts: list[tuple[int, int]]) -> list[dict]:
+    """给每个格子打「徽章占比 / 是否拥有」。"""
+    out = []
     for (x, y) in pts:
-        frac, d = grey_stats(vs, x, y)
-        rows.append({"x": x, "y": y, "grey_frac": frac, "chan_diff": d})
-    rows.sort(key=lambda r: -r["grey_frac"])
-    return rows
+        f = badge_frac(vs, (x, y))
+        out.append({
+            "x": x, "y": y,
+            "badge": f,
+            "owned": (f > FRAC_MIN) if f >= 0 else None,
+        })
+    return out
 
 
 def main() -> int:
@@ -139,20 +142,18 @@ def main() -> int:
         return 3
     vs.frame(force=True)
     print(f"当前：{anchors.describe(vs)}")
+    print("判据：`等级N` 左侧 95px 有彩色徽章（S/A）→ 已拥有；没徽章 → 未解锁")
+    print()
 
     pts = pick_agent._scan_portraits(vs)
-    print(f"{len(pts)} 个格子")
+    rows = scan(vs, pts)
+    owned = sum(1 for r in rows if r["owned"])
+    for r in rows:
+        b = r["badge"]
+        tag = "已拥有" if r["owned"] else ("未解锁?" if r["owned"] is False else "取不到")
+        print(f"  ({r['x']:>4},{r['y']:>4})  徽章占比 {b * 100 if b >= 0 else -1:>6.1f}%   {tag}")
     print()
-    print("按「灰像素占比」排序（越高越像未解锁）：")
-    print(f"  {'坐标':<16}{'灰占比':>8}{'通道差':>9}")
-    for r in rank(vs, pts):
-        print(f"  ({r['x']:>4},{r['y']:>4})    {r['grey_frac'] * 100:>6.0f}%"
-              f"{r['chan_diff']:>9.1f}")
-
-    print()
-    print("注意：这是**排序**，不是结论。")
-    print("  「深色系角色」和「被去色」的占比挨得很近（实测 67% vs 80%），")
-    print("  要定阈值必须先知道哪个格子确实是未解锁的。")
+    print(f"{len(rows)} 个格子里 {owned} 个有徽章（已拥有）")
     return 0
 
 

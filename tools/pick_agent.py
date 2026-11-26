@@ -406,6 +406,24 @@ def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
                 if it["text"].startswith("等级") and abs(it["cx"] - pt[0]) < 60:
                     lv = it["text"]
                     break
+
+            # **只留已拥有的** —— 判据是「`等级N` 左边有没有 S/A 彩色徽章」
+            # （用户确认：带锁 = 未解锁，显示 S/A = 已解锁）。
+            #
+            # 这是「正向检测」：找到彩色徽章就算拥有。
+            # 前面试过「看饱和度」「看通道差」都不行 —— 深色系角色和灰的挤在一档，
+            # 阈值定不下来。徽章就有没有，界限很清楚（实测 36~43% vs 0%）。
+            #
+            # **只有明确「没有徽章」才排除**；读不到（None）当拥有处理，
+            # 宁可多留一个，也不要把有的角色漏掉。
+            try:
+                from core import portrait as _pf
+                _owned = _pf.is_owned(vs, pt)
+                if _owned is False:
+                    continue
+            except Exception:
+                pass
+
             out[nm] = lv
 
     # **单字残段过滤** —— OCR 有时只读到名字的最后一个字，
