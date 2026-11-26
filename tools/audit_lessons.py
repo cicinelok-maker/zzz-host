@@ -36,6 +36,7 @@ R20 未验证的分支（TODO / 待查 / 未测）
 ```
 """
 from __future__ import annotations
+import sys
 
 import ast
 import json
@@ -252,3 +253,15 @@ print()
 print("=" * 82)
 print(f"合计 {total} 处待看")
 print("=" * 82)
+
+# **这是一份清单，不是门槛**（BUG-043）。
+#
+# 里面有 169 处「值得看一眼」的地方，大部分是设计取舍而不是错误。
+# 让它无脑 exit 1，整套自检就永远红 —— 那是从「假绿」变成「假红」，同样没用。
+#
+# 要严格判定加 --strict。
+if "--strict" in sys.argv and total:
+    print(f"✘ --strict：{total} 处待看")
+    raise SystemExit(1)
+if not ("--strict" in sys.argv):
+    print("（仅供参考，不是门槛。要严格判定加 --strict）")

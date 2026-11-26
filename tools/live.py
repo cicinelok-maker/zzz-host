@@ -36,6 +36,35 @@ MIN_W, MIN_H = 1280, 720
 EXACT_TITLE = "绝区零"
 
 
+# **进程名是比窗口标题更硬的证据**（BUG-030）。
+# 标题在加载/全屏切换时可能短暂变空或变成别的文字，进程名不会变。
+GAME_EXE = "zenlesszonezero.exe"
+
+
+def _proc_name(hwnd) -> str:
+    """取窗口所属进程的可执行文件名（小写）。取不到返回空串。"""
+    try:
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return ""
+        k32 = ctypes.windll.kernel32
+        # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = k32.OpenProcess(0x1000, False, pid.value)
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = ctypes.c_ulong(1024)
+            if not k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                return ""
+            return buf.value.rsplit("\\", 1)[-1].lower()
+        finally:
+            k32.CloseHandle(h)
+    except Exception:
+        return ""
+
+
 # ---------------------------------------------------------------- 窗口
 def find_window(_restore_minimized: bool = True) -> dict | None:
     hits = []
@@ -56,25 +85,40 @@ def find_window(_restore_minimized: bool = True) -> dict | None:
         cls = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, cls, 256)
         is_unity = "unity" in cls.value.lower()
-        if not is_unity and (any(b in low for b in BLOCK)
-                             or not any(t.lower() in low for t in TOKENS)):
-            return True
+
+        # **标题或进程名必须证明它是绝区零**（BUG-030）。
+        #
+        # 原来 `if not is_unity and (...)` —— Unity 类名直接短路掉整段校验，
+        # 任何 Unity 窗口（编辑器、别的 Unity 游戏）都被当成游戏本体，
+        # 键鼠注入就落到那个程序上了。
+        #
+        # 现在 is_unity 只是加分项，不再是通行证。
+        title_hit = any(t.lower() in low for t in TOKENS)
+        proc_hit = _proc_name(hwnd) == GAME_EXE
+        if any(b in low for b in BLOCK):
+            return True                       # 黑名单永远排除
+        if not (title_hit or proc_hit):
+            return True                       # 认不出是绝区零 → 跳过
         r = wt.RECT()
         user32.GetClientRect(hwnd, ctypes.byref(r))
         cw, ch = r.right - r.left, r.bottom - r.top
         if cw < MIN_W or ch < MIN_H:
-            if is_unity and any(t.lower() in low for t in TOKENS):
+            # 尺寸不够：只有「标题命中 + Unity 类名」才当「被最小化的游戏」
+            if is_unity and title_hit:
                 minimized.append(hwnd)
             return True
         pt = wt.POINT(0, 0)
         user32.ClientToScreen(hwnd, ctypes.byref(pt))
         hits.append({"hwnd": hwnd, "title": title, "x": pt.x, "y": pt.y,
-                     "w": cw, "h": ch, "unity": is_unity})
+                     "w": cw, "h": ch, "unity": is_unity,
+                     "title_hit": title_hit, "proc_hit": proc_hit})
         return True
 
     user32.EnumWindows(_cb, 0)
     # 排序：精确标题 > Unity 类名 > 面积
+    # 排序：精确标题 > 进程名命中 > Unity 类名 > 面积
     hits.sort(key=lambda h: (h["title"] != EXACT_TITLE,
+                             not h.get("proc_hit"),
                              not h["unity"],
                              -h["w"] * h["h"]))
     if not hits and minimized and _restore_minimized:

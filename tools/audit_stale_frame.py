@@ -156,6 +156,12 @@ def main() -> int:
     print("说明：go_to/reset/select_agent 之后的读一律算危险——")
     print("因为它们内部最后一次读帧会把 OCR 缓存填满（TTL 0.35s），")
     print("紧接着的读就是上一屏的内容。")
+    # **有问题就返回非 0**（BUG-043）。
+    # 原来恒 return 0，而 audit_ship 只认退出码 —— 这一项结构上不可能变红。
+    _issues = sum(len(v) for v in all_hits.values()) if isinstance(all_hits, dict) else sum(all_hits)
+    if _issues:
+        print(f"\n✘ {_issues} 处问题")
+        return 1
     return 0
 
 

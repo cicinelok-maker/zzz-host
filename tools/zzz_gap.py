@@ -81,7 +81,12 @@ CHIP_ATTR = _chip_attr_map()
 
 
 # 实战模拟室的电量/产出（每次刷本 = 5 卡）
-CARD_BATTERY = 20
+# **从中心配置读，不再在工具里写死**（audit_self 规则 2 / BUG-043 的前置）
+try:
+    from core.disc_cfg import THRESHOLDS as _TH
+    CARD_BATTERY = int(_TH.get("card_battery", 20))
+except Exception:
+    CARD_BATTERY = 20
 CARDS = 5
 RUN_BATTERY = CARD_BATTERY * CARDS      # 100
 

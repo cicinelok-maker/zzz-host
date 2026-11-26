@@ -101,3 +101,9 @@ if BAD:
         print(f"  ⚠ {n}: {c} 写死了")
 else:
     print("  ✔ 没发现写死的中心常量")
+
+# **有问题就非 0**（BUG-043）：原来脚本结尾什么都不返回，恒 exit 0，
+# 而 audit_ship 只认退出码 —— 这一项结构上不可能变红。
+if BAD:
+    print(f"\n✘ {len(BAD)} 处违反项目规矩")
+    raise SystemExit(1)

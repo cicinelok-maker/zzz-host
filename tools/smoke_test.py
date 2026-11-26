@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import subprocess
+
+# **收集失败的工具**（BUG-043）：脚本式脚本原来没有退出码
+_BAD: list = []
 import sys
 from pathlib import Path
 
@@ -110,3 +113,9 @@ for tool in CLI:
     else:
         e = (r.stderr or "").strip().splitlines()
         print(f"  ✗ {tool:<26} {(e[-1] if e else '')[:60]}")
+        _BAD.append(tool)
+
+# **失败就非 0**（BUG-043）
+if _BAD:
+    print(f"\n✘ {len(_BAD)} 个工具 --help 失败：{_BAD}")
+    raise SystemExit(1)

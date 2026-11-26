@@ -198,6 +198,12 @@ def main() -> int:
     for key, desc, _fn in RULES:
         total = sum(len(v) for v in results[key].values())
         print(f"  规则 {key}：{total:>3} 处　{desc}")
+    # **有问题就返回非 0**（BUG-043）。
+    # 原来恒 return 0，而 audit_ship 只认退出码 —— 这一项结构上不可能变红。
+    _issues = sum(len(v) for v in results.values()) if isinstance(results, dict) else sum(results)
+    if _issues:
+        print(f"\n✘ {_issues} 处问题")
+        return 1
     return 0
 
 
