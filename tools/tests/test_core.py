@@ -635,3 +635,52 @@ class TestCanonicalNoTailGuess(unittest.TestCase):
         from core.agent_name import canonical_agent
         for n in ("安比", "露西", "本", "简"):
             self.assertEqual(canonical_agent(n), n, n)
+
+
+class TestCostCumulativeTable(unittest.TestCase):
+    """`SKILL_CHIP` 是累计表，不能当增量求和（RT 实测总量虚高 6.2 倍）。
+
+    ```
+    SKILL_CHIP = {1: 125, 2: 118, ..., 11: 8, 12: 0}   # 从 N 到 12 的累计
+    ```
+
+    错误写法（原代码）：`sum(SKILL_CHIP[i] for i in range(cur, 12))`
+    → cur=1 时得 767，而正确值是 125。**6.1 倍。**
+
+    这个数直接决定「还要刷多少电量」——
+    虚高 6 倍等于告诉用户要刷 6 倍的量。
+    """
+
+    def test_cumulative_not_summed(self):
+        import zzz_cost as zc
+        cum = zc.SKILL_CHIP
+        self.assertEqual(cum[1], 125, "表被改了，测试要同步")
+        wrong = sum(cum[i] for i in range(1, 12))
+        self.assertGreater(wrong / cum[1], 5.0,
+                           "累计表当增量求和会放大 5 倍以上，这个用例就是在防它")
+
+    def test_single_skill_cost_is_lookup(self):
+        """5 个技能都在 1 级时，芯片总数必须是 5×125=625，不是 5×767=3835。
+
+        用**行为**测，不看源码文本 —— 源码里有注释提到旧写法，
+        字符串断言会被注释骗到（第一版就这么挂的）。
+        """
+        import zzz_cost as zc
+        real = zc.skill_levels
+        try:
+            zc.skill_levels = lambda a: {"普攻": 1, "闪避": 1, "支援": 1,
+                                         "特殊": 1, "连携": 1}
+            e = zc.estimate("__test__", 60)
+        finally:
+            zc.skill_levels = real
+        self.assertEqual(e["chip"], 625,
+                         f"5 个 1 级技能的芯片应是 5×125=625，实际 {e['chip']}")
+        self.assertLess(e["chip"], 700, "不能是旧算法的 3835")
+
+    def test_unknown_level_is_zero_not_max(self):
+        """等级未知时按 0 算，不能按 1 级（那是最贵估算，RT 实测第二处错误）。"""
+        import zzz_cost as zc
+        e = zc.estimate("__不存在__", -1)
+        self.assertTrue(e.get("unknown"))
+        for k in ("exp", "cert", "chip", "data", "relic", "batt"):
+            self.assertEqual(e[k], 0, f"未知等级时 {k} 应为 0")

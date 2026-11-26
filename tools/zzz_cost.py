@@ -53,7 +53,13 @@ def read_levels() -> dict[str, int]:
     out = {}
     for k, v in d.items():
         digits = re.sub(r"\D", "", str((v or {}).get("等级", "")))
-        out[k] = int(digits) if digits else 1
+        # **读不到就返回 -1（未知），不要当 1 级。**
+        #
+        # RT 实测第二处错误「60 级按 1 级」：
+        # 返回 1 会让 Lv60 的角色按「从 1 级开始」算，
+        # 那是**最贵的估算**（经验/认证章/蓄电池全按满算）。
+        # 先如实报「未知」，让人知道这个数不可信。
+        out[k] = int(digits) if digits else -1
     return out
 
 
@@ -79,6 +85,10 @@ def skill_levels(agent: str) -> dict[str, int]:
 
 def estimate(agent: str, lv: int) -> dict:
     # 等级
+    if lv < 0:
+        # 等级未知 —— 按「已满级」算（成本 0）并标注，不要按 1 级（成本最大）
+        return {"lv": -1, "exp": 0, "cert": 0, "chip": 0, "data": 0,
+                "relic": 0, "batt": 0, "unknown": True}
     exp_k = sum(v for k, v in LEVEL_EXP_K.items() if lv <= k < 60)
     cert = sum(v for k, v in ASCEND_CERT.items() if k > lv)
 
@@ -86,7 +96,12 @@ def estimate(agent: str, lv: int) -> dict:
     sk = skill_levels(agent)
     known = bool(sk)
     if known:
-        chip = sum(sum(SKILL_CHIP[i] for i in range(cur, 12))
+        # **SKILL_CHIP 是「从 N 到 12 的累计值」，不是每级增量。**
+        #
+        # 原来写 `sum(SKILL_CHIP[i] for i in range(cur, 12))` ——
+        # 把累计值当增量相加了。cur=1 时求和 = 767 个芯片，
+        # 而正确值是 125 个 —— **正好 6.1 倍**（RT 实测总量虚高 6.2 倍）。
+        chip = sum(SKILL_CHIP.get(cur, 0)
                    for cur in sk.values())
     else:
         chip = SKILL_CHIP[1] * 5
