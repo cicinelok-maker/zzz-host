@@ -1532,3 +1532,79 @@ class TestDocsMatchCode(unittest.TestCase):
                 self.skipTest(f"跑不起来 {name}.py --help：{e}")
             self.assertIn("--json", r.stdout or "",
                           f"AGENTS.md 说 {name}.py 有 --json，实测没有")
+
+
+class TestSetCoverageAndThresholds(unittest.TestCase):
+    """套装白名单要覆盖副本表，毕业阈值三处要一致（BUG-184 顺带）。
+
+    ## 套装白名单漏了 2 个
+
+    `vocab.SETS` 是 **OCR 纠错的目标集合** —— 不在里面的名字认不出来。
+    实测 `disc_meta.套装副本` 有 31 个套装，而白名单只有 29 个：
+    漏了 `山大王` 和 `月光摇篮曲`。
+
+    于是这两个套装的盘会被当成「未知套装」，主词条/套装判定全失效。
+
+    ## 毕业阈值写在 3 个地方
+
+    ```
+    core/disc_cfg.py:80     "graduation": 28.0
+    tools/zzz_grind.py:42   GRADES = {"小毕业": 28.0, ...}
+    tools/zzz_status.py:27  GRAD = [("小毕业", 28.0), ...]
+    ```
+
+    现在三处一致（28 / 32 / 37），但没有东西保证以后也一致。
+    """
+
+    def test_set_whitelist_covers_dungeon_table(self):
+        """副本表里的套装必须都在 vocab.SETS 里，否则永远认不出来。"""
+        import json
+        import pathlib
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import vocab
+        mp = pathlib.Path(__file__).resolve().parent.parent / "disc_meta.json"
+        if not mp.exists():
+            self.skipTest("disc_meta.json 不在当前集合里")
+        dm = json.loads(mp.read_text(encoding="utf-8"))
+        table = set((dm.get("套装副本") or {}).keys())
+        missing = sorted(table - set(vocab.SETS))
+        self.assertEqual(missing, [],
+                         f"这些套装在副本表里但不在 OCR 白名单里：{missing}")
+
+    def test_graduation_thresholds_agree(self):
+        """三处毕业阈值必须一致。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import disc_cfg
+        import zzz_grind
+        import zzz_status
+        # `effective(good, half)` 需要两个分值参数，直接读它的阈值表更稳
+        a = None
+        th = getattr(disc_cfg, "THRESHOLDS", None)
+        if isinstance(th, dict) and "graduation" in th:
+            a = float(th["graduation"])
+        b = zzz_grind.GRADES.get("小毕业")
+        c = dict(zzz_status.GRAD).get("小毕业")
+        vals = [v for v in (a, b, c) if v is not None]
+        self.assertTrue(vals, "一个阈值都没读到")
+        self.assertEqual(len(set(vals)), 1,
+                         f"毕业阈值不一致：disc_cfg={a} grind={b} status={c}")
+
+    def test_doc_thresholds_match_code(self):
+        """DISC_LOOP.md 写的毕业阈值要和代码一致。"""
+        import pathlib
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_status
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        doc = root / "DISC_LOOP.md"
+        if not doc.exists():
+            self.skipTest("DISC_LOOP.md 不在当前集合里")
+        txt = doc.read_text(encoding="utf-8")
+        for name, val in zzz_status.GRAD:
+            expect = f"| {name} | **{val:g}** |"
+            alt = f"| {name} | {val:g} |"
+            self.assertTrue(expect in txt or alt in txt,
+                            f"DISC_LOOP.md 里 {name} 的阈值不是 {val:g}")
