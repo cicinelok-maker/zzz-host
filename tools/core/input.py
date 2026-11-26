@@ -271,9 +271,30 @@ class Input:
               hold: float = 0.06, button: str = "left") -> None:
         """点击游戏内坐标。默认参数是实测下来最稳的。"""
         self._guard("点击")
-        if not user32.SetCursorPos(self.ox + x, self.oy + y):
+        tx, ty = self.ox + x, self.oy + y
+        if not user32.SetCursorPos(tx, ty):
             check_send(0, f'鼠标移到 ({x},{y})')
         time.sleep(0.05)
+        # **确认光标真的到了**（BUG-035）。
+        #
+        # `SetCursorPos` 返回非 0 只代表「系统接受了这个请求」，
+        # 但在 UIPI / 全屏独占 / 别的进程锁住光标的情况下，
+        # 光标**可能没动**。而 `mouse_event` 是 void 函数，返回值查不了 ——
+        # 于是「点了个寂寞」完全没有信号。
+        #
+        # 这里用 `GetCursorPos` 回读一次。差 3 像素以内算正常
+        # （DPI 缩放会有 1~2 像素误差）。
+        try:
+            _pt = ctypes.wintypes.POINT()
+            if user32.GetCursorPos(ctypes.byref(_pt)):
+                _dx, _dy = _pt.x - tx, _pt.y - ty
+                if abs(_dx) > 3 or abs(_dy) > 3:
+                    print(f"    ⚠ 光标没到目标位置：想在 ({tx},{ty})，"
+                          f"实际 ({_pt.x},{_pt.y}) —— 点击可能没生效")
+                    print(f"     常见原因：游戏是独占全屏 / 有别的程序锁着光标 / "
+                          f"游戏以更高权限运行")
+        except Exception:
+            pass          # 回读失败不影响主流程
         down, up = (LDOWN, LUP) if button == "left" else (RDOWN, RUP)
         user32.mouse_event(down, 0, 0, 0, 0)
         time.sleep(_jit(hold, 0.35) if self.jitter else hold)

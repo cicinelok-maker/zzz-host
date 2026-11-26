@@ -93,12 +93,16 @@ def wait_window(timeout: int = 120, interval: float = 2.0) -> dict | None:
 
 
 def _map_enter(rc: int) -> int:
-    """enter_game 的返回码 → 全局退出码（AGENTS.md 那张表）。
+    """**已退化成恒等函数**（BUG-038）。
 
-    enter_game: 0=已到世界 1=没找到按钮 2=需要管理员 3=超时 6=需要登录
-    全局表:     0=成功     1=一般失败   2=配置缺失   7=等进入游戏超时 6=需人工登录
+    原来自成一个编号（`3=超时`），需要翻译成全局码（`7=等进入游戏超时`）——
+    两套编号撞号（全局 `3=选不中角色`），很容易看错。
+
+    2026-11-27 起 `enter_game()` 直接返回全局码，这里只需要原样透传。
+
+    **保留这个函数**只为了不改两处调用点；以后新代码直接用 `rc` 就行。
     """
-    return {0: 0, 1: 1, 2: 2, 3: 7, 6: 6}.get(rc, rc)
+    return rc
 
 
 def ensure(timeout: int = 120, no_enter: bool = False) -> int:
@@ -241,7 +245,14 @@ def enter_game(timeout: int = 90) -> int:
     print("     python tools/zzz_launch.py --no-enter")
     print("     （后面跑 zzz_status 时会自己导航到目标界面）")
     print("  3 游戏在更新 / 弹了协议窗口")
-    return 3
+    # **直接返回全局码 7**（BUG-038）。
+    #
+    # 原来这里返回 `3`（本地编号里 3 = 超时），靠 `_map_enter` 翻译成 7。
+    # 但全局表里 `3 = 选不中角色` —— 两套编号撞号，
+    # 谁要是直接调 `enter_game()` 就会拿到一个含义完全不同的码。
+    #
+    # 现在 `enter_game` 直接吐全局码，`_map_enter` 就不需要了。
+    return 7
 
 
 def main() -> int:

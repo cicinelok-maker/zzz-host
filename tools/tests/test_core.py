@@ -2501,3 +2501,50 @@ class TestFailureDiagnosis(unittest.TestCase):
         self.assertGreater(i, -1)
         self.assertIn("except Exception", src[max(0, i - 200):i + 800],
                       "init_model() 没有被 try 包住")
+
+
+class TestExitCodeNumbering(unittest.TestCase):
+    """退出码只能有**一套**编号（BUG-038）。
+
+    ## 原来有两套
+
+    `enter_game()` 自成一个编号：
+
+    ```
+    0=已到世界 1=没找到按钮 2=需要管理员 3=超时 6=需要登录
+    ```
+
+    而 `AGENTS.md` 的全局表里 **`3 = 选不中角色`**、**`7 = 等进入游戏超时`**。
+    撞号了。
+
+    `_map_enter()` 负责翻译（3 → 7），两处内部调用都走了它，所以**没有真 bug** ——
+    但谁要是直接调 `enter_game()` 就会拿到一个含义完全不同的码。
+
+    2026-11-27 起 `enter_game()` 直接返回全局码，`_map_enter()` 退化成恒等。
+    """
+
+    def test_map_enter_is_identity(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_launch as z
+        for v in (0, 1, 2, 3, 6, 7, 8):
+            self.assertEqual(z._map_enter(v), v,
+                             f"_map_enter({v}) = {z._map_enter(v)} —— 还有映射，"
+                             f"说明 enter_game 还在用本地编号")
+
+    def test_enter_game_returns_global_timeout_code(self):
+        """超时必须是 7（等进入游戏超时），不能是 3（选不中角色）。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_launch as z
+        src = inspect.getsource(z.enter_game)
+        i = src.find("等进入游戏超时")
+        self.assertGreater(i, -1, "找不到超时那段的提示")
+        tail = src[i:i + 600]
+        self.assertIn("return 7", tail,
+                      "超时没有返回 7（全局码「等进入游戏超时」）")
+        self.assertNotIn("return 3", tail,
+                         "超时还在返回 3 —— 会和「选不中角色」撞号")
