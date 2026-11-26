@@ -85,7 +85,14 @@ def main() -> int:
 
     for n in names:
         cfg = meta.get(n) or {}
-        role = cfg.get("岗位", DEFAULT_ROLE).split("/")[0]
+        # **先看「岗位」，没有就用「定位」**（BUG-146）。
+        #
+        # disc_meta.json 里：有「岗位」的只有 7/64 角色，有「定位」的 64/64。
+        # 原来只读「岗位」，**57 个角色静默落到 DEFAULT_ROLE**，
+        # 拿到一份和它职业无关的技能升级推荐 —— 输出看着正常，看不出来。
+        # 实测：苍角（支援）、丽娜（支援）、简（异常）全被当成「强攻」。
+        role = (cfg.get("岗位") or cfg.get("定位")
+                or DEFAULT_ROLE).split("/")[0]
         tgt = TARGETS.get(role, TARGETS[DEFAULT_ROLE])
         cur = cur_levels(n, st)
         print(f"\n{n}（{role}）")
