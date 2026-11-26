@@ -1140,3 +1140,93 @@ class TestMcpTimeoutKillsTree(unittest.TestCase):
             [sys.executable, "-c", "import time; time.sleep(30)"], timeout=2)
         self.assertEqual(rc, 124, f"超时返回码应为 124，实际 {rc}")
         self.assertIn("超时", out)
+
+
+class TestOutcomeRules(unittest.TestCase):
+    """`judge()` 必须能对着工具的**真实输出**数出「做成了几件事」（BUG-089）。
+
+    ## 原来 7 条规则里至少 4 条永久失效
+
+    正则写的是想象出来的文案：
+    ```
+    "音擎养成": [(r"强化了一次", "强化")]
+    "角色等级": [(r"已升级", "升级"), (r"点晋升", "晋升")]
+    "驱动盘":   [(r"号位已换装", "换装")]
+    ```
+    而工具实际打印的是：
+    ```
+    zzz_wengine.py:  完成：强化 5 次，改装 2 次
+    zzz_level.py:    完成，升级 3 次
+    zzz_core.py:     合计升了 4 次
+    ```
+    于是 `judge()` 恒返回 0 → 「实际完成」永远 0 →
+    **`zzz_grind` 看不到任何进展，那个「刷到毕业」的循环永远不会收敛**。
+
+    ## 还有个细节
+
+    「强化 5 次」是**一行报 5 次**。只数行数会得到 1，
+    所以规则支持 `(正则, 描述, 分组号)` 把数字取出来。
+    """
+
+    def setUp(self):
+        from zzz_daily import judge
+        self.j = judge
+
+    def test_counts_number_not_lines(self):
+        """「完成：强化 5 次」要数出 5，不是 1。"""
+        n, _ = self.j("音擎养成", "完成：强化 5 次，改装 2 次")
+        self.assertEqual(n, 5)
+
+    def test_level_up_count(self):
+        n, _ = self.j("角色等级", "完成，升级 3 次")
+        self.assertEqual(n, 3)
+
+    def test_core_skill_count(self):
+        n, _ = self.j("核心技", "合计升了 4 次")
+        self.assertEqual(n, 4)
+
+    def test_disc_two_actions(self):
+        out = "      ✔ 已调（校验主词条…）\n   ✔ 主词条 攻击力（10691）可用"
+        n, notes = self.j("驱动盘", out)
+        self.assertEqual(n, 2)
+        self.assertEqual(len(notes), 2)
+
+    def test_no_false_positive_on_failure_text(self):
+        """失败/跳过的文案不能被当成「做成了」。"""
+        for label, out in (
+            ("音擎养成", "→ 已经是目标音擎，跳过换装"),
+            ("角色等级", "职级晋升：读不到认证章数量"),
+            ("驱动盘", "⚠ 刷本可能没真跑（没看到「挑战完成」）"),
+            ("核心技", "（一次都没升成 —— 材料不够）"),
+        ):
+            n, _ = self.j(label, out)
+            self.assertEqual(n, 0, f"{label} 把失败文案当成了成功：{n}")
+
+    def test_old_imagined_patterns_removed(self):
+        """原来那些想象出来的文案不该再出现在**规则表**里。
+
+        **只看正则，不看整个源文件** —— 我第一版写的是
+        `assertNotIn(bad_pat, inspect.getsource(zzz_daily))`，
+        结果被自己写的解释注释骗了：注释里为了说明问题引用了那几个词，
+        测试就把注释当成了「还在用旧文案」。
+
+        （这个坑我在 `zzz_cost` 上踩过一次，这是第二次。）
+        """
+        import zzz_daily
+        pats = []
+        for rules in zzz_daily.OUTCOME_RULES.values():
+            for r in rules:
+                pats.append(r[0])
+        joined = "\n".join(pats)
+        for bad_pat in ("强化了一次", "点改装", "点晋升", "号位已换装"):
+            self.assertNotIn(bad_pat, joined,
+                             f"规则正则里还有「{bad_pat}」，实际输出里没有这文案")
+
+    def test_rules_target_real_output(self):
+        """反向确认：规则里确实用了工具真实打印的文案。"""
+        import zzz_daily
+        pats = "\n".join(r[0] for rules in zzz_daily.OUTCOME_RULES.values()
+                          for r in rules)
+        for real in ("完成：强化", "完成，升级", "合计升了", "已调"):
+            self.assertIn(real, pats,
+                          f"规则里没有「{real}」—— 这是工具真会打印的")
