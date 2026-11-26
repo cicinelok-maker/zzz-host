@@ -578,6 +578,34 @@ class Machine:
                     seen.add(tr.dst)
                     q.append(np_)
         return None
+    def _at(self, target: str, tries: int = 2) -> bool:
+        """**稳定确认**：连续 tries 帧都认成 target 才算到。
+
+        为什么要这个（实测 2026-11-26）：
+        连续切换标签时，`go_to('技能页')` 有一次 **2.5 秒就返回 True，
+        但画面还停在基础页**。一次点击+验证要 2 秒，所以不是「没生效」——
+        是**过渡帧上 `describe()` 瞬时命中了目标页面**，
+        而 `go_to` 单帧判定就打了勾。
+
+        和 `reset_to_world` 当初一个毛病：单帧可能是动画中间态。
+        """
+        # **多数决**，不是「全部都要对」。
+        #
+        # 第一版写成「连续 2 帧都认成 target 才算」，实测**太严**：
+        # OCR 对同一个页面会间歇性漏词（比如技能页的「影画」偶尔读不出），
+        # 于是真到了技能页也判 False。
+        #
+        # 现在取 3 帧，**至少 2 帧**认成 target 才算。
+        # 这既能挡掉「过渡帧瞬时命中」，又不会因为一次 OCR 抖动判失败。
+        hits = 0
+        for k in range(3):
+            self.vs.frame(force=True)
+            if self.state() == target:
+                hits += 1
+            if k < 2:
+                time.sleep(0.12)
+        return hits >= max(2, tries)
+
     def go_to(self, target: str) -> bool:
         """从当前状态走到目标状态，自动规划并执行。"""
         for rnd in range(self.max_rounds):
@@ -587,7 +615,7 @@ class Machine:
                     print("  [machine] 状态未知，先复位")
                 self.recover()
                 cur = self.state()
-            if cur == target:
+            if cur == target and self._at(target):
                 return True
             path = self._path(cur, target)
             if not path:
@@ -600,11 +628,11 @@ class Machine:
                 ok = self.run(tr)
                 if not ok:
                     break       # 重新规划
-            if self.state() == target:
+            if self._at(target):
                 return True
             if self.verbose:
                 print(f"  [machine] 第 {rnd + 1} 轮没到，重试")
-        return self.state() == target
+        return self._at(target)
 
     def recover(self) -> bool:
         """无脑回大世界"""
