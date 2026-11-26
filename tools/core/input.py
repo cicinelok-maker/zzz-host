@@ -281,6 +281,49 @@ class Input:
         time.sleep(_jit(wait) if self.jitter else wait)
         self.mode = "mouse"
 
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int, *,
+             wait: float = 0.4, hold: float = 0.12,
+             steps: int = 12, button: str = "left") -> None:
+        """按住从 (x1,y1) 拖到 (x2,y2)，然后松开。
+
+        ## 为什么要分段移动
+
+        游戏是按「鼠标移动事件」跟进拖拽的。**一步跳到终点会丢中间过程**，
+        滑块可能完全不动（实测过）。
+
+        所以拆成 `steps` 段，每段之间 sleep 几毫秒，让游戏能跟上。
+
+        ## 用途
+
+        养成指南 →「养成材料计算」→ 技能等级那 6 个滑块，
+        要把拇指从当前位置拖到最右端（目标等级）。
+
+        用法：
+        ```python
+        inp.drag(thumb_x, row_y, track_right_x, row_y)
+        ```
+        """
+        self._guard("拖拽")
+        down, up = (LDOWN, LUP) if button == "left" else (RDOWN, RUP)
+
+        if not user32.SetCursorPos(self.ox + x1, self.oy + y1):
+            check_send(0, f"鼠标移到 ({x1},{y1})")
+        time.sleep(0.06)
+        user32.mouse_event(down, 0, 0, 0, 0)
+        time.sleep(hold)
+
+        for k in range(1, steps + 1):
+            nx = x1 + (x2 - x1) * k // steps
+            ny = y1 + (y2 - y1) * k // steps
+            user32.SetCursorPos(self.ox + nx, self.oy + ny)
+            time.sleep(0.02)
+
+        time.sleep(0.06)
+        user32.mouse_event(up, 0, 0, 0, 0)
+        time.sleep(_jit(wait) if self.jitter else wait)
+        self.mode = "mouse"
+
     def click_item(self, item: dict, **kw) -> None:
         """点一个 OCR 结果（含 cx/cy）"""
         self._guard("点列表项")
