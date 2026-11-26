@@ -381,3 +381,78 @@ class TestDiscCycleLevelMatch(unittest.TestCase):
         """等级1 后面紧跟数字 = 另一个等级。"""
         self.assertFalse(self.f("等级100", 1))
         self.assertFalse(self.f("等级199", 1))
+
+
+class TestAgentNameCoverage(unittest.TestCase):
+    """全部角色名都要能被名字解析认出来（BUG-026）。
+
+    ## 背景
+
+    `pick_agent._read_name_raw` 里有一道 `NAME_RE` 闸和一步 `_clean`。
+    这两者太窄的时候，某些角色名**永远读不出来**：
+
+    ```
+    奥菲丝&鬼火   → `&` 不在字符集里，NAME_RE 直接拒
+    11号         → `_clean` 无条件剥数字，变成「号」
+    ```
+
+    而读不出来这件事会被上层伪装成「账号上没有这个角色」，
+    所以症状表现为「选不中」，很难往「正则太窄」上想。
+
+    ## 测什么
+
+    1. `disc_meta.json` 里**每一个**角色名都过 NAME_RE
+    2. `_clean` 不破坏名字里的数字（11号）和符号（&、·）
+    3. `_clean` 仍然会剥掉等级尾巴（`简☆2` → `简`）
+    """
+
+    def _name_re(self):
+        import re
+        # 与 pick_agent._read_name_raw 里的 NAME_RE 保持一致
+        return re.compile(r"^[\u4e00-\u9fa5·・.‧•∙&＆\d]{1,12}$")
+
+    def _clean(self):
+        import re
+
+        def f(x: str) -> str:
+            x = re.sub(r"[☆★◇◆○●◯◎✦✧＊*]", "", x)
+            x = re.sub(r"(?<=[^\d])\d+", "", x)
+            return x.replace(" ", "").strip()
+        return f
+
+    def test_all_library_names_pass(self):
+        import json
+        meta = json.loads((pathlib_path() / "disc_meta.json").read_text(encoding="utf-8"))
+        names = list((meta.get("角色") or {}).keys())
+        self.assertGreater(len(names), 50, "角色库太小，测试没意义")
+        bad = [n for n in names if not self._name_re().fullmatch(n)]
+        self.assertEqual(bad, [], f"这些角色名过不了 NAME_RE：{bad}")
+
+    def test_digits_in_name_survive(self):
+        """11号 不能被剥成 号。"""
+        self.assertEqual(self._clean()("11号"), "11号")
+
+    def test_ampersand_survives(self):
+        self.assertEqual(self._clean()("奥菲丝&鬼火"), "奥菲丝&鬼火")
+        self.assertTrue(self._name_re().fullmatch("奥菲丝&鬼火"))
+
+    def test_middle_dot_survives(self):
+        for n in ("星徽·比利", "零号·安比"):
+            self.assertEqual(self._clean()(n), n)
+            self.assertTrue(self._name_re().fullmatch(n), n)
+
+    def test_level_tail_stripped(self):
+        """等级尾巴还是要剥掉（这是原来就对的，别改坏）。"""
+        self.assertEqual(self._clean()("简☆2"), "简")
+        self.assertEqual(self._clean()("凯撒☆"), "凯撒")
+
+    def test_single_char_names(self):
+        for n in ("简", "本", "柳", "雅", "照"):
+            self.assertEqual(self._clean()(n), n)
+            self.assertTrue(self._name_re().fullmatch(n), n)
+
+
+def pathlib_path():
+    """tools 目录（测试文件在 tools/tests/ 下）。"""
+    from pathlib import Path
+    return Path(__file__).resolve().parent.parent

@@ -88,8 +88,16 @@ def _read_name_raw(vs: Vision) -> str:
     NOISE = {"非", "山", "人", "友", "目", "具", "力", "口", "十", "土"}
 
     def _clean(x: str) -> str:
+        """剥掉等级符号和**尾随**数字。
+
+        BUG-026：原来是无条件 `re.sub(r"\\d+", "", x)`，把 `11号` 剥成 `号` ——
+        名字里的数字是名字的一部分，不是等级噪音。
+
+        现在只剥「跟在非数字后面」的数字（等级尾巴 `简☆2` → `简☆`），
+        开头的数字保留（`11号` 保持完整）。
+        """
         x = re.sub(r"[☆★◇◆○●◯◎✦✧＊*]", "", x)
-        x = re.sub(r"\d+", "", x)
+        x = re.sub(r"(?<=[^\d])\d+", "", x)
         x = x.replace(" ", "").strip()
         return x
 
@@ -102,7 +110,9 @@ def _read_name_raw(vs: Vision) -> str:
         if c:
             cands.append(c)
 
-    NAME_RE = re.compile(r"^[\u4e00-\u9fa5·・.‧•∙]{1,12}$")
+    # BUG-026：补 `&`（奥菲丝&鬼火）和数字（11号）。
+    # 仍然要求至少一个汉字 —— 由下面的 `re.search(r"[\u4e00-\u9fa5]", p)` 守卫。
+    NAME_RE = re.compile(r"^[\u4e00-\u9fa5·・.‧•∙&＆\d]{1,12}$")
 
     # ① 单段匹配（允许单字名）
     for p in cands:
@@ -115,11 +125,17 @@ def _read_name_raw(vs: Vision) -> str:
         return joined
 
     # ③ 取最长中文段（允许单字）
+    # BUG-026：兜底也要认 `·` / `&` / 数字 —— 否则
+    # `星徽·比利` 会被切成「星徽」和「比利」两段，取长的那个反而错。
     best = ""
     for p in cands:
-        for seg in re.findall(r"[\u4e00-\u9fa5]{1,8}", p):
+        for seg in re.findall(r"[\u4e00-\u9fa5·&＆\d]{1,12}", p):
             if len(seg) > len(best) and seg not in NOISE:
                 best = seg
+    if not best:
+        # **读不出名字要说出来**，别让上层把它当成「不是这个角色」
+        # （审计 BUG-026：这会把「选不中」伪装成「账号上没有」）。
+        print(f"    [pick_agent] 读不出角色名（原始 OCR：{t[:60]!r}）")
     return _snap_to_library(best)
 
 
