@@ -1700,15 +1700,20 @@ class TestDocumentedCommandsWork(unittest.TestCase):
         text = doc.read_text(encoding="utf-8")
         cmds = []
         for line in text.splitlines():
-            m = re.match(r"\s*(python tools/[\w.]+\.py[^\s#]*(?:\s+[^\s#][^#]*)?)", line)
-            if not m:
-                continue
-            c = m.group(1).strip()
-            # 跳过带占位符的（没法测）
-            if "<" in c or "XXX" in c or "角色名" in c:
-                continue
-            if c not in cmds:
-                cmds.append(c)
+            # **一行里可能用 `;` 串了多条命令**（例如「提交前跑一遍全套」那段）。
+            # 第一版没拆，于是把 `a.py; python b.py` 整条当成一个文件名去查，
+            # 报「文件不存在」。真人也这么写，所以这里要按分隔符拆开。
+            for piece in re.split(r";|\s&&\s|\s\|\s", line):
+                m = re.match(r"\s*(python tools/[\w.]+\.py[^\s#]*(?:\s+[^\s#][^#]*)?)",
+                             piece)
+                if not m:
+                    continue
+                c = m.group(1).strip()
+                # 跳过带占位符的（没法测）
+                if "<" in c or "XXX" in c or "角色名" in c:
+                    continue
+                if c not in cmds:
+                    cmds.append(c)
         self.assertGreater(len(cmds), 5, "一条命令都没提取到，正则可能失效了")
 
         bad = []

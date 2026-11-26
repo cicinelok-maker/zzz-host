@@ -399,3 +399,36 @@ python tools/gen_manifest.py           # 重新生成 tools.json
 ```
 
 **全绿才算改完。**
+
+### 改了行为 → **必须同步改测试**
+
+```bash
+python tools/run_tests.py     # 改完立刻跑，别等提交前
+```
+
+**测试是「结论的快照」。** 你改了结论，测试还停在旧结论上 ——
+它就从「这个 bug 的防护」变成「这个 bug 的阻碍」。
+
+实测踩过：把 `主菜单 → 世界` 从「单 ESC」改成「交替 B/ESC」，
+代码回退了但**测试没跟着回退**，于是 `run_tests` 红了、
+`audit_ship` 也红了，而那一次「红」是**对的** ——
+它在提醒我「代码和你上次确认的事实不一致了」。
+
+**判断标准**：这条断言写的是「**我实测过的事实**」还是「**当前实现的样子**」？
+
+· 前者（`主菜单上单按 ESC 有效，按 B 会打开别的面板`）→ 事实变了就改测试，
+  并在注释里写清「什么时候、为什么变的」
+· 后者（`assertIn("ok, out = run(", src)`）→ 尽量改成验证**行为**，
+  只保留「守卫存在性」的粗检查
+
+**提交前跑一遍全套**，别只跑 `run_tests`：
+
+```bash
+python tools/check_config.py; python tools/run_tests.py; python tools/smoke_test.py
+python tools/audit_self.py; python tools/audit_patterns.py; python tools/audit_release.py
+python tools/audit_ship.py; python tools/audit_stale_frame.py
+```
+
+`audit_ship` 特别重要 —— 它会在**发布集子集**里重跑测试，
+能抓到「只在全仓里成立」的假设（我加的一条测试就因为假定
+`AGENTS.md` 一定存在而红过）。
