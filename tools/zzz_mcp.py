@@ -147,18 +147,76 @@ TOOLS = [
 
 # ============================================================ 执行
 
+def _truthy(v) -> bool:
+    """把 MCP 客户端可能发来的各种「真」统一成 bool。
+
+    只有明确表示「是」的才算真：
+    · ``True``（真正的布尔）、数字 1
+    · 字符串 true / 1 / yes / y / on / 是（不区分大小写）
+
+    其他一律 False —— 包括 ``"false"``、``"0"``、``"no"``、``None``、空串。
+
+    为什么需要（BUG-158）：原来写的是 ``if not args.get("confirm")``，
+    而 MCP 客户端可能把布尔值发成字符串 ``{"confirm": "false"}`` ——
+    ``not "false"`` 是 False，于是直接放行去跑 ``--run``，
+    花掉电量和材料。这就是「以为只出计划，实际全跑了」。
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v == 1
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "y", "on", "是")
+    return False
+
+
 def _run(cmd: list[str], timeout: int = 3600) -> tuple[int, str]:
     """跑一个 CLI，返回 (退出码, 输出)。"""
     env = dict(__import__("os").environ)
     env.update(one_dragon_env())
     env["PYTHONIOENCODING"] = "utf-8"
+
+    # **超时要把整棵进程树杀掉**（BUG-157）。
+    #
+    # `subprocess.run(..., timeout=)` 超时时只 `kill()` **直接子进程** ——
+    # 而我们的子进程是 `zzz_daily.py`，它会再起 OneDragon 的 python 去动游戏。
+    # 杀掉中间那一层，孙进程还活着，**继续注入键鼠**。
+    #
+    # 这里用 Popen + 独立的进程组，超时时 `taskkill /T` 连子孙一起收掉。
+    proc = None
     try:
-        r = subprocess.run(cmd, cwd=str(BASE), env=env, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace",
-                           timeout=timeout)
-        return r.returncode, (r.stdout or "") + (r.stderr or "")
+        proc = subprocess.Popen(
+            cmd, cwd=str(BASE), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
+        )
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, (out or "") + (err or "")
     except subprocess.TimeoutExpired:
-        return 124, f"超时（{timeout} 秒）"
+        _kill_tree(proc)
+        return 124, f"超时（{timeout} 秒），已连带子进程一起终止"
+
+
+def _kill_tree(proc) -> None:
+    """杀掉 proc 及其全部子孙。杀不掉也要尝试两轮。"""
+    if proc is None:
+        return
+    pid = getattr(proc, "pid", None)
+    if pid:
+        try:
+            # /T = 连子孙进程，/F = 强制
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                           capture_output=True, timeout=30)
+        except Exception:
+            pass
+    try:
+        proc.kill()                     # taskkill 不在了就退一步
+    except Exception:
+        pass
+    try:
+        proc.communicate(timeout=10)    # 收尸，避免僵尸
+    except Exception:
+        pass
 
 
 def _py() -> str:
@@ -238,7 +296,13 @@ def call_tool(name: str, args: dict) -> tuple[str, bool]:
     if name == "zzz_daily_run":
         # 读 status 生成计划
         rc0, out0 = _run([_py(), "-u", str(HERE / "zzz_disc_daily.py"), agent], 2400)
-        if not args.get("confirm"):
+        # **confirm 严格解析**（BUG-158）。
+        #
+        # 原来写 `if not args.get("confirm")` —— MCP 客户端可能把布尔值发成
+        # **字符串** `{"confirm": "false"}`，而 `not "false"` 是 False，
+        # 于是**直接放行去跑 `--run`**，花掉电量和材料。
+        # `"0"`、`"no"` 同理。这是「以为只出计划，实际全跑了」。
+        if not _truthy(args.get("confirm")):
             return ("【未执行】这是计划，要真跑请传 confirm=true\n\n"
                     + out0.strip()), False
         cmd = [_py(), "-u", str(HERE / "zzz_daily.py"), agent, "--run"]

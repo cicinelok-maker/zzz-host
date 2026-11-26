@@ -1078,3 +1078,65 @@ class TestCostLevelPriority(unittest.TestCase):
         self.assertIn("-1", src, "read_levels 里没有「未知 = -1」的处理")
         # 侧证：任何一个不在数据里的角色名不该出现在结果里
         self.assertNotIn("__不存在的角色__", zc.read_levels())
+
+
+class TestMcpConfirm(unittest.TestCase):
+    """MCP 的 `confirm` 必须严格解析（BUG-158）。
+
+    ## 原来是什么样的
+
+    ```python
+    if not args.get("confirm"):      # ← 字符串 "false" 会被当成真
+        return "【未执行】这是计划…"
+    ```
+
+    MCP 客户端可能把布尔值发成**字符串** `{"confirm": "false"}`。
+    `not "false"` == False → **直接放行去跑 `--run`**，花掉电量和材料。
+    这是「以为只出计划，实际全跑了」。
+    """
+
+    def setUp(self):
+        from zzz_mcp import _truthy
+        self.f = _truthy
+
+    def test_string_false_is_false(self):
+        for v in ("false", "False", "FALSE", "0", "no", "off", ""):
+            self.assertFalse(self.f(v), f"{v!r} 被当成了真")
+
+    def test_real_true_values(self):
+        for v in (True, 1, "true", "True", "1", "yes", "y", "on", "是"):
+            self.assertTrue(self.f(v), f"{v!r} 应该是真")
+
+    def test_non_bool_objects_are_false(self):
+        """非空列表/字典在 Python 里是 truthy，但在这里必须是 False。"""
+        for v in ([], {}, (), None, 0, 2.5):
+            self.assertFalse(self.f(v), f"{v!r} 被当成了真")
+
+    def test_daily_run_gate_uses_truthy(self):
+        import inspect
+        import zzz_mcp
+        src = inspect.getsource(zzz_mcp.call_tool)
+        self.assertIn("_truthy(args.get(\"confirm\"))", src,
+                      "call_tool 里的 confirm 闸没用 _truthy")
+
+
+class TestMcpTimeoutKillsTree(unittest.TestCase):
+    """MCP 超时要连子孙进程一起杀（BUG-157）。
+
+    `subprocess.run(timeout=)` 只 kill **直接子进程**。
+    而我们的子进程是 `zzz_daily.py`，它会再起 OneDragon 的 python 去动游戏 ——
+    杀掉中间那一层，孙进程还活着，**继续注入键鼠**。
+    """
+
+    def test_has_kill_tree(self):
+        import zzz_mcp
+        self.assertTrue(hasattr(zzz_mcp, "_kill_tree"),
+                        "没有 _kill_tree —— 超时只会杀直接子进程")
+
+    def test_timeout_returns_124(self):
+        import sys
+        import zzz_mcp
+        rc, out = zzz_mcp._run(
+            [sys.executable, "-c", "import time; time.sleep(30)"], timeout=2)
+        self.assertEqual(rc, 124, f"超时返回码应为 124，实际 {rc}")
+        self.assertIn("超时", out)
