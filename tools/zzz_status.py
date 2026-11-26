@@ -289,8 +289,10 @@ def main() -> int:
                     "slots": result, "skills": sk,
                     "char_level": char_lv}
         _data = _stamp(_payload)
-        out.write_text(json.dumps(_data, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
+        # **原子写**（BUG-064）：写到一半被杀会留下半截 JSON，
+        # 而读取方会把坏 JSON 当成「空状态」，数据凭空消失。
+        from core import atomic as _atomic
+        _atomic.write_json(out, _data)
         print(f"\n已写入 {out}")
         # **stdout 只留 JSON**（人类文本已经在 stderr 上了）
         sys.stdout = _real_stdout

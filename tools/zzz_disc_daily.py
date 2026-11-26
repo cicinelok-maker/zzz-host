@@ -203,19 +203,57 @@ def grade(total: float) -> tuple[str, float]:
 
 
 def load_progress() -> list:
-    if PROGRESS.exists():
+    """读养成历史。
+
+    ## 坏文件不能静默当空（BUG-067）
+
+    原来是：
+    ```python
+    try:
+        return json.loads(...)
+    except Exception:
+        return []          # ← 半截 JSON 被当成「没有历史」
+    ```
+
+    于是「文件被写到一半就中断」= **整个养成历史凭空消失**，
+    而且没有任何输出。用户只会觉得「进度怎么没了」。
+
+    现在：非空但读不了 → **先改名备份**（`.corrupt`），再报出来，然后按空继续。
+    备份是关键 —— 至少要让人能手工抢救。
+    """
+    if not PROGRESS.exists():
+        return []
+    txt = PROGRESS.read_text(encoding="utf-8", errors="replace")
+    if not txt.strip():
+        return []
+    try:
+        d = json.loads(txt)
+        return d if isinstance(d, list) else []
+    except Exception as e:
+        bak = PROGRESS.with_name(PROGRESS.name + ".corrupt")
+        moved = False
         try:
-            return json.loads(PROGRESS.read_text(encoding="utf-8"))
+            PROGRESS.replace(bak)
+            moved = True
         except Exception:
-            return []
-    return []
+            pass
+        print(f"  ⚠ {PROGRESS.name} 读不了（{e}）")
+        if moved:
+            print(f"     已备份成 {bak.name}（{len(txt)} 字节），本次按空历史继续")
+            print(f"     抢救办法：手工修好后改名回 {PROGRESS.name}")
+        else:
+            print(f"     备份失败，文件 {len(txt)} 字节仍在原处")
+        return []
 
 
 def append_progress(rec: dict) -> None:
     data = load_progress()
     data.append(rec)
-    PROGRESS.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
+    # **原子写**（BUG-064 / BUG-067）：这份是养成历史，
+    # 写一半被杀就变半截 JSON，而 load_progress() 原来会静默当空 ——
+    # 整个历史凭空消失。
+    from core import atomic as _atomic
+    _atomic.write_json(PROGRESS, data)
 
 
 def show_report() -> int:

@@ -52,7 +52,8 @@ def _load() -> dict:
 def _save(d: dict) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
     d["_ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    STORE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    from core import atomic as _atomic
+    _atomic.write_json(STORE, d)
 
 
 def record(name: str, have: int, source: str = "") -> None:

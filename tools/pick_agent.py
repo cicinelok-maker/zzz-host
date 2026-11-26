@@ -54,7 +54,8 @@ def load_cache() -> dict:
 
 def save_cache(d: dict) -> None:
     CACHE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    from core import atomic as _atomic
+    _atomic.write_json(CACHE, d)
 
 
 def _read_name_raw(vs: Vision) -> str:

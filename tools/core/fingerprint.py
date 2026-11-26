@@ -98,8 +98,8 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
-    STORE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                     encoding="utf-8")
+    from core import atomic as _atomic
+    _atomic.write_json(STORE, data)
 
 
 def capture(vs, name: str, samples: int = 3) -> dict:

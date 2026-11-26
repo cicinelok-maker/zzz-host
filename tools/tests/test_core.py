@@ -32,6 +32,7 @@ count_hits(subs, good, half)          → 返回 tuple[int, int, list]，不是�
 ```
 **这就是测试的价值：它逼你去查真实签名，而不是「应该是这样」。**
 """
+import pathlib
 import unittest
 from pathlib import Path
 import sys
@@ -684,3 +685,62 @@ class TestCostCumulativeTable(unittest.TestCase):
         self.assertTrue(e.get("unknown"))
         for k in ("exp", "cert", "chip", "data", "relic", "batt"):
             self.assertEqual(e[k], 0, f"未知等级时 {k} 应为 0")
+
+
+class TestAtomicWrite(unittest.TestCase):
+    """原子写：要么是旧的，要么是新的，不能是半个（BUG-064）。
+
+    全仓原来 `grep -rn "os.replace" tools/` 是空的 ——
+    所有 `state/*.json` 都是直接覆盖写。
+    写到一半被杀就留下半截 JSON，而读取方把坏 JSON 当成「空状态」，
+    数据**凭空消失**且没有任何报错。
+    """
+
+    def setUp(self):
+        import tempfile
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.f = self.dir / "x.json"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_write_json_roundtrip(self):
+        from core import atomic
+        atomic.write_json(self.f, {"a": 1, "b": [2, 3]})
+        import json
+        self.assertEqual(json.loads(self.f.read_text(encoding="utf-8")),
+                         {"a": 1, "b": [2, 3]})
+
+    def test_no_tmp_left_behind(self):
+        """写完不能留下 .tmp —— 否则下次读目录会困惑。"""
+        from core import atomic
+        atomic.write_json(self.f, {"a": 1})
+        leftovers = [p.name for p in self.dir.iterdir() if p.name != "x.json"]
+        self.assertEqual(leftovers, [], f"留下了 {leftovers}")
+
+    def test_existing_file_survives_if_write_fails(self):
+        """写失败时，旧文件必须完好 —— 这是原子写的全部意义。"""
+        from core import atomic
+        atomic.write_json(self.f, {"old": True})
+        before = self.f.read_text(encoding="utf-8")
+        # 传一个 json 序列化不了的对象
+        with self.assertRaises(Exception):
+            atomic.write_json(self.f, {"bad": object()})
+        after = self.f.read_text(encoding="utf-8")
+        self.assertEqual(before, after, "写失败把旧文件也弄坏了")
+
+    def test_read_json_reports_corrupt_file(self):
+        """坏 JSON 要报出文件名和位置，不能假装是「没有数据」。"""
+        from core import atomic
+        self.f.write_text('{"a": 1, "b"', encoding="utf-8")
+        with self.assertRaises(ValueError) as cm:
+            atomic.read_json(self.f)
+        msg = str(cm.exception)
+        self.assertIn("x.json", msg)
+        self.assertIn("字节", msg)
+
+    def test_read_json_missing_returns_default(self):
+        from core import atomic
+        self.assertIsNone(atomic.read_json(self.dir / "nope.json"))
+        self.assertEqual(atomic.read_json(self.dir / "nope.json", default=[]), [])
