@@ -100,9 +100,14 @@ zzz_status.py          → state/status_<agent>.json
 zzz_gap.py
 zzz_guide.py
 zzz_guide_agents.py
+zzz_resource.py        （在子命令上：`zzz_resource.py check --json`）
 zzz_uid.py
-gen_manifest.py
 ```
+
+**这份清单现在和 `tools.json` 的 `json_output` 一致**（那个字段由
+`gen_manifest.py` **解析 AST** 得出，不是搜字符串 —— 搜字符串会把
+「注释里提到 --json」也算上，实测误标过 6 个工具）。
+跑 `python tools/gen_manifest.py` 重生成后，可以对照这份。
 
 其余工具输出**只是给人看的文本**，要数据就读 `state/*.json`。
 

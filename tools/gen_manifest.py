@@ -160,6 +160,30 @@ SKIP = {"audit_", "selftest_", "_", "gen_manifest", "cleanup_tools",
         "check_consistency", "check_main_formula"}
 
 
+
+def _has_json_arg(src: str) -> bool:
+    """源码里有没有真正的 `add_argument("--json"...)` 调用。
+
+    只看 AST —— 注释、docstring、字符串常量里的 `--json` 都不算。
+    """
+    import ast as _ast
+    try:
+        tree = _ast.parse(src)
+    except SyntaxError:
+        return False
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        fn = node.func
+        name = getattr(fn, "attr", None) or getattr(fn, "id", None)
+        if name != "add_argument":
+            continue
+        for a in node.args:
+            if isinstance(a, _ast.Constant) and a.value == "--json":
+                return True
+    return False
+
+
 def scan_tool(p: pathlib.Path) -> dict | None:
     s = p.read_text(encoding="utf-8", errors="replace")
     name = p.stem
@@ -180,7 +204,18 @@ def scan_tool(p: pathlib.Path) -> dict | None:
             args.append({"flag": flag})
 
     # 有没有 --json
-    has_json = '"--json"' in s or "'--json'" in s
+    # **用 AST 找 `add_argument("--json")`，不是搜字符串**（BUG-052）。
+    #
+    # 原来 `has_json = '"--json"' in s or "'--json'" in s` ——
+    # 工具里只要**提到** `--json`（比如注释、docstring、错误提示）
+    # 就会被标成「支持 JSON 输出」。
+    #
+    # 实测后果：`tools.json` 的 `json_output` 字段不可信，
+    # 而 AGENTS.md 里那份「只有这 6 个有 --json」的清单**就是手抄的**，
+    # 6 个里 5 个是错的 —— 照着调用直接 exit 2。
+    #
+    # 现在解析 AST，只认真正的 `add_argument("--json"...)`。
+    has_json = _has_json_arg(s)
 
     meta = META.get(p.name, {})
 

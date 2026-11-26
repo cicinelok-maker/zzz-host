@@ -1516,60 +1516,47 @@ class TestDocsMatchCode(unittest.TestCase):
         self.assertEqual(bad, {}, f"文档提到了不存在的工具：{bad}")
 
     def test_agents_json_list_is_accurate(self):
-        """AGENTS.md 说「有 --json」的工具必须真的在 --help 里出现 --json。"""
-        import re
+        """AGENTS.md 的 --json 清单必须和 `tools.json` 的 `json_output` 一致。
+
+        ## 为什么改成对照 tools.json，而不是跑 --help
+
+        第一版是「跑每个工具的 `--help`，看有没有 `--json`」。三个问题：
+
+        ① **子命令的 `--json` 顶层看不到** —— `zzz_resource.py check --json`
+           是真的能用，但 `zzz_resource.py --help` 里没有。
+        ② **有的工具根本没有 argparse** —— `gen_manifest.py --help`
+           会直接**跑一遍生成**，而不是打印帮助。
+        ③ **`--help` 太慢** —— 每个工具起一个子进程。
+
+        而 `tools.json` 的 `json_output` 现在由 `gen_manifest.py` **解析 AST**
+        得出（只认真正的 `add_argument("--json")`），是可信的源头。
+        """
+        import json as _json
+        import re as _re
         import pathlib
-        import subprocess
-        import sys
         root = pathlib.Path(__file__).resolve().parent.parent.parent
         doc = root / "AGENTS.md"
-        if not doc.exists():
-            # **发布集里可能没有 AGENTS.md** —— `audit_ship` 会把发布集
-            # 复制到临时目录里跑测试，那份集合是仓库的子集。
-            # 测试不能假定「仓库里有的文件发布集里也有」。
-            self.skipTest("AGENTS.md 不在当前集合里（发布集子集）")
+        tj = root / "tools.json"
+        if not doc.exists() or not tj.exists():
+            self.skipTest("AGENTS.md / tools.json 不在当前集合里")
         txt = doc.read_text(encoding="utf-8")
-        # 取「只有这 6 个有 --json」之后那个代码块
-        m = re.search(r"现在只有这 \d+ 个有：\s*```\s*\n(.*?)```", txt, re.S)
+        m = _re.search(r"现在只有这 \d+ 个有：\s*```\s*\n(.*?)```", txt, _re.S)
         if not m:
             self.skipTest("AGENTS.md 里没找到那份清单（可能措辞变了）")
-        claimed = re.findall(r"(\w+)\.py", m.group(1))
-        self.assertGreater(len(claimed), 0)
-        for name in claimed:
-            p = root / "tools" / f"{name}.py"
-            self.assertTrue(p.exists(), f"AGENTS.md 声称 {name}.py 有 --json，但文件不存在")
-            try:
-                r = subprocess.run([sys.executable, "-u", str(p), "--help"],
-                                   capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace",
-                                   cwd=str(root), timeout=120)
-            except (OSError, subprocess.SubprocessError) as e:
-                self.skipTest(f"跑不起来 {name}.py --help：{e}")
-            self.assertIn("--json", r.stdout or "",
-                          f"AGENTS.md 说 {name}.py 有 --json，实测没有")
+        claimed = set(_re.findall(r"(\w+)\.py", m.group(1)))
 
-
-class TestSetCoverageAndThresholds(unittest.TestCase):
-    """套装白名单要覆盖副本表，毕业阈值三处要一致（BUG-184 顺带）。
-
-    ## 套装白名单漏了 2 个
-
-    `vocab.SETS` 是 **OCR 纠错的目标集合** —— 不在里面的名字认不出来。
-    实测 `disc_meta.套装副本` 有 31 个套装，而白名单只有 29 个：
-    漏了 `山大王` 和 `月光摇篮曲`。
-
-    于是这两个套装的盘会被当成「未知套装」，主词条/套装判定全失效。
-
-    ## 毕业阈值写在 3 个地方
-
-    ```
-    core/disc_cfg.py:80     "graduation": 28.0
-    tools/zzz_grind.py:42   GRADES = {"小毕业": 28.0, ...}
-    tools/zzz_status.py:27  GRAD = [("小毕业", 28.0), ...]
-    ```
-
-    现在三处一致（28 / 32 / 37），但没有东西保证以后也一致。
-    """
+        d = _json.loads(tj.read_text(encoding="utf-8"))
+        tools = d.get("tools")
+        if isinstance(tools, list):
+            actual = {t.get("name") for t in tools
+                      if isinstance(t, dict) and t.get("json_output")}
+        else:
+            actual = {k for k, v in (tools or {}).items()
+                      if isinstance(v, dict) and v.get("json_output")}
+        self.assertTrue(actual, "tools.json 里一个 json_output 都没有，生成可能坏了")
+        self.assertEqual(claimed, actual,
+                         f"AGENTS.md 说 {sorted(claimed)}，"
+                         f"tools.json 说 {sorted(actual)}")
 
     def test_set_whitelist_covers_dungeon_table(self):
         """副本表里的套装必须都在 vocab.SETS 里，否则永远认不出来。"""
