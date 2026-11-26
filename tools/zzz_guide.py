@@ -153,6 +153,65 @@ def switch_to_detail(ui: Ui) -> bool:
     return "所需" in vs.text((0, 0, 1920, 1080))
 
 
+# 顶部角色选择条的坐标（截图量的，1920x1080 口径）
+P_SEL_PREV = (780, 72)
+P_SEL_NEXT = (1630, 72)
+P_SEL_GRID = (1715, 55)
+
+
+def current_agent(ui: Ui) -> str:
+    """读养成指南当前选中的角色名（左侧面板下部）。"""
+    vs = ui.vs
+    vs.frame(force=True)
+    SKIP = {"RANK", "WIKI", "前瞻", "UP", "级", "S", "A", "B",
+            "养成指南", "养成材料计算"}
+    for it in vs.items((180, 830, 700, 1010)):
+        t = (it.get("text") or "").strip()
+        if not t or any(k in t for k in SKIP):
+            continue
+        if 1 <= len(t) <= 12:
+            return t
+    return ""
+
+
+def select_agent(ui: Ui, name: str, max_clicks: int = 30) -> bool:
+    """在养成指南里切到指定角色。
+
+    **实现方式：点右箭头循环，每点一次读一次左下的角色名，匹配就停。**
+
+    为什么不用 ⊞ 那个网格图标：它打开的可能是个更大更慢的选择页，
+    而「点箭头 + 读名字」在 30 次内一定覆盖完（角色最多一百来个，
+    但顶部条是「这个版本有攻略的」，通常十几个）。
+    """
+    vs, inp = ui.vs, ui.inp
+    vs.frame(force=True)
+
+    cur = current_agent(ui)
+    print(f"  当前角色：{cur or '?'}　目标：{name}")
+    if cur and (cur == name or name in cur or cur in name):
+        print("  已经是目标角色")
+        return True
+
+    for i in range(max_clicks):
+        inp.click(P_SEL_NEXT[0], P_SEL_NEXT[1], wait=1.2)
+        vs.frame(force=True)
+        cur = current_agent(ui)
+        if cur and (cur == name or name in cur or cur in name):
+            print(f"  第 {i + 1} 次点击切到「{cur}」")
+            # 切换后要等它重算（智能计算有延迟）
+            for _ in range(6):
+                try:
+                    vs.wait_still(quiet=0.4, timeout=1.5)
+                except Exception:
+                    time.sleep(0.4)
+                if "养成材料" in vs.text((600, 380, 1800, 1080)):
+                    break
+                time.sleep(0.5)
+            return True
+    print(f"  ✘ 点了 {max_clicks} 次没找到「{name}」，最后停在「{cur or '?'}」")
+    return False
+
+
 def read_detail(ui: Ui) -> dict:
     """读当前「养成材料明细」页。
 
@@ -235,7 +294,7 @@ def read_detail(ui: Ui) -> dict:
     return out
 
 
-def read_detail_all(ui: Ui, max_scroll: int = 8) -> dict:
+def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
     """**滚着读完整个「养成材料明细」**（一节一节读到底）。
 
     实测：明细页一屏只放得下 1~2 节（代理人升级&晋升 / 技能升级 / …），

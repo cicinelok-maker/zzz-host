@@ -814,6 +814,23 @@
    "destructive": false
   },
   {
+   "name": "zzz_guide_plan",
+   "cmd": "python tools/zzz_guide_plan.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2,
+    3,
+    4
+   ],
+   "purpose": "读养成指南的「攻略方案」—— 主属性/副属性/音擎/技能/队伍建议",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "zzz_launch",
    "cmd": "python tools/zzz_launch.py",
    "args": [
