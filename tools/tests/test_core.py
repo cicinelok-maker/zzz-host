@@ -2367,3 +2367,68 @@ class TestSilentFailureGuards(unittest.TestCase):
         else:
             self.assertNotIsInstance(r, int,
                                      f"pick() 返回了 int {r!r} —— 调用方会 TypeError")
+
+
+class TestPathsConfigType(unittest.TestCase):
+    """`paths.json` 内容不是对象时不能崩（BUG-041）。
+
+    ## 原来
+
+    ```python
+    if PATHS_CONFIG.exists():
+        try:
+            return json.loads(PATHS_CONFIG.read_text(...))   # ← 直接返回
+        except Exception:
+            pass
+    ```
+
+    JSON 合法不代表内容合法：`paths.json` 里写 `[1,2]` 或 `"E:\\xx"`
+    也是合法 JSON，于是返回一个 list/str，接着
+
+    ```
+    one_dragon_home():  c.get("one_dragon_home")
+    → AttributeError: 'list' object has no attribute 'get'
+    ```
+
+    **用户看到的是「代码崩了」，而不是「你的 paths.json 写错了」。**
+    """
+
+    def test_conf_returns_dict_for_bad_json_content(self):
+        import json
+        import pathlib
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import paths
+        pf = paths.PATHS_CONFIG
+        bak = pf.read_text(encoding="utf-8") if pf.exists() else None
+        try:
+            for bad in ("[1, 2, 3]", '"E:\\xx"', "123", "null"):
+                pf.write_text(bad, encoding="utf-8")
+                d = paths._conf()
+                self.assertIsInstance(d, dict,
+                                      f"paths.json={bad!r} 时 _conf() 返回了 "
+                                      f"{type(d).__name__}，调用方会 AttributeError")
+        finally:
+            if bak is not None:
+                pf.write_text(bak, encoding="utf-8")
+            else:
+                pf.unlink(missing_ok=True)
+
+    def test_global_statements_compile(self):
+        """`global` 放在函数中间是**编译期**错误，`ast.parse` 查不出来。
+
+        我修 BUG-041 时先写了 `global` 在 `except` 块里，
+        `ast.parse` 通过了，但 import 直接 `SyntaxError`。
+        → 这里对所有 core 模块跑 `compile()`，比 `ast.parse` 严。
+        """
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for f in sorted(root.rglob("*.py")):
+            if "_legacy" in str(f):
+                continue
+            try:
+                compile(f.read_text(encoding="utf-8"), str(f), "exec")
+            except SyntaxError as e:
+                bad.append(f"{f.name}:{e.lineno} {e.msg}")
+        self.assertEqual(bad, [], f"这些文件编译不过：{bad}")

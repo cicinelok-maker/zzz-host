@@ -64,17 +64,45 @@ GAME_GUESSES = [
 ]
 
 
+_WARNED_BAD_PATHS = False       # 坏 paths.json 只提示一次（_conf 会被调多次）
+
+
 def _conf() -> dict:
-    """读路径配置：paths.json 优先，其次 config.json 的 paths 段。"""
+    """读路径配置：paths.json 优先，其次 config.json 的 paths 段。
+
+    ## **必须校验类型**（BUG-041）
+
+    原来 `return json.loads(...)` 直接返回解析结果 ——
+    但 JSON 合法不代表内容合法：`paths.json` 里写 `[1,2]` 或 `"E:\\xx"`
+    也是合法 JSON，于是返回一个 list/str，
+    接着 `one_dragon_home()` 里的 `c.get("one_dragon_home")` 抛
+
+        AttributeError: 'list' object has no attribute 'get'
+
+    **用户看到的是「代码崩了」，而不是「你的 paths.json 写错了」。**
+
+    现在：不是 dict 就当没配置，并明确说一句。
+    """
+    global _WARNED_BAD_PATHS
     if PATHS_CONFIG.exists():
         try:
-            return json.loads(PATHS_CONFIG.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+            d = json.loads(PATHS_CONFIG.read_text(encoding="utf-8"))
+            if isinstance(d, dict):
+                return d
+            if not _WARNED_BAD_PATHS:
+                _WARNED_BAD_PATHS = True
+                print(f"⚠ {PATHS_CONFIG.name} 的内容不是对象（是 "
+                      f"{type(d).__name__}）—— 已忽略，按默认路径继续")
+                print(f'   正确写法：{{"one_dragon_home": "E:\\...", '
+                      f'"zzz_python": "E:\\...\\.venv\\Scripts\\python.exe"}}')
+        except Exception as e:
+            if not _WARNED_BAD_PATHS:
+                _WARNED_BAD_PATHS = True
+                print(f"⚠ {PATHS_CONFIG.name} 读不了：{e}（按默认路径继续）")
     if CONFIG.exists():
         try:
             d = json.loads(CONFIG.read_text(encoding="utf-8"))
-            if isinstance(d.get("paths"), dict):
+            if isinstance(d, dict) and isinstance(d.get("paths"), dict):
                 return d["paths"]
         except Exception:
             pass
