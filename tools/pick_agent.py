@@ -309,23 +309,29 @@ def set_hide_owned(ui: Ui, m: "Machine", hide: bool) -> bool:
     """把代理人筛选里的「隐藏未拥有」开关设成 hide。
 
     `hide=True`  → 只看已拥有
-    `hide=False` → 显示全部（未拥有的灰掉/带锁）
+    `hide=False` → 显示全部（未拥有的也列出来）
 
-    ## 开关长什么样（截图量的）
+    ## 为什么这段代码看起来啰嗦（踩了很久的坑）
 
-    ```
-    代理人筛选
-      等级                        [⇅]
-      隐藏未拥有        [ ON  ○ ]      ← 绿色药丸 + 圆形滑块
-                        ↑
-                        点这一带才能切
-    底部还有一个「重置」按钮
-    ```
+**点开关会弹一个确认框：**
+```
+是否隐藏未拥有的代理人？
+隐藏后未拥有的代理人不会出现在列表中
+取消隐藏可重新恢复显示未拥有的代理人
+  ○ 不再提示
+  [✕ 取消]        [✓ 确认]
+```
 
-    ## 踩过的坑
+**我一直没点那个「确认」，所以每次看起来都「点了没反应」。**
+而且弹框会把整个屏幕压暗 —— 我一开始以为「面板变暗 = 点空了」。
 
-    只点 `(1800, row_y)` 没反应 —— **那是滑块右边一点，落在按钮外面**。
-    现在按「药丸中心附近试几个点」+ 每次读完确认状态。
+→ 所以流程必须是：**点开关 → 等弹框 → 点确认 → 再读状态。**
+
+## 开关的真实坐标
+
+`隐藏未拥有` 的 OCR 位置是 (1374, 237)，而**开关图形在它右边、略低一点**：
+实测药丸在 x 1700~1840、y 250~265。
+**点 (1770, 257) 才能命中。**
     """
     vs, inp = ui.vs, ui.inp
     if not m.go_to("代理人筛选"):
@@ -340,11 +346,28 @@ def set_hide_owned(ui: Ui, m: "Machine", hide: bool) -> bool:
 
     def read_state() -> str:
         vs.frame(force=True)
-        for it in vs.items((1600, row_y - 35, 1920, row_y + 35)):
+        for it in vs.items((1600, row_y - 40, 1920, row_y + 60)):
             t = (it.get("text") or "").strip().upper()
             if t in ("ON", "OFF"):
                 return t
         return ""
+
+    def confirm_dialog() -> bool:
+        """如果有确认框，点「确认」。返回是否点了。"""
+        vs.frame(force=True)
+        hit = vs.find("确认", (0, 500, 1920, 780))
+        if not hit:
+            return False
+        print(f"    弹确认框了，点「确认」@({hit['cx']},{hit['cy']})")
+        inp.move(hit["cx"], hit["cy"])
+        time.sleep(0.25)
+        inp.click(hit["cx"], hit["cy"], wait=2.2)
+        try:
+            vs.wait_still(quiet=0.4, timeout=2.5)
+        except Exception:
+            time.sleep(0.4)
+        vs.frame(force=True)
+        return True
 
     want = "ON" if hide else "OFF"
     state = read_state()
@@ -352,20 +375,20 @@ def set_hide_owned(ui: Ui, m: "Machine", hide: bool) -> bool:
         print(f"  「隐藏未拥有」已经是 {want}")
     else:
         print(f"  「隐藏未拥有」现在 {state or '?'}，要点成 {want}")
-        # **在药丸那一带试几个位置** —— 只试一个点会点空（踩过）
-        for dx in (1755, 1795, 1730, 1820):
-            inp.click(dx, row_y, wait=1.4)
+        # 开关图形在「文字右边、略低」：实测 (1770, 257)
+        for (dx, dy) in ((1770, 257), (1770, row_y + 21), (1820, 257), (1720, 257)):
+            inp.move(dx, dy)
+            time.sleep(0.25)
+            inp.click(dx, dy, wait=1.4)
+            # **每点一次都要处理确认框**
+            confirm_dialog()
             state = read_state()
             if state == want:
-                print(f"    点 ({dx},{row_y}) 成功，现在是 {state}")
+                print(f"    点 ({dx},{dy}) 成功，现在是 {state}")
                 break
-            # 点错了方向就再点一次
-            if state and state != want:
-                continue
         if state != want:
-            print(f"    ✘ 试了 4 个位置还是 {state or '?'}")
+            print(f"    ✘ 还是 {state or '?'}")
 
-    # 关掉筛选面板回列表
     inp.key("esc", wait=1.6)
     vs.frame(force=True)
     return state == want
