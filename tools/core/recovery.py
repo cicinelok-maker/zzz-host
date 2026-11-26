@@ -55,12 +55,10 @@ def reset_to_world(ui, limit: int = 12) -> bool:
     # `_at_world()` 会刷新 3 帧，**全部**认出「世界」才算数。
     # 被遮挡时 `is_()` 一律 False（BUG-032），所以这里也自然等下去。
     def _at_world(tries: int = 3) -> bool:
-        for k in range(tries):
-            ui.vs.frame(force=True)
-            if not anchors.is_(ui.vs, "世界"):
-                return False
-            time.sleep(0.12)
-        return True
+        # 统一走 `anchors.at`（三帧取两帧）。
+        # 原来这里是「三帧**全中**」—— 太严：OCR 抖一下（技能页的「影画」
+        # 偶尔读不出）就判 False，然后上层以为「没到世界」，白烧时间。
+        return anchors.at(ui.vs, "世界", tries=tries, need=2)
 
     # **左上角返回箭头**的固定坐标（1920x1080）。
     #

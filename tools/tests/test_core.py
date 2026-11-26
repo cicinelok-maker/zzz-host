@@ -2094,3 +2094,59 @@ class TestScanWhitelist(unittest.TestCase):
         src = inspect.getsource(pick_agent.list_agents)
         self.assertIn("角色库", src, "list_agents 里没有白名单校验")
         self.assertIn("认不出的名字", src, "没有「认不出」的警告")
+
+
+class TestStableStateCheck(unittest.TestCase):
+    """「过渡画面不能当真」只有**一份**实现（`core.anchors.at`）。
+
+    ## 这条道理被发现过四次，每次实现都不一样
+
+    | 位置 | 判法 | 问题 |
+    |---|---|---|
+    | `reset_to_world` 最初 | 单帧 | 过渡中间态误判 |
+    | `machine._at` | 3 帧取 2 | ✔ 但写在自己类里 |
+    | `recovery._at_world` | 3 帧**全中** | 太严，OCR 抖一下就 False |
+    | `pick_agent._describe_stable` | 取第一个非未知 | 最松，正是要防的（且已无人调用） |
+
+    现在统一成 `anchors.at(vision, target, tries=3, need=2)`。
+
+    ## 为什么是多数决而不是全中
+
+    OCR 对同一页面会**间歇性漏词**（实测技能页的「影画」偶尔读不出）。
+    全中会因为一次抖动判 False；单帧又会因过渡帧判 True。
+    """
+
+    def test_at_exists_and_signature(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors
+        self.assertTrue(hasattr(anchors, "at"), "anchors.at 不存在")
+        sig = inspect.signature(anchors.at)
+        for p in ("vision", "target", "tries", "need"):
+            self.assertIn(p, sig.parameters, f"anchors.at 缺少参数 {p}")
+
+    def test_callers_delegate(self):
+        """两处调用方都必须转发，不能各写一份。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Machine
+        from core import recovery
+        src_m = inspect.getsource(Machine._at)
+        src_r = inspect.getsource(recovery.reset_to_world)
+        self.assertTrue("anchors.at" in src_m or "_A.at" in src_m,
+                        "machine._at 没有转发到 anchors.at")
+        self.assertIn("anchors.at", src_r,
+                      "reset_to_world 没有转发到 anchors.at")
+
+    def test_dead_describe_stable_removed(self):
+        """`pick_agent._describe_stable` 已无人调用，应该删掉。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import pick_agent
+        self.assertFalse(hasattr(pick_agent, "_describe_stable"),
+                         "_describe_stable 还在 —— 它已无人调用且判法有缺陷")

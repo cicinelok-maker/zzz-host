@@ -181,24 +181,10 @@ def _snap_to_library(name: str) -> str:
     return cands[0]
 
 
-def _describe_stable(vs, tries: int = 2, gap: float = 0.18) -> str:
-    """连判几次，任一次认出就用它。
-
-    抢前台/切换画面后的第一帧经常是过渡画面。
-    单次判定失败不代表「不在大世界」，可能只是「还没画好」。
-    """
-    last = "未知界面"
-    for i in range(max(1, tries)):
-        try:
-            vs.frame(force=True)
-        except Exception:
-            pass
-        last = anchors.describe(vs)
-        if last != "未知界面":
-            return last
-        if i + 1 < tries:
-            time.sleep(gap)
-    return last
+# `_describe_stable()` 已删除（2026-11-27）：它唯一的调用者
+# `reset_to_world` 改成转发到 `core.recovery` 之后就没有用户了。
+# 而且它的判法（取第一个非「未知界面」）恰恰是「过渡画面当真」那个毛病，
+# 现在统一走 `core.anchors.at()` 的三帧取两帧。
 
 
 def current_name(vs: Vision) -> str:

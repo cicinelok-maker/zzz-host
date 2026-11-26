@@ -385,4 +385,44 @@ def describe(vision) -> str:
         if len(_DESC_CACHE) > 32:
             _DESC_CACHE.clear()
         _DESC_CACHE[vk] = out
-    return out
+    return ou
+
+def at(vision, target: str, tries: int = 3, need: int = 2,
+       gap: float = 0.12) -> bool:
+    """**稳定确认**：连续采样 `tries` 帧，至少 `need` 帧认成 `target` 才算到。
+
+    ## 为什么要统一（2026-11-27）
+
+    同一个「过渡画面不能当真」的道理，在这个项目里**被独立发现了四次**，
+    而每次的实现都不一样：
+
+    | 位置 | 判法 | 问题 |
+    |---|---|---|
+    | `reset_to_world` 最初 | 单帧 | 过渡中间态误判 |
+    | `machine._at` | 3 帧取 2 | ✔ 但写在自己的类里 |
+    | `recovery._at_world` | 3 帧**全中** | 太严，OCR 抖一下就 False |
+    | `pick_agent._describe_stable` | 取第一个非未知 | 最松，正是要防的 |
+
+    现在只留这一份。
+
+    ## 为什么是「多数决」而不是「全中」
+
+    OCR 对同一个页面会**间歇性漏词**（实测技能页的「影画」偶尔读不出）。
+    要求全中会因为一次抖动就判 False；只判一帧又会因过渡帧判 True。
+    三帧取两帧两头都能挡住。
+    """
+    hits = 0
+    for k in range(max(1, tries)):
+        try:
+            vision.frame(force=True)
+        except Exception:
+            pass
+        if describe(vision) == target:
+            hits += 1
+        if k + 1 < tries:
+            try:
+                import time as _t
+                _t.sleep(gap)
+            except Exception:
+                pass
+    return hits >= max(1, need)
