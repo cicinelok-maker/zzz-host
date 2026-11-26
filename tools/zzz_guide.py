@@ -510,11 +510,20 @@ def read_detail(ui: Ui) -> dict:
             continue
 
         # ---------- 材料行 ----------
-        if nums and names and section is not None:
+        if nums and names:
             ent = {"材料": txt(names[0])}
             for c, v in nums:
                 ent[c] = int(v.replace(",", ""))
-            section["材料"].append(ent)
+            if section is not None:
+                section["材料"].append(ent)
+            else:
+                # **节标题滚出屏幕了** —— 材料还在，但不知道属于哪一节。
+                # 先扔进「_未归属」，由 read_detail_all 挂到「上一次见到的节」下面。
+                #
+                # 踩过：原来这里是 `if section is not None` 才收，
+                # 结果滚到「核心技」时标题已经滚上去了，
+                # **核心技的材料全被归到了上一节「代理人技能升级」里。**
+                out.setdefault("_未归属", []).append(ent)
 
     return out
 
@@ -590,6 +599,21 @@ def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
                 merged["分节"].append(dict(sec))
                 seen_sections.add(key)
                 added = True
+
+        # **无主材料挂到「上一次见到的节」下面**
+        # 滚动的方向是「标题先出现，材料后出现」，
+        # 所以「材料出现时标题已滚走」= 它属于刚才那一节。
+        _orphan = d.get("_未归属") or []
+        if _orphan:
+            tgt = None
+            if merged["分节"]:
+                tgt = merged["分节"][-1]
+            if tgt is not None:
+                have = {m.get("材料") for m in tgt.get("材料") or []}
+                for m in _orphan:
+                    if m.get("材料") not in have:
+                        tgt["材料"].append(m)
+                        added = True
 
         if not added and i > 0:
             break
