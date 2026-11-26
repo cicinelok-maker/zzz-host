@@ -998,3 +998,54 @@ class TestSnapshotValidity(unittest.TestCase):
         src = inspect.getsource(zzz_status.main)
         self.assertIn('"_valid"', src, "zzz_status 没写 _valid")
         self.assertIn('"_slots_read"', src, "zzz_status 没写 _slots_read")
+
+
+class TestCostLevelPriority(unittest.TestCase):
+    """`zzz_cost.read_levels` 要按文件头声明的三级优先级读（BUG-145）。
+
+    文件头写着：
+        1. state/status_<角色>.json   （最准）
+        2. state/agent_elements.json  （只有等级和属性）
+        3. 都读不到 → 标记未知，不瞎猜
+
+    但实现**只读第 2 个**，从不碰 `status_*.json` 的 `char_level`。
+    而 `agent_elements.json` 在修 BUG-128 之前根本没人写 ——
+    读者拿的可能是一份几个月前的缓存。
+    """
+
+    def test_status_level_matches(self):
+        """有 status 文件时，读到的等级要和它一致。"""
+        import json
+        import pathlib
+        import zzz_cost as zc
+        st_dir = pathlib.Path(zc.BASE) / "state"
+        files = sorted(st_dir.glob("status_*.json"))
+        if not files:
+            self.skipTest("没有 status 文件")
+        lv = zc.read_levels()
+        checked = 0
+        for f in files[:5]:
+            if f.name.startswith("core_status_"):
+                continue
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            agent = d.get("agent") or f.stem.replace("status_", "", 1)
+            import re
+            digits = re.sub(r"\D", "", str(d.get("char_level") or ""))
+            if not digits or agent not in lv:
+                continue
+            self.assertEqual(lv[agent], int(digits),
+                             f"{agent} 的等级和 status 文件不一致")
+            checked += 1
+        self.assertGreater(checked, 0, "没有一个角色能对上，优先级可能没生效")
+
+    def test_unknown_is_minus_one_not_one(self):
+        """读不到等级要返回 -1（未知），不能当 1 级 —— 那是最贵的估算。"""
+        import inspect
+        import zzz_cost as zc
+        src = inspect.getsource(zc.read_levels)
+        self.assertIn("-1", src, "read_levels 里没有「未知 = -1」的处理")
+        # 侧证：任何一个不在数据里的角色名不该出现在结果里
+        self.assertNotIn("__不存在的角色__", zc.read_levels())

@@ -46,20 +46,48 @@ RUNS = {
 
 
 def read_levels() -> dict[str, int]:
+    """角色等级。**按文件头声明的优先级来读**（BUG-145）。
+
+    ## 原来只读了第 2 级
+
+    文件头写着：
+        1. state/status_<角色>.json   （最准）
+        2. state/agent_elements.json  （只有等级和属性）
+        3. 都读不到 → 标记未知，不瞎猜
+
+    但实现**只读第 2 个**，从来不碰 `status_*.json` 里的 `char_level`。
+    于是「刚跑过 zzz_status、数据最新」这种情况用不上，
+    而 `agent_elements.json` 在我修 BUG-128 之前根本没人写 ——
+    读者拿的是一份可能几个月前的缓存。
+    """
+    out: dict[str, int] = {}
+
+    # ① status_*.json 的 char_level（最准，刚盘点过就是最新的）
+    for f in sorted((BASE / "state").glob("status_*.json")):
+        if f.name.startswith("core_status_"):
+            continue
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue                    # 坏文件跳过，别让整个成本表崩
+        agent = d.get("agent") or f.stem.replace("status_", "", 1)
+        digits = re.sub(r"\D", "", str(d.get("char_level") or ""))
+        if digits:
+            out[agent] = int(digits)
+
+    # ② agent_elements.json 只补那些没跑过 status 的
     p = BASE / "state" / "agent_elements.json"
-    if not p.exists():
-        return {}
-    d = json.loads(p.read_text(encoding="utf-8"))
-    out = {}
-    for k, v in d.items():
-        digits = re.sub(r"\D", "", str((v or {}).get("等级", "")))
-        # **读不到就返回 -1（未知），不要当 1 级。**
-        #
-        # RT 实测第二处错误「60 级按 1 级」：
-        # 返回 1 会让 Lv60 的角色按「从 1 级开始」算，
-        # 那是**最贵的估算**（经验/认证章/蓄电池全按满算）。
-        # 先如实报「未知」，让人知道这个数不可信。
-        out[k] = int(digits) if digits else -1
+    if p.exists():
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            d = {}
+        for k, v in d.items():
+            if k in out:
+                continue                # ① 有就别覆盖
+            digits = re.sub(r"\D", "", str((v or {}).get("等级", "")))
+            # ③ 读不到就是未知（-1），不当 1 级 —— 那是**最贵**的估算
+            out[k] = int(digits) if digits else -1
     return out
 
 
