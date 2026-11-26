@@ -138,8 +138,27 @@ def open_guide(ui: Ui) -> bool:
 
 
 def switch_to_detail(ui: Ui) -> bool:
-    """切到「养成材料明细」标签页。"""
+    """切到「养成材料明细」标签页。
+
+    **如果当前在「方案视图」，要先点回材料视图** ——
+    方案视图里没有「养成材料明细」标签，直接找会找不到。
+    """
     vs, inp = ui.vs, ui.inp
+    vs.frame(force=True)
+    txt = vs.text((200, 100, 1800, 1000))
+    if "技能推荐" in txt and "养成材料计算" not in txt:
+        # 在方案视图 → 点左边的「养成材料计算」区域或右上角的材料 tab
+        print("  当前在方案视图，先切回材料视图")
+        for lbl in ("养成材料明细", "需要获取的材料"):
+            h = vs.find(lbl, (600, 200, 1500, 380))
+            if h:
+                inp.click(h["cx"], h["cy"], wait=2.2)
+                try:
+                    vs.wait_still(quiet=0.4, timeout=2.5)
+                except Exception:
+                    pass
+                vs.frame(force=True)
+                break
     vs.frame(force=True)
     hit = vs.find("养成材料明细", (0, 0, 1920, 1080))
     if not hit:
@@ -163,14 +182,23 @@ def current_agent(ui: Ui) -> str:
     """读养成指南当前选中的角色名（左侧面板下部）。"""
     vs = ui.vs
     vs.frame(force=True)
-    SKIP = {"RANK", "WIKI", "前瞻", "UP", "级", "S", "A", "B",
-            "养成指南", "养成材料计算"}
-    for it in vs.items((180, 830, 700, 1010)):
-        t = (it.get("text") or "").strip()
-        if not t or any(k in t for k in SKIP):
-            continue
-        if 1 <= len(t) <= 12:
-            return t
+
+    # **区域必须收窄到「角色牌」那块** —— 原来用 (180,830,700,1010)，
+    # 把方案视图右上角的「推荐队伍」也读进来了（实测误判成角色名）。
+    #
+    # 实测角色名在 (320±60, 868±30)：
+    #   材料视图  挽昼 @(344,908)
+    #   方案视图  知更鸟 @(320,868) 一带
+    SKIP = ("RANK", "WIKI", "前瞻", "UP", "推荐队伍", "养成指南",
+            "养成材料计算", "代理人攻略", "方案概览", "补充建议")
+    for region in ((250, 850, 660, 930), (250, 890, 660, 960)):
+        for it in vs.items(region):
+            t = (it.get("text") or "").strip()
+            if not t or any(k in t for k in SKIP):
+                continue
+            # 角色名：中文字 + 可能带 ·
+            if re.fullmatch(r"[\u4e00-\u9fa5·]{1,12}", t):
+                return t
     return ""
 
 
