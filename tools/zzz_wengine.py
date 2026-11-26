@@ -415,6 +415,13 @@ def cmd_auto(ui: Ui, m: Machine, agent: str, times: int) -> int:
 
     lv, cap = parse_level(ui.vs.text(R_DETAIL))
     print(f"\n完成：有效操作 {total_up} 次，最终等级 {lv}/{cap}")
+    # **一次都没强化成功就不是成功**（BUG-087）。
+    #
+    # 原来无条件 `return 0` —— 上层 `zzz_daily --from-targets` 看到 0
+    # 就认为这步过了，继续下一步，用户完全不知道音擎其实没升。
+    if total_up == 0:
+        print("  ✘ 一次都没做成（材料不足或面板打不开）")
+        return 1
     return 0
 
 

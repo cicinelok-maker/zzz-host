@@ -183,6 +183,13 @@ def main() -> int:
 
     print(f"\n完成，实际转化 {done} 次")
     print(log.summary())
+    # **加了 --confirm 却一次都没转成，就不是成功**（BUG-087）。
+    #
+    # 转化会消耗低阶材料、不可逆。原来无论转了 0 次还是 5 次都 `return 0`，
+    # 上层看不出区别。
+    if done == 0 and getattr(args, "confirm", False):
+        print("  ✘ 加了 --confirm 但一次都没转成（找不到确认按钮或材料不够）")
+        return 1
     return 0
 
 

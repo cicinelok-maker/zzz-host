@@ -1230,3 +1230,53 @@ class TestOutcomeRules(unittest.TestCase):
         for real in ("完成：强化", "完成，升级", "合计升了", "已调"):
             self.assertIn(real, pats,
                           f"规则里没有「{real}」—— 这是工具真会打印的")
+
+
+class TestNoProgressIsFailure(unittest.TestCase):
+    """「一步都没做成」必须返回非 0（BUG-087）。
+
+    ## 原来是 10 处无条件 `return 0`
+
+    ```python
+    print(f"完成：有效操作 {total_up} 次，最终等级 {lv}/{cap}")
+    return 0                      # ← 一次都没升也是 0
+    ```
+
+    上层 `zzz_daily --from-targets` 看到 0 就认为这步过了、继续下一步，
+    **用户完全不知道其实什么都没做成**。这和之前那些「失败伪装成成功」
+    是同一族问题。
+
+    ## 检查方式
+
+    不看整份源码（会被注释骗），只看每个工具里
+    「有进度计数」和「无进度返回非 0」这两件事是否同时存在。
+    """
+
+    TOOLS = {
+        "zzz_wengine.py": ("total_up", "return 1"),
+        "zzz_convert.py": ("done", "return 1"),
+        "zzz_level.py": ("done", "return 1"),
+        "zzz_skill.py": ("upgraded", "return 1"),
+    }
+
+    def test_tools_report_no_progress(self):
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for name, (counter, ret) in self.TOOLS.items():
+            src = (root / name).read_text(encoding="utf-8")
+            self.assertIn(counter, src, f"{name} 里没有进度计数 {counter}")
+            # 不要求 `if X == 0` 正好连着写 —— 有的是
+            # `if args.cmd == "upgrade" and upgraded == 0`。
+            self.assertIn(f"{counter} == 0", src,
+                          f"{name} 没判「{counter} == 0」—— 无进展也会返回 0")
+            self.assertIn(ret, src, f"{name} 没有非零返回")
+
+    def test_wengine_zero_ops_returns_1(self):
+        """具体一点：音擎一次操作都没有时必须返回 1。"""
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_wengine.py").read_text(encoding="utf-8")
+        i = src.index("if total_up == 0")
+        after = src[i:i + 200]
+        self.assertIn("return 1", after,
+                      "「if total_up == 0」后面没有 return 1")

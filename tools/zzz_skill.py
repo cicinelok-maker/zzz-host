@@ -206,6 +206,7 @@ def main() -> int:
     print(f"\n{args.agent} 技能等级：{levels}")
 
     report = {}
+    upgraded = 0        # **真升成了几个**（BUG-087：原来不计数，无条件 return 0）
     for name in SKILLS:
         vs.frame(force=True)
         if not open_upgrade_panel(ui, name):
@@ -227,6 +228,7 @@ def main() -> int:
                 vs.frame(force=True)
                 print(f"      → 已升级")
                 log.log(name, "升级", ok=True)
+                upgraded += 1
                 back_to_grid(ui)
             else:
                 print("      找不到「确定」")
@@ -234,9 +236,10 @@ def main() -> int:
             # 关掉面板
             inp.key("esc", wait=1.2)
 
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                              encoding="utf-8")
+    # 原子写（BUG-064）：写到一半被杀会留下半截 JSON，
+    # 读取方 `except: return {}` 会把它当成「空」，数据凭空消失。
+    from core import atomic as _aw
+    _aw.write_json(Path(args.out), report)
     print(f"\n已写入 {args.out}")
 
     need = [n for n, r in report.items() if not r.get("ok")]
@@ -244,6 +247,10 @@ def main() -> int:
         print(f"材料不足的技能：{need}")
     print()
     print(log.summary())
+    # **upgrade 模式下一次都没升成，就不是成功**（BUG-087）。
+    if args.cmd == "upgrade" and upgraded == 0:
+        print("  ✘ 一次都没升成（材料不足或面板打不开）")
+        return 1
     return 0
 
 

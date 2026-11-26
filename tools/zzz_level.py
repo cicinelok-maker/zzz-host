@@ -333,6 +333,11 @@ def cmd_up(ui: Ui, m: Machine, agent: str, auto: bool, times: int) -> int:
 
     print(f"\n完成，升级 {done} 次")
     print(log.summary())
+    # **一次都没升成功就不是成功**（BUG-087）。
+    # 原来无条件 `return 0`，上层 `zzz_daily --from-targets` 看不出区别。
+    if done == 0:
+        print("  ✘ 一次都没升成（材料不足或面板打不开）")
+        return 1
     return 0
 
 
