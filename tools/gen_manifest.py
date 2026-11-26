@@ -95,6 +95,26 @@ META = {
         "idempotent": True,
         "slow": "5-40 分钟",
     },
+    # **三个真破坏性工具**（BUG-009）
+    #
+    # 它们原来走默认值 `destructive=False, idempotent=True`，
+    # 而实际都会不可逆地改游戏数据（拆解 / 升级消耗 / 标记弃置）。
+    # AGENTS.md 的 destructive 清单当时也漏了它们。
+    "run_dismantle.py": {
+        "desc": "拆解已弃置驱动盘（不可逆）。不加 --run 只统计数量",
+        "destructive": True,
+        "idempotent": False,
+    },
+    "zzz_disc_cycle.py": {
+        "desc": "驱动盘一轮：升级 + 判定 + 标记弃置 + 拆解（-recycle 时不可逆）",
+        "destructive": True,
+        "idempotent": False,
+    },
+    "zzz_disc_train.py": {
+        "desc": "驱动盘训练：真花材料升级（不可逆）",
+        "destructive": True,
+        "idempotent": False,
+    },
     "check_config.py": {
         "purpose": "检查路径/OneDragon OCR/角色配置/飞书",
         "outputs": [],

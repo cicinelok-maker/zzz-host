@@ -25,6 +25,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     from core.game_cfg import DEFAULT_AGENT
     ap.add_argument("agent", nargs="?", default=DEFAULT_AGENT)
+    # **必须显式加 --run 才会真拆**（BUG-009）。
+    # 原来这个工具没有任何开关，跑起来就直接拆到底，
+    # 而 AGENTS.md 还写着「先跑不带 --run 的版本看计划」——对它是假的。
+    ap.add_argument("--run", action="store_true",
+                    help="真的拆解。不加只统计「会拆多少张」")
     args = ap.parse_args()
 
     vs, inp = Vision(), Input()
@@ -61,6 +66,20 @@ def main() -> int:
     out.append(f"ESC 后网格：{mesh(vs)} 张")
     Image.fromarray(vs.crop((0, 0, 1920, 1080))[:, :, ::-1]).save(
         r"od_test\shots\dis_filtered_ok.png")
+
+    # **闸门：不加 --run 就只看数字，不进选择/拆解**（BUG-009）
+    n_will = mesh(vs)
+    if not args.run:
+        out.append(f"[计划] 会拆 {n_will} 张（已弃置）")
+        out.append("       加 --run 才真拆。拆解不可逆，先看清数量。")
+        open(OUT, "w", encoding="utf-8").write("\n".join(out))
+        print("\n".join(out))
+        return 0
+    if n_will <= 0:
+        out.append("[计划] 没有已弃置的盘，不拆")
+        open(OUT, "w", encoding="utf-8").write("\n".join(out))
+        print("\n".join(out))
+        return 0
 
     # 2) 快速选择 → 全选已弃置 → 确认
     q = vs.find("快速选择", (0, 900, 700, 1080))
@@ -109,6 +128,13 @@ def main() -> int:
     open(OUT, "w", encoding="utf-8").write("\n".join(out))
     print("\n".join(out))
     print(log.summary())
+
+    # BUG-009：不再无条件返回 0。
+    # 原来拆解一步都没成功也返 0，调用方会以为拆完了。
+    _done = any("拆完：" in x for x in out)
+    if not _done:
+        print("  ✘ 没有走到「拆完」那一步 —— 本次没有确认拆解成功")
+        return 1
     return 0
 
 

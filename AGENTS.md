@@ -70,12 +70,19 @@ python tools/zzz_daily.py <agent> --run         # 5 真跑
 **标了 `destructive: true` 的会真的改游戏数据**（花电量、花材料、换盘、拆解）：
 
 ```
-zzz_daily        角色养成一轮（最重，会花电量/材料）
-zzz_disc_daily   驱动盘养成一天
-zzz_grind        多轮收敛
-zzz_equip        换装
-od_material_farm 刷本（消耗电量）
+zzz_daily          角色养成一轮（最重，会花电量/材料）
+zzz_disc_daily     驱动盘养成一天
+zzz_grind          多轮收敛
+zzz_equip          换装 / 升级驱动盘（花材料，不可逆）
+od_material_farm   刷本（消耗电量）
+run_dismantle      拆解已弃置驱动盘 ← **不可逆，必须先看清数量**
+zzz_disc_cycle     升级+判定+标记弃置+拆解（-recycle 时不可逆）
+zzz_disc_train     驱动盘训练（真花材料升级，不可逆）
 ```
+
+**拆解类没有「撤销」。** `run_dismantle` 不加 `--run` 只统计会拆多少张；
+`zzz_disc_cycle --recycle` 拆前有两道闸（比例 + 数量），任一不过就中止。
+**别在没看清数量的情况下加 `--run`。**
 
 **安全做法：先跑不带 `--run` 的版本看计划。**
 
@@ -361,7 +368,7 @@ python tools/audit_patterns.py
 改完代码或怀疑有问题时：
 
 ```bash
-python tools/run_tests.py             # 单元测试（判盘/止损/调律/名字，43 个用例）
+python tools/run_tests.py             # 单元测试（判盘/止损/调律/名字/等级匹配/换装确认，66 个用例）
 python tools/smoke_test.py             # 全部工具的语法 + 导入
 python tools/audit_self.py             # 有没有违反项目自己的规矩
 python tools/audit_stale_frame.py      # 读旧帧（改画面后立刻读）
