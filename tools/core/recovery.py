@@ -79,12 +79,35 @@ def reset_to_world(ui, limit: int = 12) -> bool:
             _top = ui.vs.text((150, 20, 700, 110))
         except Exception:
             _top = ""
+        # **过渡中别按键，等着**（2026-11-27 实测）。
+        #
+        # 实测主菜单的退出过程：
+        #   主菜单 --B--> 「未知界面」（过渡）--ESC--> 世界
+        # 也就是说**按完 B 会先经过一个「未知界面」阶段**。
+        # 原来这时候下一轮立刻又按键 —— 把过渡打断，于是永远退不出去
+        # （实测卡在主菜单 50 秒，12 轮全白烧）。
+        #
+        # 现在：认出「未知界面」就先等它稳，等到了世界就直接返回，
+        # 等不到再按键。
+        try:
+            _cur = anchors.describe(ui.vs)
+        except Exception:
+            _cur = ""
+        if _cur == "未知界面":
+            for _w in range(6):                 # 最多等 6 × 0.6 = 3.6 秒
+                ui.vs.frame(force=True)
+                if anchors.is_(ui.vs, "世界"):
+                    ui.inp.mouse_mode()
+                    return True
+                time.sleep(0.6)
+            # 等不到才继续按
+
         if "代理人攻略" in _top:
             ui.inp.click(XY_BACK[0], XY_BACK[1], wait=1.4)
         elif i % 2 == 0:
-            ui.inp.pad_tap("b", wait=0.85)
+            ui.inp.pad_tap("b", wait=1.6)       # 按键后多给点时间过过渡
         else:
-            ui.inp.key(0x1B, wait=0.85)     # ESC
+            ui.inp.key(0x1B, wait=1.6)          # ESC
         ui.vs.frame(force=True)
     if _at_world():
         ui.inp.mouse_mode()
