@@ -901,3 +901,57 @@ class TestStatusSchema(unittest.TestCase):
         for k in REQUIRED_STATUS_KEYS:
             self.assertIn(f'"{k}"', src,
                           f"zzz_status 的 _payload 没写 {k}")
+
+
+class TestDataConsistency(unittest.TestCase):
+    """同一份知识的多个副本必须一致（RT-REPORT 柱 3）。
+
+    RT 说「属性/套装/词条各有 3–7 份互不一致的副本」，
+    实测两处真漂移（都已修）：
+    · `zh._NORM_SETS` 是从手抄的 19 个建表，而权威 `vocab.SETS` 有 29 个
+      → 10 个套装名永远配不上自己（BUG-016）
+    · `disc_main.ELEM_DMG` 只有 5 个属性，`materials.json` 有 10 个
+      → 变体属性 & 风属性判错（BUG-010）
+
+    这个用例把「一致性」本身钉住 —— 以后谁改了一边忘了另一边，测试就红。
+    """
+
+    def test_set_lists_agree(self):
+        """套装名的两个副本必须完全相等。"""
+        from core import vocab, zh
+        a = set(vocab.SETS)
+        b = set(zh._NORM_SETS.values())
+        self.assertEqual(a, b,
+                         f"套装表漂移：vocab 有 {len(a)}，zh 有 {len(b)}；"
+                         f"只在 vocab: {sorted(a - b)}；只在 zh: {sorted(b - a)}")
+
+    def test_element_names_agree(self):
+        """属性名的两个副本必须完全相等。"""
+        import json
+        import pathlib
+        from core import disc_main
+        m = json.loads((pathlib.Path(__file__).resolve().parent.parent
+                        / "materials.json").read_text(encoding="utf-8"))
+        mat_attrs = set((m.get("技能芯片") or {}).get("属性名") or {})
+        fam = set(disc_main.ELEM_FAMILY)
+        self.assertEqual(mat_attrs, fam,
+                         f"属性表漂移：materials {sorted(mat_attrs)} "
+                         f"vs ELEM_FAMILY {sorted(fam)}")
+
+    def test_agent_element_values_covered(self):
+        """`game_cfg.AGENT_ELEMENT` 用到的属性值都要能在 ELEM_FAMILY 里找到。
+
+        例外：「特殊」= 蕾米埃尔的「属性流变」，`verdict` 里单独处理。
+        """
+        from core import game_cfg, disc_main
+        used = set(game_cfg.AGENT_ELEMENT.values()) - {"特殊"}
+        missing = sorted(used - set(disc_main.ELEM_FAMILY))
+        self.assertEqual(missing, [], f"这些属性在 ELEM_FAMILY 里没有：{missing}")
+
+    def test_sub_base_subset_of_stats(self):
+        """副词条基础值表必须是词条白名单的子集。"""
+        from core import vocab
+        from core import disc_stats as ds
+        missing = sorted(set(ds.SUB_BASE) - set(vocab.STATS))
+        self.assertEqual(missing, [],
+                         f"这些副词条不在 vocab.STATS 里，会被静默丢弃：{missing}")
