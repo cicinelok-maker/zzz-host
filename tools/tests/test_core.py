@@ -327,3 +327,57 @@ class TestDiscStats(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestDiscCycleLevelMatch(unittest.TestCase):
+    """弃置标记的等级匹配（BUG-001 / BUG-002）。
+
+    ## BUG-002 前缀匹配
+
+    `"等级10".startswith("等级1")` 为真 —— 所以在 `level=1` 时，
+    原来的前缀匹配会把 Lv10~15 的卡片也当成候选。
+
+    ## BUG-001 标记不比对等级
+
+    `mark_disc_abandoned` 原来只比对套装和位号。同一套同一位置可能同时有
+    Lv0 的废盘和 Lv15 主词条全对的毕业盘 —— 两者在 set/slot 上完全一样，
+    于是标记会落在该位号**第一张**卡片上，最坏是把毕业盘标成狗粮，
+    下一轮拆解就真拆了（不可逆）。
+
+    这两条的修法都是同一个辅助函数：`_level_label()`。
+    """
+
+    def setUp(self):
+        from zzz_disc_cycle import _level_label
+        self.f = _level_label
+
+    def test_exact_match(self):
+        self.assertTrue(self.f("等级15", 15))
+        self.assertTrue(self.f("等级1", 1))
+        self.assertTrue(self.f("等级0", 0))
+
+    def test_prefix_does_not_leak(self):
+        """BUG-002：等级1 不能命中 等级10 / 等级15。"""
+        self.assertFalse(self.f("等级10", 1))
+        self.assertFalse(self.f("等级15", 1))
+        self.assertFalse(self.f("等级12", 1))
+
+    def test_reverse_prefix(self):
+        """等级10 也不该命中 level=1 之外的错值。"""
+        self.assertFalse(self.f("等级1", 10))
+        self.assertFalse(self.f("等级15", 10))
+
+    def test_embedded_in_longer_text(self):
+        """标签里带别的内容也要认得出。"""
+        self.assertTrue(self.f("Lv15 等级15 满级", 15))
+        self.assertTrue(self.f("等级15 / 15", 15))
+
+    def test_empty_and_garbage(self):
+        self.assertFalse(self.f("", 1))
+        self.assertFalse(self.f("攻击力", 1))
+        self.assertFalse(self.f(None, 1))
+
+    def test_boundary_followed_by_digit_is_rejected(self):
+        """等级1 后面紧跟数字 = 另一个等级。"""
+        self.assertFalse(self.f("等级100", 1))
+        self.assertFalse(self.f("等级199", 1))

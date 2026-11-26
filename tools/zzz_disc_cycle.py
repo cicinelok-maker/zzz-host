@@ -109,6 +109,18 @@ def sort_by_level(ui: Ui) -> bool:
     return True
 
 
+def _level_label(text: str, level: int) -> bool:
+    """卡片标签里的等级是否**正好**是 level。
+
+    BUG-002：`"等级10".startswith("等级1")` 为真，
+    所以前缀匹配会在 level=1 时把 Lv10~15 的卡片也捞进来。
+
+    这里要求 `等级{N}` 后面**不能紧跟数字** —— `等级10` 不会匹配 `等级1`。
+    """
+    import re
+    return re.search(rf"等级{level}(?!\d)", text or "") is not None
+
+
 def mark_disc_abandoned(ui: Ui, m: Machine, slot: int, set_name: str,
                         level: int) -> bool:
     """在拆解页找到指定盘，按 R 标记弃置。
@@ -127,7 +139,7 @@ def mark_disc_abandoned(ui: Ui, m: Machine, slot: int, set_name: str,
     sort_by_level(ui)
     vs.frame(force=True)
     cards = [it for it in vs.items((60, 120, 1100, 980))
-             if it["text"].startswith(f"等级{level}")]
+             if _level_label(it["text"], level)]
     if not cards:
         # 排序失败就退回滚动
         import time as _t
@@ -139,18 +151,25 @@ def mark_disc_abandoned(ui: Ui, m: Machine, slot: int, set_name: str,
                 _t.sleep(0.18)
             vs.frame(force=True)
             got = [it for it in vs.items((60, 120, 1100, 980))
-                   if it["text"].startswith(f"等级{level}")]
+                   if _level_label(it["text"], level)]
             if got:
                 cards = got
                 break
     for c in cards:
-        # 先看标签里的等级，快速跳过
-        if str(level) not in c["text"]:
+        # 先看标签里的等级，快速跳过。
+        # BUG-002：原来是 `str(level) not in c["text"]`，
+        # level=1 时 "1" 在 "等级15" 里也成立 → 白点一堆不相干的卡。
+        if not _level_label(c["text"], level):
             continue
         inp.click(c["cx"], c["cy"] - 60, wait=1.2)
         vs.frame(force=True)
         d = read_disc(vs)
-        if d["set"] != set_name or d["slot"] != slot:
+        # BUG-001：**必须比对等级**。
+        # 原来只比 set+slot，同套同位号的 Lv0 废盘和 Lv15 毕业盘无法区分，
+        # 标记会落在该位号第一张卡片上 —— 最坏是把毕业盘标成狗粮，
+        # 下一轮拆解就真拆掉了（不可逆）。
+        if (d["set"] != set_name or d["slot"] != slot
+                or d["level"] != level):
             continue
         # 命中：按 R
         inp.key("r", wait=1.8)
@@ -160,18 +179,43 @@ def mark_disc_abandoned(ui: Ui, m: Machine, slot: int, set_name: str,
             return False
         inp.click(XY_DLG_CONFIRM[0], XY_DLG_CONFIRM[1], wait=2.0)
         vs.frame(force=True)
-        print(f"    已标记弃置：{set_name}[{slot}] Lv{level}")
+        print(f"    已标记弃置：{set_name}[{slot}] Lv{d['level']}"
+              f"（要求 Lv{level}）")
         return True
     print(f"    拆解页里没找到 {set_name}[{slot}] Lv{level}")
     return False
 
 
-def dismantle_all_abandoned(ui: Ui, m: Machine) -> bool:
-    """拆解所有已弃置的盘。"""
+def dismantle_all_abandoned(ui: Ui, m: Machine, expect: int | None = None,
+                            max_ratio: float | None = None) -> bool:
+    """拆解所有已弃置的盘。
+
+    ## 两道前置闸（BUG-003 / BUG-004）
+
+    这个函数点的是「全选已弃置」—— **账号上所有被标记弃置的盘**，
+    不是本轮算出来的那些。所以拆之前必须确认：
+
+    1. `max_ratio`：已弃置数不能超过库总数的这个比例（默认读 disc_cfg 的 0.5）
+    2. `expect`：已弃置数必须正好等于本轮成功标记的块数
+
+    **任一不过就中止。** 拆解不可逆，宁可拆不动也不能多拆。
+    """
     vs, inp = ui.vs, ui.inp
     if not m.go_to("驱动盘拆解页"):
         return False
     vs.frame(force=True)
+
+    # 安全阀默认值从配置读（原来那个键写了但零引用 —— BUG-004）
+    if max_ratio is None:
+        try:
+            from core.disc_cfg import THRESHOLDS
+            max_ratio = float(THRESHOLDS.get("max_dismantle_ratio", 0.5))
+        except Exception:
+            max_ratio = 0.5
+
+    # **先读库总数**（此时还没套「已弃置」筛选）
+    total = mesh(vs)
+    print(f"  库总数 {total} 张（比例上限 {max_ratio:.0%}）")
 
     # 算一下当前已弃置有多少
     inp.click(XY_FUNNEL[0], XY_FUNNEL[1], wait=2.4)
@@ -189,6 +233,25 @@ def dismantle_all_abandoned(ui: Ui, m: Machine) -> bool:
     print(f"  已弃置 {n} 张")
     if n <= 0:
         return True
+
+    # ---- 闸 1：比例（BUG-004）----
+    if total > 0 and n > total * max_ratio:
+        print(f"  ✘ 中止：已弃置 {n} 张 > 库总数 {total} × {max_ratio:.0%}"
+              f" = {total * max_ratio:.0f}")
+        print(f"     这是一次性要拆掉 {n / total:.0%} 的仓库，超出安全阀。")
+        print(f"     确认要拆就把 disc_cfg.json 的 max_dismantle_ratio 调高，")
+        print(f"     或先手工清掉不该拆的弃置标记。")
+        return False
+
+    # ---- 闸 2：数量必须正好等于本轮标记数（BUG-003）----
+    if expect is not None and n != expect:
+        print(f"  ✘ 中止：已弃置 {n} 张 ≠ 本轮标记 {expect} 张")
+        print(f"     仓库里还有 {n - expect} 张别的弃置盘（上次或手工标的），")
+        print(f"     拆「全选已弃置」会把它们一起拆掉。")
+        print(f"     先手工清掉那些标记，或改用精确勾选。")
+        return False
+    print(f"  ✔ 两道闸通过（{n} 张，占库 {n / total:.0%}）" if total > 0
+          else f"  ✔ 数量闸通过（{n} 张）")
 
     # 快速选择 → 全选已弃置 → 确认
     q = vs.find("快速选择", (0, 900, 700, 1080))
@@ -312,12 +375,19 @@ def main() -> int:
     if args.recycle and junk:
         print()
         print("=== 标记弃置 ===")
+        # **记成功数** —— 拆解闸要拿它比对，标记失败的不该被算进「该拆」
+        marked = 0
         for slot, set_name, level, _e in junk:
-            mark_disc_abandoned(ui, m, slot, set_name, level)
+            if mark_disc_abandoned(ui, m, slot, set_name, level):
+                marked += 1
+        print(f"  标记成功 {marked}/{len(junk)}")
 
         print()
         print("=== 拆解 ===")
-        dismantle_all_abandoned(ui, m)
+        if not dismantle_all_abandoned(ui, m, expect=marked):
+            print("  ⚠ 拆解被安全阀拦下，本次没有拆任何东西")
+            print(log.summary())
+            return 1
 
     print()
     print(log.summary())
