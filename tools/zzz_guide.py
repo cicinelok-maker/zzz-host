@@ -129,6 +129,9 @@ def open_guide(ui: Ui) -> bool:
         return True
     ok = m.go_to("养成指南")
     if not ok:
+        # go_to 内部最后一次 state() 的 OCR 还在 TTL 缓存里，
+        # 直接 describe 可能拿到旧结果 → 先强制刷帧
+        vs.frame(force=True)
         print(f"  ✘ 到不了养成指南（当前 {anchors.describe(vs)}）")
         return False
     return True
@@ -230,6 +233,58 @@ def read_detail(ui: Ui) -> dict:
             section["材料"].append(ent)
 
     return out
+
+
+def read_detail_all(ui: Ui, max_scroll: int = 8) -> dict:
+    """**滚着读完整个「养成材料明细」**（一节一节读到底）。
+
+    实测：明细页一屏只放得下 1~2 节（代理人升级&晋升 / 技能升级 / …），
+    不滚动只能读到第一节 —— 属性也就推不出来（芯片在第二节）。
+
+    滚动信号和扫角色列表一样：**画面文本没变 = 滚到底了。**
+    """
+    vs, inp = ui.vs, ui.inp
+    merged = {"分节": [], "角色": ""}
+    seen_sections: set[str] = set()
+    last_sig = ""
+
+    for i in range(max_scroll + 1):
+        if i > 0:
+            inp.wheel(-4, wait=1.5)
+            vs.frame(force=True)
+
+        vs.frame(force=True)
+        sig = vs.text((0, 380, 1920, 1080))
+        if i > 0 and sig == last_sig:
+            break                       # 滚不动了
+        last_sig = sig
+
+        d = read_detail(ui)
+        if d.get("角色") and not merged["角色"]:
+            merged["角色"] = d["角色"]
+
+        added = False
+        for sec in d.get("分节") or []:
+            key = sec.get("节") or ""
+            if key in seen_sections:
+                # 同一节再次出现（滚动重叠）→ 合并材料
+                for tgt in merged["分节"]:
+                    if tgt.get("节") == key:
+                        have = {m.get("材料") for m in tgt.get("材料") or []}
+                        for m in sec.get("材料") or []:
+                            if m.get("材料") not in have:
+                                tgt["材料"].append(m)
+                                added = True
+                        break
+            else:
+                merged["分节"].append(dict(sec))
+                seen_sections.add(key)
+                added = True
+
+        if not added and i > 0:
+            break
+
+    return merged
 
 
 def main() -> int:

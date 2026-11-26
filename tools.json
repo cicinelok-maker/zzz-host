@@ -722,6 +722,28 @@
    "destructive": false
   },
   {
+   "name": "zzz_gap",
+   "cmd": "python tools/zzz_gap.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--json"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    4
+   ],
+   "purpose": "通用养成链条：指名 → 读缺口 → 排副本 → 出计划",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "zzz_grind",
    "cmd": "python tools/zzz_grind.py",
    "args": [

@@ -404,7 +404,14 @@ class Machine:
             self.inp.click(a.xy[0], a.xy[1], wait=a.wait)
         elif k == "click_text":
             if a.region is None:
+                # **不能静默 False** —— 实测这个坑查了很久：
+                # 日志只打「动作失败：click_text 养成指南 None」，
+                # 看着像「找不到文字」，实际是「压根没让它找」。
+                print("      [machine] click_text 缺 region，动作作废")
                 return False
+            # 先刷帧再找 —— find 内部会读帧，而 Vision 的 OCR 有 0.35s TTL 缓存。
+            # 上一步动作刚点完的话，这里读到的可能是旧帧。
+            self.vs.frame(force=True)
             hit = self.vs.find(a.arg, a.region)
             if not hit:
                 return False

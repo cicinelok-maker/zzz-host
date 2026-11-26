@@ -240,13 +240,36 @@ def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
     reset_to_world(ui)
     if not m.go_to("代理人列表"):
         return {}
-    out = {}
-    for round_i in range(4):
+    out: dict[str, str] = {}
+
+    # **最小改动**：只把「固定 4 轮」换成「没有新角色就停」。
+    #
+    # 原来 `range(4)` 是硬上限 —— 14 个角色要滚 6~8 轮才到底，4 轮必然漏。
+    # 但步长必须保持 `wheel(-3)`：试过改成 -5，行会被跳过（14 → 13 个，丢了波可娜）。
+    #
+    # 所以：**步长不动（实测 -3 不跳行），只放开轮数上限。**
+    MAX_ROUNDS = 15
+    _last_sig = ""
+    for round_i in range(MAX_ROUNDS):
         if round_i > 0:
             inp.wheel(-3, wait=1.5)
             vs.frame(force=True)
             if not anchors.is_(vs, "代理人列表"):
                 break
+
+        # **画面没变 = 滚到底了**（用网格区域的 OCR 文本当指纹）
+        _sig = vs.text(R_GRID)
+        if round_i > 0 and _sig == _last_sig:
+            break
+        _last_sig = _sig
+
+        # **滚到底的判断：画面根本没变**，不是「没有新角色」。
+        #
+        # 踩过的坑：用「这一轮没新角色就停」会提前退出 ——
+        # `wheel(-3)` 滚动时上下两屏重叠很多，第二轮看到的还是同一批人，
+        # 于是误判到底（14 个角色扫成 13 个，丢了波可娜）。
+        #
+        # 正确信号：**滚动前后网格区域的 OCR 文本完全一样** = 真的滚不动了。
         for pt in _scan_portraits(vs):
             inp.click(pt[0], pt[1], wait=1.2)
             vs.frame(force=True)
@@ -259,6 +282,7 @@ def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
                     lv = it["text"]
                     break
             out[nm] = lv
+
     return out
 
 
