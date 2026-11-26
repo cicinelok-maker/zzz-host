@@ -310,34 +310,80 @@ def main() -> int:
         print("（只出计划。加 --apply 才真换）")
         return 0
 
+    failed = 0
     for p in todo:
         slot = p["slot"]
         if not open_custom(ui, m, slot):
+            print(f"  {slot} 号位：到不了定制页")
+            log.log(f"{slot}号位", "跳过", ok=False, detail="到不了定制页")
+            failed += 1
             continue
         vs.frame(force=True)
-        x, y = p["xy"]
-        inp.click(x, y - 42, wait=1.6)
-        vs.frame(force=True)
-        det = vs.text(R_DETAIL)
-        if p["set"] not in det:
-            print(f"  {slot} 号位：点开的不是 {p['set']}，跳过（防误装）")
-            log.log(f"{slot}号位", "跳过", ok=False, detail="套装不匹配")
+
+        # **必须重新定位卡片**（BUG-006）。
+        #
+        # 原来用 `x, y = p["xy"]` —— 那是扫描时记的坐标。
+        # 中间只要滚过列表、或者排序变了，这个坐标就指到别的盘上，
+        # 而且点开之后只比「套装名」，同套不同等级/主词条的盘照样通过。
+        #
+        # `find_disc` 会滚列表、逐张点开、按「套装名 + 等级」比对，
+        # 正好是这里需要的行为。
+        from zzz_equip import find_disc, _bottom_state, _equip_confirmed
+        d2 = find_disc(ui, p["set"], p.get("level", -1))
+        if not d2:
+            print(f"  {slot} 号位：重新定位不到 {p['set']} Lv{p.get('level')}，跳过")
+            log.log(f"{slot}号位", "跳过", ok=False, detail="定位不到目标盘")
+            failed += 1
             continue
+
+        # 再核一遍等级 —— find_disc 的 want_level 过滤的是**卡片标签**，
+        # 点开读到的实际等级才是准的。
+        if p.get("level", -1) >= 0 and d2.get("level") != p["level"]:
+            print(f"  {slot} 号位：点开的是 Lv{d2.get('level')}，"
+                  f"不是 Lv{p['level']}，跳过（防误装）")
+            log.log(f"{slot}号位", "跳过", ok=False, detail="等级不符")
+            failed += 1
+            continue
+
+        before = _bottom_state(ui)
         btn = vs.find("替换", R_BOTTOM)
         if not btn:
             print(f"  {slot} 号位：没有「替换」")
+            log.log(f"{slot}号位", "跳过", ok=False, detail="没有替换按钮")
+            failed += 1
             continue
         inp.click(btn["cx"], btn["cy"], wait=2.2)
         vs.frame(force=True)
+
+        # **确认框必须点到**（BUG-006：原来 `if c:` 没点到也照样报成功）
         c = vs.find("确认", (600, 600, 1400, 900))
-        if c:
-            inp.click(c["cx"], c["cy"], wait=2.0)
-        print(f"  ✔ {slot} 号位已换装（{p['set']}）")
+        if not c:
+            print(f"  {slot} 号位：点了「替换」但没弹确认框 —— 未确认，记失败")
+            log.log(f"{slot}号位", "换装", ok=False, detail="没弹确认框")
+            failed += 1
+            continue
+        inp.click(c["cx"], c["cy"], wait=2.0)
+        vs.frame(force=True)
+
+        # 点完再看一眼底部状态，确认真的装备了
+        after = _bottom_state(ui)
+        if not _equip_confirmed(before, after):
+            print(f"  {slot} 号位：确认框点了，但底部状态没变化 —— 未确认，记失败")
+            log.log(f"{slot}号位", "换装", ok=False, detail="点了但没看到装备后状态")
+            failed += 1
+            continue
+
+        print(f"  ✔ {slot} 号位已换装并确认（{p['set']} Lv{d2.get('level')}）")
         log.log(f"{slot}号位", "换装", ok=True,
                 detail=f"{p['cur_eff']}→{p['eff']}")
 
     print()
     print(log.summary())
+    if failed:
+        # **按失败数返回**（BUG-006：原来无条件 0，
+        # 一个位号没换成也报成功，上层会以为换完了）
+        print(f"  ✘ {failed}/{len(todo)} 个位号没换成")
+        return 1
     return 0
 
 

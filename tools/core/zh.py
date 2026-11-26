@@ -57,9 +57,32 @@ T2S = {
 
 
 def normalize(text: str) -> str:
-    """繁 → 简归一。逐字替换，不认识的保持原样。"""
+    """繁 → 简归一。不认识的保持原样。
+
+    ## 先多字、后单字（BUG-015）
+
+    `T2S` 里有双字键（`"異常": "异常"`、`"擊破": "击破"` …），
+    但原来是**逐字**替换：
+
+    ```python
+    for ch in text:
+        out.append(T2S.get(ch, ch))
+    ```
+
+    **双字键永远不会命中。** 而 `異` 又没有单字映射，
+    所以 `異常` 原样返回 —— 永远配不上简体 `异常`。
+
+    现在先按长度从长到短做多字替换，再逐字兜底。
+    这样已有的双字键立刻生效，不用重抄整张表。
+    """
     if not text:
         return text
+    # ① 多字键（长的先换，避免「擊破」被「擊」抢先）
+    multi = sorted((k for k in T2S if len(k) > 1), key=len, reverse=True)
+    for k in multi:
+        if k in text:
+            text = text.replace(k, T2S[k])
+    # ② 单字兜底
     out = []
     for ch in text:
         out.append(T2S.get(ch, ch))
@@ -67,14 +90,34 @@ def normalize(text: str) -> str:
 
 
 # 套装名的权威列表（归一后的简体形式）
-KNOWN_SETS = [
+_KNOWN_SETS_HAND = [
     "云岿如我", "原始朋克", "呼啸沙龙", "啄木鸟电音", "折枝剑歌",
     "拂晓行纪", "摇摆爵士", "极地重金属", "河豚电音", "混沌爵士",
     "混沌重金属", "激素朋克", "獠牙重金属", "自由蓝调", "谶羽之誓",
     "雷暴重金属", "震星迪斯科", "静听嘉音", "荆棘玫瑰",
 ]
 
-_NORM_SETS = {normalize(s): s for s in KNOWN_SETS}
+# **权威来源是 vocab.SETS，不是这里手抄的 KNOWN_SETS**（BUG-016）。
+#
+# KNOWN_SETS 只有 19 个，vocab.SETS 有 29 个 —— 少的 10 个
+# （拂晓生花 / 流光咏叹 / 云岿如我 / 月光骑士颂 / 沧浪行歌 /
+#   雪兔梦游仙境 / 囚徒手记 / 法厄同之歌 / 如影相随 / 灵魂摇滚 / 炎狱重金属）
+# **永远配不上自己的名字**。
+#
+# 两个合并：vocab.SETS 优先，KNOWN_SETS 里有而 vocab 没有的也保留。
+def _all_known_sets() -> list:
+    out = list(_KNOWN_SETS_HAND)
+    try:
+        from core import vocab as _vb
+        for s_ in _vb.SETS:
+            if s_ not in out:
+                out.append(s_)
+    except Exception:
+        pass
+    return out
+
+
+_NORM_SETS = {normalize(s): s for s in _all_known_sets()}
 
 
 def canonical_set(name: str) -> str:
@@ -90,13 +133,38 @@ def canonical_set(name: str) -> str:
     n = normalize(name)
     if n in _NORM_SETS:
         return _NORM_SETS[n]
-    for k, v in _NORM_SETS.items():
-        if k.startswith(n) or n.startswith(k):
-            return v
-    best, score = "", 0.0
+
+    # ---- ② 前缀匹配：**有歧义就不猜**（BUG-016）----
+    #
+    # 原来 `return v` 命中第一个就返回。套装名里有多个同前缀的：
+    #   混沌重金属 / 混沌爵士
+    #   雷暴重金属 / 极地重金属 / 炎狱重金属
+    #   拂晓行纪 / 拂晓生花
+    # OCR 读残成「混沌」时返回的是字典顺序里第一个 —— 可能就是另一个套装，
+    # 而套装名决定「刷哪个副本」，配错就是刷错本。
+    pre = [(k, v) for k, v in _NORM_SETS.items()
+           if k.startswith(n) or n.startswith(k)]
+    if len(pre) == 1:
+        return pre[0][1]
+    if len(pre) > 1:
+        # 完全相等的那种优先（在 pre 里找 key == n 已经在上面的分支处理了）
+        # 剩下就是真歧义 → 不猜
+        return name
+
+    # ---- ③ 字符重合度：最好的必须明显优于第二 ----
+    scored = []
     for k, v in _NORM_SETS.items():
         common = len(set(n) & set(k))
         s = common / max(len(set(n)), len(set(k)), 1)
-        if s > score:
-            best, score = v, s
-    return best if score >= 0.6 else name
+        scored.append((s, v))
+    scored.sort(reverse=True)
+    if not scored:
+        return name
+    best_s, best_v = scored[0]
+    second_s = scored[1][0] if len(scored) > 1 else 0.0
+    if best_s < 0.6:
+        return name
+    # 差距不够大 → 两个套装长得都像，不猜
+    if best_s - second_s <= 0.15:
+        return name
+    return best_v
