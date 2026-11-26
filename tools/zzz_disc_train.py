@@ -151,7 +151,10 @@ def evaluate(d: dict, good: set, half: set) -> dict:
 def upgrade_disc(slot: int, agent: str) -> tuple[bool, str]:
     """调 zzz_equip upgrade 升级指定位号"""
     env = dict(os.environ)
-    env.update(ENV_EXTRA)
+    # BUG-069：ENV_EXTRA 从来没定义过 —— NameError，训练第一步就崩。
+    # 应该用 OneDragon 提供的环境变量（PYTHONPATH 等）。
+    from core.paths import one_dragon_env
+    env.update(one_dragon_env())
     cmd = [PY, "-u", str(HERE / "zzz_equip.py"), "upgrade",
            "--slot", str(slot), "--agent", agent]
     try:

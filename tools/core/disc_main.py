@@ -129,7 +129,9 @@ def report(results: list[dict]) -> str:
     for r in results:
         mark = {"good": "✔", "weak": "~", "bad": "✘", "unknown": "?"}[r["verdict"]]
         lines.append(f"  {mark} {r['slot']}号位 {r['main'] or '?':<14} {r['note']}")
-    s = summarize(results)
-    if s["bad_slots"]:
-        lines.append(f"  → **{len(s['bad_slots'])} 个位号主词条无效：{s['bad_slots']}**")
+    # BUG-070：summarize() 全文件没有定义 —— 调用就 NameError。
+    # 这里只需要「哪些位号主词条无效」，直接算，不引入新函数。
+    bad_slots = [r["slot"] for r in results if r.get("verdict") == "bad"]
+    if bad_slots:
+        lines.append(f"  → **{len(bad_slots)} 个位号主词条无效：{bad_slots}**")
     return "\n".join(lines)
