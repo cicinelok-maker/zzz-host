@@ -303,11 +303,15 @@ def switch_to_detail(ui: Ui) -> bool:
             print("  找不到「养成材料明细」子标签")
             return False
 
-    vs.frame(force=True)
-    ok = "所需" in vs.text((600, 380, 1800, 1080))
-    if not ok:
-        print("  点了明细但没看到「所需」表头")
-    return ok
+    # **点完要多等几次** —— 面板重算有延迟，
+    # 实测点完立刻查「所需」查不到（返回 False），等一下就有了。
+    for _k in range(8):
+        vs.frame(force=True)
+        if "所需" in vs.text((430, 380, 1800, 1080)):
+            return True
+        time.sleep(0.8)
+    print("  点了明细但没看到「所需」表头（等了 6 秒）")
+    return False
 
 
 def current_agent(ui: Ui) -> str:
@@ -500,6 +504,20 @@ def select_agent(ui: Ui, name: str, max_scroll: int = 20) -> bool:
     if _is_real_agent(cur) and (cur == name or name in cur or cur in name):
         print(f"  已经是「{cur}」")
         return True
+
+    # ---- 先关掉可能开着的「养成材料计算」面板 ----
+    # 那个面板有自己的 X @(1455,129)，开着的时候 ⊞ 点不动
+    # （实测：面板开着时点 ⊞，「选择代理人」没出现）。
+    vs.frame(force=True)
+    txt = vs.text((300, 80, 1700, 300))
+    if "养成材料计算" in txt and "已根据游戏内培养建议" in txt:
+        print("  先关掉「养成材料计算」面板")
+        xh = vs.find("X", (1350, 80, 1600, 200))
+        if xh:
+            inp.move(xh["cx"], xh["cy"])
+            time.sleep(0.25)
+            inp.click(xh["cx"], xh["cy"], wait=2.0)
+            vs.frame(force=True)
 
     # ---- 打开 ⊞ 网格 ----
     print(f"  点 ⊞ @{P_SEL_GRID} 打开选择代理人")
