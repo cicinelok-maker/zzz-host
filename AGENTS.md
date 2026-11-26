@@ -93,18 +93,27 @@ python tools/zzz_daily.py 佩洛伊斯 --run      # 真跑
 
 ### 结构化输出
 
-只有这 6 个有 `--json`：
+**实测过**（对每个工具跑 `--help` 看有没有 `--json`），现在只有这 6 个有：
 
 ```
-zzz_status    → state/status_<agent>.json
-zzz_plan      → state/plan.json
-zzz_auto
-zzz_daily
-zzz_disc_daily
-zzz_grind
+zzz_status.py          → state/status_<agent>.json
+zzz_gap.py
+zzz_guide.py
+zzz_guide_agents.py
+zzz_uid.py
+gen_manifest.py
 ```
 
 其余工具输出**只是给人看的文本**，要数据就读 `state/*.json`。
+
+**注意：`zzz_daily` / `zzz_grind` / `zzz_disc_daily` / `zzz_plan` 都没有 `--json`。**
+它们会往 `state/` 写文件，但**标准输出不是 JSON** ——
+对着它们调 `--json` 会被 argparse 当成未知参数，**exit 2**，
+看起来像「配置缺失」，很容易误判。
+
+（这份清单原来是错的：写着 `zzz_plan` / `zzz_auto` / `zzz_daily` /
+`zzz_disc_daily` / `zzz_grind` 有 `--json`，实际 6 个里 5 个没有。
+文档和代码脱节比没有文档更糟 —— 照着它调用只会得到一个 exit 2。）
 
 ### 状态文件
 

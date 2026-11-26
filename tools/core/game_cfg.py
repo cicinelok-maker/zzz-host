@@ -5,7 +5,7 @@
 ## 体检发现（2026-11-24）
 
 `FARM_COST = 60` 在 4 个文件里各写一遍：
-    zzz_auto.py / zzz_daily.py / zzz_grind.py / zzz_resource.py
+    zzz_daily.py / zzz_grind.py / zzz_resource.py
 改一次要改四处，漏一处就出错。
 
 ## 实测数据

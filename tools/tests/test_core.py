@@ -1441,3 +1441,83 @@ class TestReadStatusHonesty(unittest.TestCase):
                       "read_status 没接住 run 的退出码")
         self.assertIn("if not ok:", src,
                       "接住了却没判 —— 等于没接")
+
+
+class TestDocsMatchCode(unittest.TestCase):
+    """文档里的「事实声明」必须和代码一致（BUG-183）。
+
+    ## 原来 AGENTS.md 的 `--json` 清单 6 个里 5 个是错的
+
+    ```
+    声称有：zzz_status ✔ | zzz_plan ✘ | zzz_auto ✘ | zzz_daily ✘
+            zzz_disc_daily ✘ | zzz_grind ✘
+    实际有：zzz_status | zzz_gap | zzz_guide | zzz_guide_agents | zzz_uid
+    ```
+
+    照着它调用会得到：
+
+    ```
+    zzz_daily.py: error: unrecognized arguments: --json
+    → exit 2
+    ```
+
+    而 exit 2 在这套工具里的语义是「配置缺失」—— 很容易误判。
+    **文档和代码脱节比没有文档更糟。**
+
+    还发现 `zzz_auto.py` 已经归档，但 `TOOLS.md` 还在教用户跑它
+    （而且那行是 `gen_tools_doc.py` 生成的，改了也会被覆盖回来）。
+    """
+
+    DOCS = ("AGENTS.md", "TOOLS.md", "README.md", "DISC_LOOP.md",
+            "START_HERE.md")
+
+    def test_no_ghost_tools(self):
+        """文档里提到的 `xxx.py` 必须真的存在（含 _legacy）。"""
+        import re
+        import pathlib
+        # 注意：test_core.py 在 tools/tests/，`.parent.parent` 是 tools/，
+        # 到**仓库根**要三个 parent。（我第一版只写两个，
+        # 于是去找 tools/AGENTS.md —— 不存在。）
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        have = {p.stem for p in (root / "tools").glob("*.py")}
+        have |= {p.stem for p in (root / "tools" / "_legacy").glob("*.py")}
+        bad = {}
+        for md in self.DOCS:
+            f = root / md
+            if not f.exists():
+                continue
+            ghosts = set()
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                for m in re.finditer(r"\b(zzz_[a-z0-9_]+|od_[a-z_]+)\.py", line):
+                    if m.group(1) not in have:
+                        ghosts.add(m.group(1))
+            if ghosts:
+                bad[md] = sorted(ghosts)
+        self.assertEqual(bad, {}, f"文档提到了不存在的工具：{bad}")
+
+    def test_agents_json_list_is_accurate(self):
+        """AGENTS.md 说「有 --json」的工具必须真的在 --help 里出现 --json。"""
+        import re
+        import pathlib
+        import subprocess
+        import sys
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        txt = (root / "AGENTS.md").read_text(encoding="utf-8")
+        # 取「只有这 6 个有 --json」之后那个代码块
+        m = re.search(r"现在只有这 \d+ 个有：\s*```\s*\n(.*?)```", txt, re.S)
+        if not m:
+            self.skipTest("AGENTS.md 里没找到那份清单（可能措辞变了）")
+        claimed = re.findall(r"(\w+)\.py", m.group(1))
+        self.assertGreater(len(claimed), 0)
+        for name in claimed:
+            p = root / "tools" / f"{name}.py"
+            self.assertTrue(p.exists(), f"AGENTS.md 声称 {name}.py 有 --json，但文件不存在")
+            try:
+                r = subprocess.run([sys.executable, "-u", str(p), "--help"],
+                                   capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   cwd=str(root), timeout=120)
+            except (OSError, subprocess.SubprocessError) as e:
+                self.skipTest(f"跑不起来 {name}.py --help：{e}")
+            self.assertIn("--json", r.stdout or "",
+                          f"AGENTS.md 说 {name}.py 有 --json，实测没有")

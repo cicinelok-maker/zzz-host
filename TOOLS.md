@@ -12,7 +12,7 @@
 
 **怎么选**：
 - 想「一键养成一轮」→ `zzz_daily.py 佩洛伊斯 --run`
-- 想「只做某几步」→ `zzz_auto.py --actions level,skill`
+- 想「只做某几步」→ `zzz_daily.py <角色> --run --skip wengine,core,disc,farm`
 - 想「自动判断下一步」→ `zzz_next.py 佩洛伊斯`
 - 想「一直刷到目标」→ `zzz_grind.py 佩洛伊斯 --run`
 

@@ -140,7 +140,12 @@ def main() -> int:
     out.append("")
     out.append("**怎么选**：")
     out.append("- 想「一键养成一轮」→ `zzz_daily.py 佩洛伊斯 --run`")
-    out.append("- 想「只做某几步」→ `zzz_auto.py --actions level,skill`")
+    # `zzz_auto.py` 已归档（MAINTENANCE.md「归档 zzz_auto + zzz_next」），
+    # 它的能力由 `zzz_daily --skip` 覆盖 —— 反过来说：
+    # `zzz_auto --actions level,skill`（只做这两步）
+    # == `zzz_daily --run --skip wengine,core,disc,farm`（跳过其他）
+    out.append("- 想「只做某几步」→ `zzz_daily.py <角色> --run "
+               "--skip wengine,core,disc,farm`")
     out.append("- 想「自动判断下一步」→ `zzz_next.py 佩洛伊斯`")
     out.append("- 想「一直刷到目标」→ `zzz_grind.py 佩洛伊斯 --run`")
     out.append("")
