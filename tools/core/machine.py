@@ -294,8 +294,13 @@ TRANSITIONS: list[Transition] = [
 
     Transition("基础页", "技能页",
                [Action("click_xy", xy=(1402, 995), wait=2.0)],
-               verify=("12",), verify_region=(900, 700, 1800, 800),
-               note="底部点「技能」标签"),
+               # **原来 verify=("12",)** —— 技能等级那一排数字里到处都有 12
+               # （实测 y≈757 是 `1212 / 10 / 12`），而且基础页的暴击率也含 "12.2%"，
+               # 所以这个校验**恒真**，等于没有（RT-REPORT 柱 2 点名的就是这类）。
+               #
+               # 换实测判别词：「影画」在技能页有、基础页没有（实测 False）。
+               verify=("影画",), verify_region=(40, 890, 460, 1010),
+               note="底部点「技能」标签（验「影画」：技能页有、基础页无）"),
 
     Transition("技能页", "基础页",
                [Action("click_xy", xy=(1154, 996), wait=2.0)],
@@ -403,6 +408,12 @@ class Machine:
         self.max_rounds = max_rounds
         self.verbose = verbose
         self.log: list[str] = []
+        # **verify 条件与 state 判定不一致的次数**（RT-REPORT 柱 2）。
+        # `verify` 原来被直接丢掉，写错了也没人知道
+        # （实测 `verify=("12",)` 恒真、`("前往任务目标",)` 恒假）。
+        # 记下来，`verbose` 时会打出来。
+        self._verify_mismatch = 0
+        self._verify_log: list[tuple] = []
 
     # ---------- 状态 ----------
     def state(self) -> str:
@@ -526,6 +537,18 @@ class Machine:
             if real == tr.dst:
                 # 状态对就算成功。文字验证可能因 OCR 抖动失败，
                 # 但页面确实到了，不应该判失败（实测踩过这个坑）
+                #
+                # **但分歧要记下来**（RT-REPORT 柱 2）：原来文字验证的结果
+                # 在这里被直接丢掉，于是「verify 层」等于不存在 ——
+                # 写错了也没人知道（比如 `verify=("12",)` 恒真、`("前往任务目标",)` 恒假）。
+                if not ok:
+                    self._verify_mismatch += 1
+                    if self.verbose:
+                        print(f"     ⚠ 文字验证没过但状态对"
+                              f"（{tr.verify}）—— 这个 verify 条件可能写错了")
+                    log_fail = getattr(self, "_verify_log", None)
+                    if log_fail is not None:
+                        log_fail.append((tr.src, tr.dst, tr.verify))
                 return True
             if self.verbose:
                 print(f"     验证状态 ✖ 期望 {tr.dst}，实际 {real}")
