@@ -2204,19 +2204,45 @@ class TestTransitionVerifySane(unittest.TestCase):
                          "这些转移的 verify 词不可能出现在它的区域里：\n  "
                          + "\n  ".join(bad))
 
-    def test_no_single_esc_main_menu(self):
-        """主菜单不能用单个 ESC 退出（实测无效）。"""
+    def test_main_menu_exit_does_not_press_b(self):
+        """主菜单 → 世界 **只能用 ESC，不能加 B**。
+
+        ## 这条测试我第一版写反了
+
+        第一版写的是「主菜单不能用单个 ESC（实测无效）」，并要求改成
+        `esc_to_world`（交替 B/ESC）。**结果实测更糟**：
+
+        ```
+        → 主菜单→世界  (交替 B/ESC)
+            动作失败：esc_to_world
+        验证状态 ✖ 期望 世界，实际 主菜单
+        [machine] 第 1 轮没到，重试
+        ... 三轮都退不出去 ...
+        → *→世界  (连按 B/ESC 脱离)      ← 是这里的单个 ESC 救的场
+        ```
+
+        原因是 **B 键在主菜单上会「打开别的东西」，不是「返回」** ——
+        B 和 ESC 交替反而在两个状态之间来回跳。
+
+        `go_to(世界)` 的耗时：73s → 129s（我改错）→ 56.9s（回退后）。
+
+        **所以这条测试现在钉的是：别在主菜单上按 B。**
+        """
         import sys
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         from core.machine import TRANSITIONS
+        found = False
         for t in TRANSITIONS:
             if t.src == "主菜单" and t.dst == "世界":
+                found = True
                 kinds = [a.kind for a in t.actions]
-                self.assertNotIn("key", kinds,
-                                 f"主菜单→世界 还在用单键（{kinds}）—— 实测 ESC 无效")
-                self.assertIn("esc_to_world", kinds,
-                              "主菜单→世界 应该用 esc_to_world")
+                self.assertNotIn("esc_to_world", kinds,
+                                 f"主菜单→世界 用了 esc_to_world（{kinds}）—— "
+                                 f"它会按 B，而 B 在主菜单会打开别的面板")
+                self.assertIn("key", kinds,
+                              f"主菜单→世界 应该用单个 ESC（{kinds}）")
+        self.assertTrue(found, "找不到 主菜单→世界 的转移")
 
     def test_warehouse_has_path_to_world(self):
         """仓库那一簇必须有到世界的路（原来是死区）。"""
