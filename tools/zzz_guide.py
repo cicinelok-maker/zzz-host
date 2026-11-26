@@ -58,6 +58,13 @@ import argparse
 import json
 import re
 import sys
+
+# 顶部角色选择条的坐标（截图量的，1920x1080 口径）
+# **这三个常量必须定义在使用它们的函数之前** —— 我漏定义过一次，
+# 结果 reset_view / select_agent 一调用就 NameError。
+P_SEL_PREV = (780, 72)      # 左箭头
+P_SEL_NEXT = (1630, 72)     # 右箭头
+P_SEL_GRID = (1715, 55)     # ⊞ 打开「选择代理人」网格
 import time
 from pathlib import Path
 
@@ -327,6 +334,122 @@ def current_agent(ui: Ui) -> str:
     return ""
 
 
+def _is_real_agent(name: str) -> bool:
+    """这个读到的名字是不是角色库里真的角色。
+
+    ## 为什么需要（实测）
+
+    `current_agent()` 会读到噪声 —— 实测返回过「中」「国」「章」这种单字碎片
+    （是「等级」「已选」这类小标签被读残的结果）。
+
+    只判 `bool(name)` 会把噪声当成功，导致 `reset_view` 明明在空槽也返回 True。
+
+    ## 判据
+
+    1. 在 `disc_meta.json` 的角色列表里 → 真的
+    2. 能被 `pick_agent._snap_to_library` 纠正到库里某个名字 → 真的
+    3. 其他 → 假的
+    """
+    if not name:
+        return False
+    try:
+        import json
+        from pathlib import Path as _P
+        meta = json.loads((_P(__file__).parent / "disc_meta.json")
+                          .read_text(encoding="utf-8"))
+        chars = set((meta.get("角色") or {}).keys())
+    except Exception:
+        return len(name) >= 2
+
+    if name in chars:
+        return True
+    try:
+        import pick_agent
+        return pick_agent._snap_to_library(name) in chars
+    except Exception:
+        return False
+
+
+def reset_view(ui: Ui, verbose: bool = True) -> bool:
+    """把养成指南恢复到一个「有有效角色被选中」的状态。
+
+    ## 为什么需要（实测）
+
+    选择条点右箭头超过末尾会进空槽 —— 左面板全黑，`current_agent()` 返回空。
+    **而且面板会记住这个空状态**：关掉重开还是空的。
+
+    所以恢复要分级：
+    1. 左箭头 12 次（轻，多数情况够）
+    2. 左箭头再 30 次（中，起点附近有多个空槽时）
+    3. 关掉面板重开（重，状态彻底坏了）
+
+    每步之后检查 `current_agent()`，读到就停。
+
+    Returns 是否恢复成功。
+    """
+    vs, inp = ui.vs, ui.inp
+
+    def has_agent(tries: int = 1) -> bool:
+        """等一会儿再判 —— 面板重开后名字要过一阵才读得出来。
+
+        实测：重开后立刻 `current_agent()` 读不到（OCR 还没稳定），
+        等一两秒就能读到「挽昼」。所以轮询几次再下结论。
+        """
+        for k in range(max(1, tries)):
+            if _is_real_agent(current_agent(ui)):
+                return True
+            if k + 1 < tries:
+                time.sleep(0.8)
+                vs.frame(force=True)
+        return False
+
+    vs.frame(force=True)
+    if has_agent(tries=3):
+        if verbose:
+            print(f"  已经有角色：{current_agent(ui)}")
+        return True
+
+    # ---- 第 1 级：左箭头 12 次 ----
+    if verbose:
+        print("  空槽，试左箭头 12 次…")
+    for _ in range(12):
+        inp.click(P_SEL_PREV[0], P_SEL_PREV[1], wait=0.3)
+    vs.frame(force=True)
+    if has_agent(tries=3):
+        if verbose:
+            print(f"    恢复：「{current_agent(ui)}」")
+        return True
+
+    # ---- 第 2 级：再点 30 次 ----
+    if verbose:
+        print("    还是空，再点 30 次…")
+    for _ in range(30):
+        inp.click(P_SEL_PREV[0], P_SEL_PREV[1], wait=0.25)
+    vs.frame(force=True)
+    if has_agent(tries=3):
+        if verbose:
+            print(f"    恢复：「{current_agent(ui)}」")
+        return True
+
+    # ---- 第 3 级：关掉重开 ----
+    if verbose:
+        print("    还是空，关掉面板重开…")
+    for _ in range(4):
+        inp.key("esc", wait=1.4)
+        vs.frame(force=True)
+        if anchors.describe(vs) == "世界":
+            break
+    if not open_guide(ui):
+        if verbose:
+            print("    重开失败")
+        return False
+    vs.frame(force=True)
+    ok = has_agent(tries=6)
+    if verbose:
+        print(f"    重开{'成功：「' + current_agent(ui) + '」' if ok else '后还是空'}")
+    return ok
+
+
 def select_agent(ui: Ui, name: str, max_clicks: int = 30) -> bool:
     """在养成指南里切到指定角色。
 
@@ -339,12 +462,8 @@ def select_agent(ui: Ui, name: str, max_clicks: int = 30) -> bool:
     vs, inp = ui.vs, ui.inp
     vs.frame(force=True)
 
-    # **先点左箭头回起点** —— 选择条点过末尾会进空槽（左面板全黑），
-    # 而且面板会**记住**这个空状态，关掉重开都恢复不了（实测）。
-    # 起点一定是有效角色，所以每次都从起点往右点。
-    for _ in range(25):
-        inp.click(P_SEL_PREV[0], P_SEL_PREV[1], wait=0.35)
-    vs.frame(force=True)
+    # **先恢复到有效状态**（空槽要用分级恢复，光点左箭头不够稳）
+    reset_view(ui, verbose=True)
 
     cur = current_agent(ui)
     print(f"  当前角色：{cur or '?'}　目标：{name}")
