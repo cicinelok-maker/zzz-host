@@ -46,12 +46,22 @@ class Anchor:
     must: tuple[str, ...] = ()       # 必须同时存在的关键词
     forbidden: tuple[str, ...] = ()  # 出现任何一个就否定
     note: str = ""
+    # **至少存在一个**的关键词（RT-REPORT 柱 2）。
+    #
+    # `must` 是 AND 语义。但有些界面的特征词**不总是同时出现** ——
+    # 比如大世界的「快捷轮盘」「相机」在移动/战斗时会隐藏，
+    # 于是 must 全中永远不成立 → 明明在世界里，`describe()` 却说「未知界面」。
+    any_of: tuple[str, ...] = ()
 
     def match(self, vision) -> bool:
         txt = vision.text(self.region)
         if any(f in txt for f in self.forbidden):
             return False
-        return all(m in txt for m in self.must)
+        if not all(m in txt for m in self.must):
+            return False
+        if self.any_of and not any(a in txt for a in self.any_of):
+            return False
+        return True
 
 
 # ---------- 已知界面 ----------
@@ -189,8 +199,19 @@ ANCHORS: list[Anchor] = [
                 "**这个面板 B 键关不掉，只有 ESC**。"
                 "两个 tab（需要获取的材料 / 养成材料明细）都算这个状态。"),
 
-    Anchor("世界", R_BOTTOM_LEFT, must=("快捷轮盘", "相机"),
-           note="大世界，左下角常驻快捷键提示（不用任务指引，它会消失）"),
+    # **实测（2026-11-26，站在大世界里）**：画面上有
+    #   HIA俱乐部 / JANUS QUARTER / 快捷导航 / 区域信息 / 区域切换
+    # 但**没有「快捷轮盘」也没有「相机」** —— 原来 must 那两项永不成立，
+    # 于是 `describe()` 一直说「未知界面」，`reset_to_world` 永远「回不去世界」，
+    # 每次导航都要再复位一次，白烧 20~30 秒（RT-REPORT 柱 2）。
+    #
+    # 改成 any_of：大世界 HUD 里任意一个出现就算。
+    # forbidden 挡住主菜单/代理人页，避免抢注。
+    Anchor("世界", (0, 20, 1920, 1080),
+           must=(),
+           any_of=("快捷导航", "快捷轮盘", "区域切换", "区域信息"),
+           forbidden=("邮件", "成就", "绳网", "仓库[", "代理人攻略"),
+           note="大世界：靠 HUD 特征词任一命中（快捷导航/区域切换/区域信息）"),
 ]
 
 
@@ -219,7 +240,14 @@ def detect(vision, candidates: list[Anchor] | None = None) -> Anchor | None:
 
 
 def is_(vision, name: str) -> bool:
-    """**文字锚点优先，指纹兜底**（和 describe 保持一致）。"""
+    """**文字锚点优先，指纹兜底**（和 describe 保持一致）。
+
+    **被遮挡时一律返回 False**（BUG-032）：
+    此时读到的可能是别的程序的画面，任何「认出来了」都是假的。
+    返回 False 会让调用方继续等/继续按 ESC —— 那才是对的。
+    """
+    if getattr(vision, "occluded", False):
+        return False
     for a in ANCHORS:
         if a.name == name:
             if a.match(vision):

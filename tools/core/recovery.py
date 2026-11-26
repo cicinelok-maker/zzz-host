@@ -46,19 +46,55 @@ def reset_to_world(ui, limit: int = 12) -> bool:
     策略：先按 B（退出各类面板），再按 ESC（退出菜单），
     每轮检查锚点。返回是否成功。
     """
+    # **连判 3 次才算到世界**（RT-REPORT 柱 2）。
+    #
+    # 原来只判一帧。单帧可能是过渡动画的中间态 ——
+    # 认出来了但其实是半截画面，返回后 `describe()` 又变成别的界面，
+    # 上层于是「再复位一次」，每次导航白烧 20~30 秒。
+    #
+    # `_at_world()` 会刷新 3 帧，**全部**认出「世界」才算数。
+    # 被遮挡时 `is_()` 一律 False（BUG-032），所以这里也自然等下去。
+    def _at_world(tries: int = 3) -> bool:
+        for k in range(tries):
+            ui.vs.frame(force=True)
+            if not anchors.is_(ui.vs, "世界"):
+                return False
+            time.sleep(0.12)
+        return True
+
+    # **左上角返回箭头**的固定坐标（1920x1080）。
+    #
+    # 实测：代理人详情页（装备/技能/基础）**不响应 ESC 也不响应 B** ——
+    # 连按 12 次画面一点没动（21 秒白烧）。
+    # 必须点左上角那个圆形返回箭头，实测 @(96,47)。
+    XY_BACK = (96, 47)
+
     for i in range(limit):
-        if anchors.is_(ui.vs, "世界"):
+        if _at_world():
             ui.inp.mouse_mode()
             return True
-        if i % 2 == 0:
+        ui.vs.frame(force=True)
+        # 代理人详情页：点左上角返回箭头（ESC 对它无效）
+        try:
+            _top = ui.vs.text((150, 20, 700, 110))
+        except Exception:
+            _top = ""
+        if "代理人攻略" in _top:
+            ui.inp.click(XY_BACK[0], XY_BACK[1], wait=1.4)
+        elif i % 2 == 0:
             ui.inp.pad_tap("b", wait=0.85)
         else:
             ui.inp.key(0x1B, wait=0.85)     # ESC
         ui.vs.frame(force=True)
-    if anchors.is_(ui.vs, "世界"):
+    if _at_world():
         ui.inp.mouse_mode()
         return True
-    print("  [recovery] 回大世界失败")
+    # 失败时把「为什么」说清楚，别只说「回大世界失败」
+    try:
+        got = anchors.describe(ui.vs)
+    except Exception:
+        got = "?"
+    print(f"  [recovery] 回大世界失败（当前界面：{got}）")
     return False
 
 
