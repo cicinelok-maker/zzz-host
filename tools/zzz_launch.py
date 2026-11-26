@@ -254,8 +254,21 @@ def main() -> int:
     if args.check:
         w = game_running()
         if w:
+            ww, wh = int(w.get("w") or 0), int(w.get("h") or 0)
             print(f"运行中：{w.get('title', '')} "
-                  f"@({w.get('x')},{w.get('y')}) {w.get('w')}x{w.get('h')}")
+                  f"@({w.get('x')},{w.get('y')}) {ww}x{wh}")
+            # **分辨率不对等于所有工具都会点错位置**，必须报失败。
+            #
+            # 原来这里只打印尺寸就 `return 0` —— 用 2K/4K 显示器的用户
+            # 会看到「运行中」以为一切正常，然后每一个点击都偏。
+            # 所有坐标都按 1920x1080 标定（见 AGENTS.md 的「容易踩的坑」第 2 条）。
+            if (ww, wh) != (1920, 1080):
+                print(f"  ✘ 分辨率不对：{ww}x{wh}，本工具按 **1920x1080** 标定")
+                print(f"     改法：游戏内设置 → 画面 → 分辨率 1920x1080，"
+                      f"并且用「窗口化」或「全屏窗口化」")
+                print(f"     （独占全屏抓不到画面）")
+                return 5        # 5 = 等窗口/条件超时，这里复用成「环境不满足」
+            print("  ✔ 分辨率 1920x1080")
             return 0
         print("没在运行")
         exe = find_exe()

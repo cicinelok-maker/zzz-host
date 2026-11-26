@@ -1932,3 +1932,43 @@ class TestDefaultAgentIsConfigurable(unittest.TestCase):
         self.assertGreater(i_vis, -1, "找不到 Vision() 的创建")
         self.assertLess(i_chk, i_vis,
                         "检查在创建 Vision/Ui 之后 —— 拒绝时会有副作用")
+
+
+class TestResolutionCheck(unittest.TestCase):
+    """分辨率不对必须报出来（新用户最常见的第一次失败）。
+
+    ## 原来两个入口都不查
+
+    · `zzz_launch --check` 只打印 `运行中：… 2560x1440` 然后 `return 0`
+    · `check_config` 只查路径 / OCR 模块 / 角色配置，**不查窗口**
+
+    于是用 2K/4K 显示器的用户会看到「运行中」「环境 OK」，
+    然后**每一个点击都偏** —— 很难自己想到是分辨率的问题。
+
+    所有坐标都按 1920x1080 标定（AGENTS.md「容易踩的坑」第 2 条）。
+    """
+
+    def test_launch_check_validates_resolution(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_launch
+        src = inspect.getsource(zzz_launch.main)
+        self.assertIn("1920", src, "zzz_launch --check 没检查 1920")
+        self.assertIn("1080", src, "zzz_launch --check 没检查 1080")
+        # 不对时要返回非 0
+        i = src.find("分辨率不对")
+        self.assertGreater(i, -1, "没有「分辨率不对」的提示")
+        self.assertIn("return 5", src[i:i + 600],
+                      "分辨率不对时没有返回非 0")
+
+    def test_check_config_checks_window(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import check_config
+        src = inspect.getsource(check_config.main)
+        self.assertIn("1920", src, "check_config 不看分辨率")
+        self.assertIn("游戏窗口", src, "check_config 不报窗口状态")

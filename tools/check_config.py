@@ -75,6 +75,31 @@ def main() -> int:
     # 于是 `python tools/check_config.py; echo $?` 永远看不出环境有问题。
     fatal = 0
 
+    # ---------- 游戏窗口 + 分辨率 ----------
+    #
+    # 这两个是**新用户最常见的第一次失败原因**，而原来 `check_config`
+    # 一个都不查（只查路径/OCR/角色配置）。
+    # 用户看到「环境 OK」然后每个点击都偏，很难自己想到是分辨率的问题。
+    print()
+    try:
+        import live as _live
+        _w = _live.find_window()
+    except Exception as _e:
+        _w = None
+    if _w:
+        _ww, _wh = int(_w.get("w") or 0), int(_w.get("h") or 0)
+        if (_ww, _wh) == (1920, 1080):
+            print(f"✔ 游戏窗口：{_ww}x{_wh}（本工具的标定分辨率）")
+        else:
+            print(f"✘ 游戏窗口是 {_ww}x{_wh}，本工具按 **1920x1080** 标定")
+            print(f"    → 所有点击都会偏。改：游戏内设置 → 画面 → 分辨率 1920x1080")
+            print(f"      （用「窗口化」或「全屏窗口化」，独占全屏抓不到画面）")
+            fatal += 1
+    else:
+        # **不算致命** —— 可以先配好环境再开游戏。
+        print("· 游戏没在运行（不影响本检查，但跑工具前要先开）")
+        print("    启动：python tools/zzz_launch.py")
+
     # 检查 disc_meta 和角色
     meta_p = HERE / "disc_meta.json"
     print()
