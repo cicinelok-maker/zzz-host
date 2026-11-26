@@ -436,12 +436,18 @@ TRANSITIONS: list[Transition] = [
                note="点左上角返回箭头"),
 
     # 任意 → 大世界（兜底复位）
+    #
+    # **注释说的「ESC 是开关，按两次会又打开菜单」是错的**（2026-11-27 实测）：
+    # 站在大世界上连按 6 次 ESC，画面**纹丝不动** —— 它是单向的「关闭」键。
+    #
+    # 而原来的写法只按一次，于是每退一层就要 `go_to` 重来一轮：
+    # 实测 `代理人列表 → 世界` 走了 2 轮 **57 秒**（先退到主菜单，再退到世界）。
+    #
+    # 改走 `esc_to_world`（纯 ESC 循环，最多 4 次），一次调用把多层退完。
     Transition("*", "世界",
-               # ESC 是开关：按两次会又打开菜单，所以只按一次，
-               # 没到目标就让 go_to 的下一轮重试
-               [Action("key", "esc", wait=1.6)],
+               [Action("esc_to_world", wait=1.5)],
                verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
-               note="连按 B/ESC 脱离"),
+               note="纯 ESC 循环退出（ESC 是单向关闭键，多按无害）"),
 ]
 class Machine:
     def __init__(self, ui, max_rounds: int = 4, verbose: bool = True):
@@ -523,23 +529,26 @@ class Machine:
               过渡期按键会把过渡打断（这个坑在 reset_to_world 上踩过）
             · 最多 8 轮
             """
-            # **每一轮 `state()` 要 2.18 秒**，所以这里必须省着用。
+            # **纯 ESC 循环**（2026-11-27 改）。
             #
-            # 实测确认的顺序是「B → 过渡 → ESC」——
-            # 所以按固定节奏交替按，**只在按键之间判一次**，
-            # 而不是每帧都判（原来是 8 轮 × 1 次 = 17 秒纯判定）。
+            # 原来这里交替按 B 和 ESC，理由是「有些面板 ESC 无效」。
+            # 但实测发现两个事实：
+            #   ① **ESC 是单向的「关闭」键**：站在大世界上连按 6 次，
+            #      画面纹丝不动 —— 所以多按无害。
+            #   ② **B 在某些界面上会「打开别的东西」而不是「返回」**
+            #      （主菜单上实测：B 和 ESC 交替反而在两个状态之间来回跳）。
             #
-            # 4 轮足够：B、ESC、B、ESC。
+            # 所以这里改成只按 ESC。它在任何界面上最多是「没反应」，
+            # 不会把状态搞乱。
+            #
+            # 另外：`state()` 一次 2.18 秒，所以**每按一次才判一次**，
+            # 不要每帧都判。
             for i in range(a.n or 4):
-                if i % 2 == 0:
-                    self.inp.pad_tap("b", wait=a.wait or 1.3)
-                else:
-                    self.inp.key("esc", wait=a.wait or 1.3)
-                # 按完等过渡稳下来再判（过渡期判会得到「未知界面」）
-                time.sleep(0.8)
-                self.vs.frame(force=True)
                 if self.state() == "世界":
                     return True
+                self.inp.key("esc", wait=a.wait or 1.5)
+                # 等过渡稳下来（过渡期判会得到「未知界面」）
+                time.sleep(0.7)
             return self.state() == "世界"
         elif k == "click_slot":
             # 装备页盘位：优先找「等级xx/xx」标签（图标在标签上方约 60px）；
