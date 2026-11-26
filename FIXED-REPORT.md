@@ -1,8 +1,9 @@
 # 修了什么（大白话版）
 
 > 基线：审计 `AUDIT-BUGS.md`（93 条）
-> 本次：**修了 16 条，其中 P0 全部 9 条修完**
-> 代码：`792197a` → `b895fec`（8 个 commit）
+> 本次：**修了 20 条，其中 P0 全部 9 条修完**
+> 代码：`792197a` → `7968467`（9 个 commit）
+> 还没修的 73 条见 [`BLOCKED.md`](BLOCKED.md)
 
 ---
 
@@ -157,16 +158,46 @@ OCR 读残成「混沌」时，程序返回的是**字典顺序里的第一个**
 ## 测试
 
 - 单元测试：**43 → 66 个用例**（新增的都对应上面每一条的边界）
-- 七项自检全绿：check_config / run_tests / smoke_test / audit_self / audit_patterns / audit_release / audit_ship
+- 八项自检全绿：check_config / run_tests / smoke_test / audit_self / audit_patterns / audit_release / audit_ship / audit_stale_frame
 - **不止看退出码** —— 审计说这七项里有四项恒返回 0，所以另外扫了每份日志里的 `✘ / FAIL / Traceback`，都是干净的；`run_tests` 的用例数也确认过是真的在跑
 
 ---
 
-## 还剩 77 条
+## 八、后面又补的 4 条
 
-见 [`BLOCKED.md`](BLOCKED.md)。分三类：
-1. **需要游戏开着才能验证**（读画面类）
-2. **需要红队确认改造意图**（BFS、指纹机制这类，改了怕影响别处）
-3. **纯自检工具打磨**（不影响你正常使用）
+**17. Unity 窗口能绕过标题校验（点到别的程序上）**
+判断窗口时，只要类名里有 `unity` 就**跳过标题检查** ——
+于是任何 Unity 程序（编辑器、别的 Unity 游戏）都被当成绝区零，
+键鼠注入就落到那个程序上。
 
-P0 已经清零，所以剩下的不会毁数据，也不会让你白花钱。
+> 现在标题必须命中「绝区零/Zenless/ZZZ」**或**进程名是 `zenlesszonezero.exe`（新增进程名探测）。
+> Unity 类名只作为排序时的加分项。
+
+**18. 5 个自检脚本永远返回 0**
+`audit_patterns` / `audit_stale_frame` / `smoke_test` / `audit_self` / `audit_lessons`
+全是恒 exit 0，而 `audit_ship` 只认退出码 —— **「七项全绿」里有 4 项结构上不可能变红。**
+
+> 现在前 4 个能变红了。`audit_lessons` 特殊处理：它是「历史教训清单」，
+> 当前 169 处大多是设计取舍，无脑 exit 1 就是「假红」，所以做成 `--strict` 显式开启。
+> 顺带把 `audit_ship` 的判定改成「有输出问题行 **或** exit≠0 都算失败」。
+> 为了让它保持绿，还顺手把 `zzz_gap.py` 写死的 `CARD_BATTERY` 搬进了中心配置。
+
+**19. 测试全被跳过也算通过**
+一整套测试全 skip 也是「✔ 全部通过」。
+
+> 现在全 skip 会报错（返回 2），部分 skip 会显示数量。
+
+**20. 两处会直接崩的未定义变量**
+`zzz_disc_train.py` 的 `ENV_EXTRA`（训练第一步就 NameError）、
+`core/disc_main.py` 的 `summarize()`（主词条汇报一调就 NameError）。
+
+> 都修了。**这两条能活这么久，是因为「import 通过」不等于「能跑」** ——
+> `smoke_test` 只跑 `--help`，执行不到那两行。
+
+---
+
+## 测试（更新）
+
+- 单元测试：43 → 66 个用例
+- 八项自检全绿，而且现在**真的能变红**
+- 额外跑了 `audit_stale_frame` 和 `audit_lessons`（原来「七项」里没有前者）
