@@ -59,7 +59,7 @@ python tools/zzz_daily.py <agent> --run         # 5 真跑
 2  配置缺失 / 参数错误
 3  选不中角色
 4  到不了目标界面
-5  等窗口/条件超时
+5  等窗口/条件超时   ← **游戏没开也走这个**（Vision 直接 SystemExit(5)）
 6  需要人工登录      ← 不要重试，叫人
 7  等进入游戏超时
 8  读不到数据
@@ -177,12 +177,22 @@ python tools/zzz_status.py XXX --json     # 先盘点
 python tools/zzz_daily.py XXX --run       # 再跑
 ```
 
-**跑之前先用计划模式看一眼**（不动游戏，10 秒出结果）：
+**跑之前先用计划模式看一眼。** 注意「计划模式」分两种，快慢差 100 倍：
+
+| 命令 | 耗时 | 会不会碰游戏 |
+|---|---|---|
+| `zzz_daily XXX`（计划） | **~1 秒** | 不碰（2026-11-26 起，之前要 76 秒） |
+| `zzz_disc_daily XXX --offline` | **~0.3 秒** | 不碰，只读缓存（数据可能过期） |
+| `zzz_disc_daily XXX` | ~4 分钟 | **读一次游戏** |
+| `zzz_plan XXX` | **~80 秒** | **读一次游戏**（要扫描全部盘） |
+| `zzz_grind XXX`（计划） | 数分钟 | 内部要多次盘点 |
 
 ```bash
-python tools/zzz_disc_daily.py XXX            # 出 ①~④ 段计划（会读一次游戏，约 4 分钟）
-python tools/zzz_disc_daily.py XXX --offline  # 秒出，只读缓存（数据可能过期）
+python tools/zzz_daily.py XXX                 # 出计划，约 1 秒，不碰游戏
+python tools/zzz_disc_daily.py XXX --offline  # 秒出，只读缓存
 ```
+
+**别指望 `zzz_plan` 是秒级的** —— 它必须把驱动盘仓库扫一遍才知道该换什么。
 
 计划里会写清楚「今天该做什么」，你可以把它转述给用户确认，再 `--run`。
 
@@ -368,7 +378,7 @@ python tools/audit_patterns.py
 改完代码或怀疑有问题时：
 
 ```bash
-python tools/run_tests.py             # 单元测试（判盘/止损/调律/名字/等级匹配/换装确认，66 个用例）
+python tools/run_tests.py             # 单元测试（判盘/止损/调律/名字/等级匹配/换装确认/成本表，76 个用例）
 python tools/smoke_test.py             # 全部工具的语法 + 导入
 python tools/audit_self.py             # 有没有违反项目自己的规矩
 python tools/audit_stale_frame.py      # 读旧帧（改画面后立刻读）
