@@ -322,8 +322,17 @@ def current_agent(ui: Ui) -> str:
     #   材料视图  挽昼 @(344,908)
     #   方案视图  知更鸟 @(320,868) 一带
     SKIP = ("RANK", "WIKI", "前瞻", "UP", "推荐队伍", "养成指南",
-            "养成材料计算", "代理人攻略", "方案概览", "补充建议")
-    for region in ((250, 850, 660, 930), (250, 890, 660, 960)):
+            "养成材料计算", "代理人攻略", "方案概览", "补充建议",
+            "属性", "驱动", "音擎", "技能", "切换方案", "方案来源",
+            "养成材料", "STR", "EMPTY")
+
+    # **名字有两个位置，都要查** ——
+    #   材料计算视图：左下角 (250,850,660,960)
+    #   方案概览视图：**顶部角色牌**（实测 丽娜 @(687,152)，紧挨着 S 级图标）
+    # 只查左下角的话，在方案概览视图下会读不到（实测返回「中」「空」这种噪声）。
+    for region in ((600, 110, 1000, 200),      # 顶部角色牌
+                   (250, 850, 660, 930),       # 左下角
+                   (250, 890, 660, 960)):
         for it in vs.items(region):
             t = (it.get("text") or "").strip()
             if not t or any(k in t for k in SKIP):
@@ -450,44 +459,114 @@ def reset_view(ui: Ui, verbose: bool = True) -> bool:
     return ok
 
 
-def select_agent(ui: Ui, name: str, max_clicks: int = 30) -> bool:
+def select_agent(ui: Ui, name: str, max_scroll: int = 20) -> bool:
     """在养成指南里切到指定角色。
 
-    **实现方式：点右箭头循环，每点一次读一次左下的角色名，匹配就停。**
+    ## 实现：用 ⊞ 网格按名字点
 
-    为什么不用 ⊞ 那个网格图标：它打开的可能是个更大更慢的选择页，
-    而「点箭头 + 读名字」在 30 次内一定覆盖完（角色最多一百来个，
-    但顶部条是「这个版本有攻略的」，通常十几个）。
+    **不再靠顶部那条选择条的右箭头** —— 实测从「挽昼」往右点，
+    **第 2 次就进空槽了**（那条条不是所有角色平铺，中间有空位）。
+
+    ⊞ 打开的是「选择代理人」网格，名字是水平文本，`find` 得到、点得中。
+
+    ## 流程
+
+    1. 点 ⊞ @(1715, 55)
+    2. 滚到顶
+    3. 逐屏找目标名字 → 找到就点
+    4. 点完验证 `current_agent()` 变了
+
+    **养成指南只覆盖当期有攻略的角色（约 46 个）。**
+    找不到就是没有攻略 —— 明确返回 False，不要瞎猜。
     """
     vs, inp = ui.vs, ui.inp
     vs.frame(force=True)
 
-    # **先恢复到有效状态**（空槽要用分级恢复，光点左箭头不够稳）
-    reset_view(ui, verbose=True)
-
     cur = current_agent(ui)
-    print(f"  当前角色：{cur or '?'}　目标：{name}")
-    if cur and (cur == name or name in cur or cur in name):
-        print("  已经是目标角色")
+    if _is_real_agent(cur) and (cur == name or name in cur or cur in name):
+        print(f"  已经是「{cur}」")
         return True
 
-    for i in range(max_clicks):
-        inp.click(P_SEL_NEXT[0], P_SEL_NEXT[1], wait=1.2)
-        vs.frame(force=True)
-        cur = current_agent(ui)
-        if cur and (cur == name or name in cur or cur in name):
-            print(f"  第 {i + 1} 次点击切到「{cur}」")
-            # 切换后要等它重算（智能计算有延迟）
-            for _ in range(6):
-                try:
-                    vs.wait_still(quiet=0.4, timeout=1.5)
-                except Exception:
-                    time.sleep(0.4)
-                if "养成材料" in vs.text((600, 380, 1800, 1080)):
-                    break
+    # ---- 打开 ⊞ 网格 ----
+    print(f"  点 ⊞ @{P_SEL_GRID} 打开选择代理人")
+    inp.move(P_SEL_GRID[0], P_SEL_GRID[1])
+    time.sleep(0.25)
+    inp.click(P_SEL_GRID[0], P_SEL_GRID[1], wait=2.5)
+    try:
+        vs.wait_still(quiet=0.4, timeout=3.0)
+    except Exception:
+        time.sleep(0.5)
+    vs.frame(force=True)
+
+    if not vs.find("选择代理人", (0, 0, 1920, 400)):
+        print("    ✘ ⊞ 没打开「选择代理人」")
+        return False
+
+    # ---- 滚到顶 ----
+    inp.move(900, 600)
+    time.sleep(0.2)
+    for _ in range(15):
+        inp.wheel(6, wait=0.3)
+    vs.frame(force=True)
+
+    # ---- 逐屏找目标名字 ----
+    last_sig = ""
+    for k in range(max_scroll + 1):
+        if k > 0:
+            inp.move(900, 600)
+            inp.wheel(-4, wait=1.0)
+            vs.frame(force=True)
+
+        sig = vs.text((250, 250, 1650, 1000))
+        if k > 0 and sig == last_sig:
+            break
+        last_sig = sig
+
+        hit = vs.find(name, (250, 250, 1650, 1000))
+        if hit:
+            # **要点卡片，不是点名字文字** —— 名字在卡片下方约 55px，
+            # 实测点名字那行不选中（点完读到「空」）。
+            tx, ty = hit["cx"], hit["cy"] - 60
+            print(f"    第 {k + 1} 屏找到「{name}」名字 @({hit['cx']},{hit['cy']})"
+                  f"，点卡片 @({tx},{ty})")
+            inp.move(tx, ty)
+            time.sleep(0.25)
+            inp.click(tx, ty, wait=2.5)
+            try:
+                vs.wait_still(quiet=0.4, timeout=3.0)
+            except Exception:
                 time.sleep(0.5)
-            return True
-    print(f"  ✘ 点了 {max_clicks} 次没找到「{name}」，最后停在「{cur or '?'}」")
+            vs.frame(force=True)
+
+            # **点完要等名字读出来** —— 实测点中后立刻读会拿到「中」这种噪声
+            # （面板在重算，OCR 还没稳定）。轮询几次。
+            got = ""
+            for _k in range(8):
+                time.sleep(0.8)
+                vs.frame(force=True)
+                _g = current_agent(ui)
+                if _is_real_agent(_g):
+                    got = _g
+                    break
+            if _is_real_agent(got) and (got == name or name in got or got in name):
+                print(f"    ✔ 已切到「{got}」")
+                # 等它重算（智能计算有延迟）
+                for _ in range(6):
+                    try:
+                        vs.wait_still(quiet=0.4, timeout=1.5)
+                    except Exception:
+                        time.sleep(0.4)
+                    if "养成材料" in vs.text((600, 380, 1800, 1080)):
+                        break
+                    time.sleep(0.5)
+                return True
+            print(f"    点了但读到的是「{got or '空'}」")
+            return False
+
+    print(f"    ✘ 网格里没找到「{name}」（养成指南只覆盖当期有攻略的角色）")
+    # 关掉网格，别把它留在打开状态
+    inp.key("esc", wait=1.4)
+    vs.frame(force=True)
     return False
 
 
