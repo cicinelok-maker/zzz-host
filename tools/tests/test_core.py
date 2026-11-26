@@ -1809,3 +1809,126 @@ class TestBatchTargets(unittest.TestCase):
         self.assertIn("return 2", src, "坏 JSON 应返回 2")
         # 提示里要带原始异常，否则用户不知道哪里错了
         self.assertIn("{e}", src, "提示里没带原始异常")
+
+
+class TestDefaultAgentIsConfigurable(unittest.TestCase):
+    """`DEFAULT_AGENT` 不能写死成作者的角色（通用性）。
+
+    ## 原来是
+
+    ```python
+    DEFAULT_AGENT = "佩洛伊斯"      # 作者自己的角色
+    ```
+
+    而 **17 个工具**把它当参数的默认值 —— 包括 `zzz_equip upgrade`、
+    `zzz_disc_daily`、`zzz_wengine` 这些**会花材料**的。
+
+    这份工具是要给别人用的。朋友不带参数跑
+    `python tools/zzz_equip.py upgrade`，它会去操作「佩洛伊斯」——
+    一个他账号上根本没有的角色。
+
+    ## 更糟的是 zzz_equip 的校验写法
+
+    ```python
+    if getattr(args, "agent", ""):     # ← 只有给了名字才校验
+        ...确认当前是这个角色...
+    ```
+
+    默认值变空之后，这个 `if` 直接跳过校验，
+    **一个会花材料的工具在不知道给谁换盘的情况下就往下走了**
+    （实测：加载 OCR、开始导航、点到一个随便什么角色的盘）。
+
+    ## 现在
+
+    · `DEFAULT_AGENT` 按 `ZZZ_DEFAULT_AGENT` → `state/config.json` → **空**
+    · 空的报错是说「没指定角色」并给出用法，不是「角色「」不在库里」
+    · 破坏性工具（`zzz_equip`）在空的时候**直接拒绝，且在建 Vision/Ui 之前**，
+      所以拒绝时零副作用（不切游戏输入模式）
+    """
+
+    def test_default_agent_not_hardcoded(self):
+        """用 **AST** 检查赋值语句，不吃注释和 docstring 的亏。
+
+        ## 我第一版又踩了自指陷阱（第四次）
+
+        ```python
+        for line in src.splitlines():
+            if line.strip().startswith("DEFAULT_AGENT = "):
+                assertNotIn("佩洛伊斯", line)
+        ```
+
+        而我在 `_default_agent()` 的 docstring 里**引用了那行旧代码**
+        （`DEFAULT_AGENT = "佩洛伊斯"`）来说明问题 ——
+        测试就把 docstring 当成了「还写死着」。
+
+        前三次：`zzz_cost` 的 `range(cur, 12)`、outcome rules 的解释注释、
+        `START_HERE.md` 里解释 od_farm 的说明。
+
+        **文本检查会被「解释问题的文字」污染；AST 不会。**
+        """
+        import ast as _ast
+        import sys
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root))
+        tree = _ast.parse((root / "core" / "game_cfg.py").read_text(encoding="utf-8"))
+        found = []
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, _ast.Name) and t.id == "DEFAULT_AGENT":
+                        found.append(node)
+        self.assertTrue(found, "没找到 DEFAULT_AGENT 的赋值")
+        for node in found:
+            v = node.value
+            # 只允许「调用 _default_agent()」或非字符串常量
+            if isinstance(v, _ast.Constant):
+                self.assertNotIsInstance(v.value, str,
+                                         f"DEFAULT_AGENT 写死成字符串：{v.value!r}")
+
+    def test_default_agent_from_env(self):
+        import os
+        import sys
+        import pathlib
+        import importlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import game_cfg
+        old = os.environ.get("ZZZ_DEFAULT_AGENT")
+        os.environ["ZZZ_DEFAULT_AGENT"] = "测试角色"
+        try:
+            self.assertEqual(game_cfg._default_agent(), "测试角色")
+        finally:
+            if old is None:
+                os.environ.pop("ZZZ_DEFAULT_AGENT", None)
+            else:
+                os.environ["ZZZ_DEFAULT_AGENT"] = old
+
+    def test_empty_agent_message_is_helpful(self):
+        """空角色名的报错要说「没指定」，不是「角色「」不在库里」。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import resolve_agent
+        try:
+            resolve_agent("")
+        except Exception as e:
+            msg = str(e)
+            self.assertIn("没指定角色", msg,
+                          f"空角色名的提示不清楚：{msg[:80]}")
+        else:
+            self.fail("空角色名居然没报错")
+
+    def test_equip_refuses_before_touching_game(self):
+        """`zzz_equip` 没有 agent 时必须在建 Vision/Ui **之前**就拒绝。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_equip
+        src = inspect.getsource(zzz_equip.main)
+        i_chk = src.find("必须指定 --agent")
+        i_vis = src.find("Vision(), Input()")
+        self.assertGreater(i_chk, -1, "zzz_equip 没有「必须指定 --agent」的检查")
+        self.assertGreater(i_vis, -1, "找不到 Vision() 的创建")
+        self.assertLess(i_chk, i_vis,
+                        "检查在创建 Vision/Ui 之后 —— 拒绝时会有副作用")

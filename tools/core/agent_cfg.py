@@ -258,7 +258,18 @@ def resolve_agent(name: str, allow_unknown: bool = False) -> str:
     """
     from core.agent_name import canonical_agent
     if not name or not str(name).strip():
-        raise UnknownAgent(str(name or ""), [])
+        # **空名字要说清是「没指定」，不是「这个名字不在库里」**。
+        # 原来报 `角色「」不在角色库里` —— 用户看到空引号完全不知道该怎么办。
+        #
+        # 现在「未指定」是一个正常会发生的场景：
+        # `DEFAULT_AGENT` 默认是空（见 `core/game_cfg._default_agent`），
+        # 目的是不让工具默默去操作作者自己的角色。
+        raise UnknownAgent(
+            "（没指定角色）\n"
+            "  用法：python tools/<工具>.py <角色名>\n"
+            "  或者设一次默认值，之后就不用每次写：\n"
+            "    set ZZZ_DEFAULT_AGENT=你的角色名\n"
+            "  可用角色：python tools/zzz_who.py --menu", [])
     canon = canonical_agent(name)
     chars = meta().get("角色") or {}
     if canon in chars:

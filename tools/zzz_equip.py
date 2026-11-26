@@ -218,12 +218,29 @@ def main() -> int:
                        help="优先选这个等级的盘（-1=不限）")
     args = ap.parse_args()
 
+    # **必须知道给谁换盘**（重要）。
+    #
+    # 原来是 `if getattr(args, "agent", ""):` —— **只有给了角色名才校验**。
+    # 而 `DEFAULT_AGENT` 以前写死成作者自己的角色，所以「没给」也能跑；
+    # 现在默认是空，这个 `if` 会直接跳过校验 ——
+    # **一个会花材料的工具，在不知道给谁换盘的情况下就往下走了。**
+    #
+    # （实测：不带 `--agent` 跑 `zzz_equip.py upgrade`，
+    #   它会加载 OCR、开始导航，直到点到一个随便什么角色的盘。）
+    if not getattr(args, "agent", ""):
+        print("✘ 必须指定 --agent —— 不知道给谁换盘就可能动错角色的配装")
+        print("  用法：python tools/zzz_equip.py upgrade --agent 苍角")
+        print("  或者设一次默认：set ZZZ_DEFAULT_AGENT=你的角色名")
+        return 2
+
+    # **检查放在建 Vision/Ui 之前** —— `ui.start()` 会切游戏输入模式，
+    # 拒绝的时候不该有副作用。
     vs, inp = Vision(), Input()
     ui = Ui(vs, inp)
     log = Journal(f"{args.cmd}_{args.slot}")
     ui.start()
 
-    # 关键：先确认当前是这个角色，否则会在别人的配装上操作
+    # 确认当前是这个角色，否则会在别人的配装上操作
     if getattr(args, "agent", ""):
         from core.machine import Machine as _M
         from pick_agent import select_agent as _sel, current_name as _cur

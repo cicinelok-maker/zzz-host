@@ -42,7 +42,48 @@ FARM_COST = COST_PATROL
 
 # ---------------------------------------------------------------- 默认值
 CARDS_DEFAULT = MAX_CARDS
-DEFAULT_AGENT = "佩洛伊斯"
+def _default_agent() -> str:
+    """没指定角色时用谁。
+
+    ## 原来这里写死了一个角色名
+
+    ```python
+    DEFAULT_AGENT = "佩洛伊斯"
+    ```
+
+    而 **17 个工具**把它当参数的默认值 —— 包括 `zzz_equip upgrade`、
+    `zzz_disc_daily`、`zzz_wengine` 这些**会花材料**的。
+
+    对作者本人没问题，但**这份工具是给别人用的**：
+    朋友不带参数跑 `python tools/zzz_equip.py upgrade`，
+    它会去操作「佩洛伊斯」—— 一个他账号上根本没有的角色。
+
+    ## 现在按这个顺序查
+
+    1. 环境变量 `ZZZ_DEFAULT_AGENT`
+    2. `state/config.json` 的 `default_agent`
+    3. **空** —— 然后 `resolve_agent("")` 会明确报「没指定角色」，
+       让用户知道该传什么，而不是默默去操作别人的角色
+    """
+    import os as _os
+    v = (_os.environ.get("ZZZ_DEFAULT_AGENT") or "").strip()
+    if v:
+        return v
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        p = _P(__file__).resolve().parent.parent.parent / "state" / "config.json"
+        if p.exists():
+            d = _j.loads(p.read_text(encoding="utf-8"))
+            v = str(d.get("default_agent") or "").strip()
+            if v:
+                return v
+    except Exception:
+        pass
+    return ""
+
+
+DEFAULT_AGENT = _default_agent()
 
 # ---------------------------------------------------------------- 电量恢复
 CHARGE_REGEN_SECONDS = 360        # 6 分钟回 1 点
