@@ -96,14 +96,41 @@ GAP_TO_FARM = {
 
 
 def find_gaps(out: str) -> list[str]:
-    """从 zzz_daily 的输出里找出「材料不足」的类别。"""
-    found = []
+    """从 zzz_daily 的输出里找出「材料不足」的类别。
+
+    ## **必须按行判断，不能整段判断**（BUG-092）
+
+    原来是：
+
+    ```python
+    if key in out and ("不足" in out or "不够" in out):
+        found.append(key)
+    ```
+
+    两个条件在**整段输出里各自成立**就算命中。于是这段输出：
+
+    ```
+    音擎：高维数据 3 个（够）
+    技能强化：材料不足
+    ```
+
+    `"高维数据" in out` 为真、`"不足" in out` 也为真 →
+    **高维数据被误判成不足** → `fill_gaps()` 去刷空域戒戍者 →
+    **白花电量刷一个并不缺的本**。
+
+    现在要求「类别名」和「不足/不够」出现在**同一行**里。
+    """
+    found: list[str] = []
+    lines = [ln for ln in (out or "").splitlines() if ln.strip()]
     for key in GAP_TO_FARM:
-        # 输出里可能是「高维数据不足」「特化芯片不够」等写法
-        if key in out and ("不足" in out or "不够" in out):
+        # 同一行里既有类别名、又有「不足/不够」才算
+        if any(key in ln and ("不足" in ln or "不够" in ln) for ln in lines):
             found.append(key)
-    if "材料不足" in out and not found:
-        found.append("特化芯片")     # 兜底：技能材料最常见
+    if not found:
+        # 兜底：只有**单独一行说「材料不足」而没说是什么材料**时才猜。
+        # 猜错了顶多多刷一次；不猜的话技能材料缺口永远补不上。
+        if any("材料不足" in ln for ln in lines):
+            found.append("特化芯片")
     return found
 
 

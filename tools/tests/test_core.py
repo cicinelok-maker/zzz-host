@@ -1280,3 +1280,53 @@ class TestNoProgressIsFailure(unittest.TestCase):
         after = src[i:i + 200]
         self.assertIn("return 1", after,
                       "「if total_up == 0」后面没有 return 1")
+
+
+class TestGrindGapDetection(unittest.TestCase):
+    """`zzz_grind.find_gaps` 必须**按行**判断材料缺口（BUG-092）。
+
+    ## 原来是整段判断
+
+    ```python
+    if key in out and ("不足" in out or "不够" in out):
+        found.append(key)
+    ```
+
+    两个条件在整段输出里各自成立就算命中。于是：
+
+    ```
+    音擎：高维数据 3 个（够）
+    技能强化：材料不足
+    ```
+
+    `"高维数据" in out` 为真、`"不足" in out` 也为真 →
+    **高维数据被误判成不足** → `fill_gaps()` 去刷空域戒戍者 →
+    **白花电量刷一个并不缺的本**。
+    """
+
+    def setUp(self):
+        from zzz_grind import find_gaps
+        self.f = find_gaps
+
+    def test_cross_line_false_positive(self):
+        """别处的「不足」不能嫁祸给这一行里写「够」的资源。"""
+        out = "音擎：高维数据 3 个（够）\n技能强化：材料不足\n"
+        self.assertNotIn("高维数据", self.f(out))
+
+    def test_real_shortage_detected(self):
+        self.assertIn("高维数据", self.f("高维数据不足\n"))
+        self.assertIn("认证章", self.f("认证章不够\n"))
+        self.assertIn("音擎蓄电池", self.f("音擎蓄电池不足\n"))
+
+    def test_all_sufficient(self):
+        out = "高维数据 5 个\n认证章 3 个\n"
+        self.assertEqual(self.f(out), [])
+
+    def test_multiple_shortages(self):
+        got = self.f("特化芯片不足\n高维数据不足\n")
+        self.assertIn("特化芯片", got)
+        self.assertIn("高维数据", got)
+
+    def test_unspecified_fallback(self):
+        """只说「材料不足」没说是什么 —— 才走兜底猜。"""
+        self.assertEqual(self.f("材料不足\n"), ["特化芯片"])
