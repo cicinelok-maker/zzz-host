@@ -369,7 +369,18 @@ class Input:
         self._guard("按键")
         scan = _scan(key)
         if not scan:
-            return
+            # **未知键名不能静默变成「什么都不做」**（BUG-037）。
+            #
+            # 原来这里是 `if not scan: return` —— 键名打错（比如 "escape"
+            # 而不是 "esc"）时**什么都不发生**，而调用方以为按了，
+            # 然后白等到超时，最后报「到不了界面」。
+            #
+            # 键名打错是**编程错误**，应该立刻炸，而不是让它在
+            # 「界面没变化」这种模糊现象里浮现。
+            from .input import SCANCODES as _SC
+            raise ValueError(
+                f"未知的键名 {key!r}。可用的：{sorted(_SC)}\n"
+                f"  也可以直接传扫描码整数（例如 0x01 = ESC）")
         down = _INPUT(type=INPUT_KEYBOARD)
         down.u.ki = _KEYBDINPUT(wVk=0, wScan=scan,
                                 dwFlags=KEYEVENTF_SCANCODE,

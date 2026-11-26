@@ -2271,3 +2271,74 @@ class TestTransitionVerifySane(unittest.TestCase):
             return False
         for s in ("驱动仓库", "音擎仓库", "筛选面板", "驱动盘拆解页"):
             self.assertTrue(reach(s), f"{s} 到不了世界 —— 是个死区")
+
+
+class TestSilentFailureGuards(unittest.TestCase):
+    """两处「静默什么都不做」（P2 里的 BUG-037 / BUG-042）。
+
+    ## BUG-037 未知键名静默变成「什么都没做」
+
+    ```python
+    scan = _scan(key)          # 未知名字 → 0
+    if not scan:
+        return                 # ← 静默返回
+    ```
+
+    键名打错（比如写成 `"escape"` 而不是 `"esc"`）时**什么都不发生**，
+    而调用方以为按了，然后白等到超时，最后报「到不了界面」——
+    一个拼写错误伪装成了「界面识别失败」。
+
+    ## BUG-042 `pick()` 出错时返回 int，调用方按 dict 用
+
+    ```python
+    return 2                   # 缺依赖
+    ...
+    hit = pick(...)
+    if not hit:  ...           # 2 是 truthy，拦不住
+    x, y = hit["center"]       # TypeError: 'int' 不可下标
+    ```
+
+    而且「缺依赖」会被混成「不在标题页」—— 用户会去查游戏状态。
+    """
+
+    def test_unknown_key_raises(self):
+        """未知键名必须抛 ValueError，不能静默。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.input import Input
+        i = Input()
+        with self.assertRaises(ValueError) as ctx:
+            i.key("escape")          # 故意打错（正确是 "esc"）
+        self.assertIn("未知的键名", str(ctx.exception))
+
+    def test_known_key_names_still_work(self):
+        """合法的键名不该受影响（不真的按，只验证 _scan 能解析）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.input import _scan
+        for name in ("esc", "tab", "enter", "space"):
+            self.assertTrue(_scan(name), f"_scan({name!r}) 返回 0 —— 名字表里没有它")
+
+    def test_int_scan_code_still_work(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.input import _scan
+        self.assertEqual(_scan(0x01), 0x01)
+        self.assertEqual(_scan(28), 28)
+
+    def test_pick_raises_on_missing_dependency(self):
+        """`pick()` 缺依赖时抛 SystemExit(2)，不返回 int。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import live
+        try:
+            r = live.pick([], "测试")
+        except SystemExit as e:
+            self.assertEqual(e.code, 2, "缺依赖应该 exit 2（配置缺失）")
+        else:
+            self.assertNotIsInstance(r, int,
+                                     f"pick() 返回了 int {r!r} —— 调用方会 TypeError")

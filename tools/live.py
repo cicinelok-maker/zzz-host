@@ -180,12 +180,35 @@ def ocr_items(ocr, img):
 
 
 def pick(items, keyword: str):
+    """从 OCR 结果里挑出含 keyword 的那一条，返回 dict（或 falsy）。
+
+    ## **依赖缺失时抛 SystemExit(2)，不要返回 int**（BUG-042）
+
+    原来这里写 `return 2` —— 而调用方是：
+
+    ```python
+    hit = pick(ocr_items(ocr, img), "点击进入游戏")
+    if not hit:
+        print("不在标题页（没找到「点击进入游戏」）")
+        return 0
+    x, y = hit["center"]        # ← hit == 2 时 TypeError: 'int' 不可下标
+    ```
+
+    更糟的是：`2` 是 **truthy**，所以 `if not hit` 拦不住它，
+    会直接走到 `hit["center"]` 崩掉。
+
+    而且就算不崩，「缺依赖」和「没找到」也会被混成同一句
+    「不在标题页」—— 用户会去查游戏状态，其实该装依赖。
+
+    现在：缺依赖 → `SystemExit(2)`（退出码表里 2 = 配置缺失），
+    消息已经打印在前面了。`None`/空 → 真的是没找到。
+    """
     try:
         from agent_growth.core.navigator import pick_text
     except ImportError:
         print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
         print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
-        return 2
+        raise SystemExit(2) from None
     return pick_text(
         [{"text": getattr(i, "data", ""), "c": 0.9,
           "center": (int(i.center.x), int(i.center.y))} for i in items], keyword)
