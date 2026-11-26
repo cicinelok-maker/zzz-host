@@ -125,12 +125,14 @@ def canonical_agent(name: str) -> str:
     m = _alias_map()
     if n in m:
         return m[n]
-    # 去掉「·」前缀再试一次（用于 星徽·比利 → 比利 这类**误判风险**，
-    # 所以只在完全匹配不到时才做，且要求后半部分能命中）
-    if "·" in n:
-        tail = n.split("·")[-1]
-        if tail in m:
-            return m[tail]
+    # **不做「·」尾巴兜底**（RT 实测：canonical_agent('星徽·安比') = '安比'）。
+    #
+    # 原来会把完整名字拆成尾巴去匹配，等于凭空认定它们同一个人。
+    # 代价是「星徽·比利」这种写法不再自动变成「比利」——
+    # 但它会**明确失败**，而不是静默挑一个角色去操作。
+    #
+    # 如果真的存在别名关系，应该在 `_alias_map()` 里显式登记，
+    # 而不是靠字符串尾巴猜。
     return n
 
 
@@ -180,6 +182,24 @@ def lenient_match(a: str, b: str, max_dist: int = 1) -> bool:
     if a == b or same_agent(a, b):
         return True
     na, nb = normalize_name(a), normalize_name(b)
+    if na == nb:
+        return True
+
+    # **短名字必须全等**（RT 实测：本↔柳、简↔雅、柳↔照 全是误配）。
+    #
+    # 单字/双字名之间「差一个字」不是 OCR 抖动，是**另一个角色**：
+    #   本 vs 柳   距离 1（替换）→ 原来是 True
+    #   安比 vs 安东 距离 1        → 原来是 True
+    # 而 `lenient_match` 用来判断「切过去的是不是我要的人」，
+    # 误配的后果是**在别人的角色上做破坏性操作**。
+    if len(na) <= 2 or len(nb) <= 2:
+        # **例外：长的那个 ≥3 字，且短的是它的前缀** ——
+        # 这是 OCR 截断（露西 → 露），方向和后果都安全：
+        # 只可能把「我要的」认成「它的前缀」，不会把两个不同角色认成同一个。
+        # （本↔柳、简↔雅、柳↔照 都不是前缀关系，仍然拦住）
+        short, long_ = (na, nb) if len(na) < len(nb) else (nb, na)
+        return len(long_) >= 3 and long_.startswith(short)
+
     if abs(len(na) - len(nb)) > max_dist:
         return False
     # Levenshtein

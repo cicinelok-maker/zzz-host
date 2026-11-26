@@ -573,3 +573,65 @@ class TestEquipConfirm(unittest.TestCase):
     def test_any_change_counts(self):
         """按钮文本变了（通常是 替换 → 卸下 的中间态）也算确认。"""
         self.assertTrue(self.f("替换", "换成别的"))
+
+
+class TestLenientMatchSafety(unittest.TestCase):
+    """宽松匹配不能把两个不同角色认成同一个（RT 实测 5 组误配）。
+
+    ## 为什么这条最要紧
+
+    `lenient_match` 用来判断「切过去的是不是我要的那个人」。
+    误配的后果不是「报错」，是**在别人的角色身上做破坏性操作**
+    （升级、换盘、拆解）。
+
+    真机实测原状：
+    ```
+    本 ↔ 柳 = True      简 ↔ 雅 = True      柳 ↔ 照 = True
+    安比 ↔ 安东 = True   星徽·安比 ↔ 安比 = True
+    ```
+
+    根因：编辑距离 ≤1 没有最小长度门槛，单字名差一个字就通过。
+    """
+
+    def setUp(self):
+        from core.agent_name import lenient_match
+        self.f = lenient_match
+
+    def test_no_short_name_false_positives(self):
+        """5 组实测误配必须全部拦住。"""
+        BAD = [("本", "柳"), ("简", "雅"), ("安比", "安东"),
+               ("柳", "照"), ("星徽·安比", "安比")]
+        for a, b in BAD:
+            self.assertFalse(self.f(a, b), f"{a} 被误配成 {b}")
+            self.assertFalse(self.f(b, a), f"{b} 被误配成 {a}")
+
+    def test_ocr_jitter_still_passes(self):
+        """真 OCR 抖动（长名字差一个字）仍要通过。"""
+        self.assertTrue(self.f("佩洛伊斯", "佩洛依斯"))
+        self.assertTrue(self.f("佩洛伊斯", "佩洛伊斯"))
+
+    def test_long_prefix_truncation_passes(self):
+        """长名字被截断（≥3 字的那个做前缀）要通过。"""
+        self.assertTrue(self.f("佩洛", "佩洛伊斯"))
+
+    def test_same_name_always_passes(self):
+        for n in ("露西", "安比", "本", "简"):
+            self.assertTrue(self.f(n, n), n)
+
+    def test_empty(self):
+        self.assertFalse(self.f("", "露西"))
+        self.assertFalse(self.f("露西", ""))
+
+
+class TestCanonicalNoTailGuess(unittest.TestCase):
+    """`canonical_agent` 不能靠「·」尾巴猜人（星徽·安比 → 安比 是错的）。"""
+
+    def test_no_tail_fallback(self):
+        from core.agent_name import canonical_agent
+        got = canonical_agent("星徽·安比")
+        self.assertNotEqual(got, "安比", "把完整名字拆成尾巴去匹配 = 凭空认定同一个人")
+
+    def test_exact_names_unchanged(self):
+        from core.agent_name import canonical_agent
+        for n in ("安比", "露西", "本", "简"):
+            self.assertEqual(canonical_agent(n), n, n)
