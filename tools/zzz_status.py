@@ -84,6 +84,18 @@ def main() -> int:
     half = set(cfg.get("次选副词条") or [])
 
     vs, inp = Vision(), Input()
+    # **`--json` 就该输出 JSON**（RT-REPORT N-2）。
+    #
+    # 真机实测：`zzz_status --json` 的 stdout 里 27 行全是中文，
+    # **一个 JSON 字符都没有** —— `--json` 实际上只是「写盘开关」。
+    #
+    # 这里把人类可读文本改道到 stderr，stdout 只留 JSON。
+    # Unix 惯例：stdout 给机器，stderr 给人。
+    # （实测确认：全项目没有一处解析它的 stdout —— 都读 state/status_*.json）
+    _real_stdout = sys.stdout
+    if args.json:
+        sys.stdout = sys.stderr
+
     ui = Ui(vs, inp)
     log = Journal(f"体检_{args.agent}")
     ui.start()
@@ -276,11 +288,18 @@ def main() -> int:
                     "unread": list(unread),     # 读取失败的位号
                     "slots": result, "skills": sk,
                     "char_level": char_lv}
-        out.write_text(json.dumps(_stamp(_payload), ensure_ascii=False, indent=2),
+        _data = _stamp(_payload)
+        out.write_text(json.dumps(_data, ensure_ascii=False, indent=2),
                        encoding="utf-8")
         print(f"\n已写入 {out}")
+        # **stdout 只留 JSON**（人类文本已经在 stderr 上了）
+        sys.stdout = _real_stdout
+        print(json.dumps(_data, ensure_ascii=False))
     print()
     print(log.summary())
+    # 兜底恢复 —— 没走写盘分支时 stdout 还指着 stderr
+    if args.json and sys.stdout is not _real_stdout:
+        sys.stdout = _real_stdout
     return 0
 
 
