@@ -523,3 +523,53 @@ class TestResolveKeepsName(unittest.TestCase):
         from core.disc_stats import resolve
         got, rolls = resolve("暴击卒", 7.2, True)
         self.assertIn(got, ("暴击率", "穿透率", "异常掌控"))
+
+
+class TestEquipConfirm(unittest.TestCase):
+    """换装的「真的装上了」判据（BUG-005）。
+
+    ## 原来是什么样的
+
+    ```python
+    hit = vs.find("替换", R_BOTTOM) or vs.find("装备", R_BOTTOM)
+    inp.click(hit["cx"], hit["cy"])
+    log.log(ok=True)
+    print("装备完成")
+    ```
+
+    **没有定位目标盘**（`d` 可能是 None）、**没有回读**、**无条件报成功**。
+    没跑过 `find_disc` 时列表里选中的是游戏默认项，
+    点「替换」= 把一个完全不相关的盘装上去，还打印「装备完成」。
+
+    ## 现在的判据
+
+    `_equip_confirmed(before, after)`：只有看到装备后的状态才算成功。
+    确认不了就返回 False，由调用方报「未确认」并返回非 0 —— 不谎报。
+    """
+
+    def setUp(self):
+        from zzz_equip import _equip_confirmed
+        self.f = _equip_confirmed
+
+    def test_unequip_button_appears(self):
+        """出现「卸下」= 这块已经装身上了（能卸才说明装着）。"""
+        self.assertTrue(self.f("替换", "卸下"))
+        self.assertTrue(self.f("", "卸下"))
+        self.assertTrue(self.f("替换", "替换 卸下"))
+
+    def test_equipped_marker(self):
+        self.assertTrue(self.f("装备", "已装备"))
+        self.assertTrue(self.f("替换", "使用中"))
+
+    def test_unchanged_means_unconfirmed(self):
+        """按钮一模一样 = 确认不了，不能算成功。"""
+        self.assertFalse(self.f("替换", "替换"))
+        self.assertFalse(self.f("装备", "装备"))
+
+    def test_empty_after_is_unconfirmed(self):
+        self.assertFalse(self.f("替换", ""))
+        self.assertFalse(self.f("", ""))
+
+    def test_any_change_counts(self):
+        """按钮文本变了（通常是 替换 → 卸下 的中间态）也算确认。"""
+        self.assertTrue(self.f("替换", "换成别的"))

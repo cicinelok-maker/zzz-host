@@ -133,6 +133,33 @@ def find_disc(ui: Ui, set_name: str, want_level: int = -1,
         inp.wheel(-2, wait=0.45)
     return None
 
+def _bottom_state(ui: Ui) -> str:
+    """底部按钮区的文本快照（用来对比装备前后）。"""
+    ui.vs.frame(force=True)
+    return ui.vs.text(R_BOTTOM).strip()
+
+
+def _equip_confirmed(before: str, after: str) -> bool:
+    """点完「替换/装备」之后，能不能确认装上了。
+
+    ## 判据（宁可报「未确认」，也不要谎报成功）
+
+    1. 底部出现「卸下」——说明这块已经装在身上了（能卸才说明装着）
+    2. 或者出现「已装备」「使用中」等字样
+    3. 按钮文本变化了（`替换` → 别的东西）
+
+    **返回 False 不代表一定失败，只代表「我确认不了」。**
+    这种情况要报未确认 + 非 0 返回码，不能像原来那样直接 `print("装备完成")`。
+    """
+    for kw in ("卸下", "已装备", "装备中", "使用中"):
+        if kw in after and kw not in before:
+            return True
+    if before != after and after:
+        # 按钮文本变了，通常是 替换/装备 → 卸下
+        return True
+    return False
+
+
 def panel_exp(ui: Ui) -> str:
     """从强化面板读经验进度（形如 0/480，排除丁尼那种大数字）"""
     import re as _re
@@ -226,7 +253,16 @@ def main() -> int:
 
     if args.cmd == "upgrade":
         # 满级盘直接跳过（否则会在 MAX 面板里空点）
+        #
+        # BUG-005：原来是 `lv = d["level"] if d else -1`，
+        # 不传 --set 时 `d` 恒 None → `lv` 恒 -1 → `if lv >= 15` 恒假，
+        # **满级保护从来没生效过**。
+        # 现在 d 为 None 时从详情面板文本里读等级。
         lv = d["level"] if d else -1
+        if lv < 0:
+            _m = re.search(r"(?:等级|Lv\.?)\s*(\d{1,2})", current_detail(ui))
+            if _m:
+                lv = int(_m.group(1))
         if lv >= 15:
             print(f"  这块盘已经是 Lv{lv} 满级，跳过")
             log.log("升级", "已满级", ok=True, detail=f"Lv{lv}")
@@ -238,17 +274,44 @@ def main() -> int:
         return {"ok": 0, "nomaterial": 7, "nopanel": 5}[res]
 
     if args.cmd == "equip":
+        # **没定位到目标盘就绝不点按钮**（BUG-005）。
+        #
+        # 原来不管 `d` 是不是 None 都点「替换/装备」——
+        # 没跑过 find_disc 时，列表里选中的是游戏默认项，
+        # 点下去就是把一个完全不相关的盘装上去，而且报「装备完成」。
+        if d is None:
+            print("  ✘ 没有定位到要装的盘，不点「替换/装备」")
+            print("     换装必须能确认目标（--set 指定套装名）；")
+            print("     否则点下去装的是游戏默认选中项，不是你想要的那块。")
+            log.log("装备", "未定位", ok=False, detail="没有目标盘")
+            print()
+            print(log.summary())
+            return 4
+
         # 只点「替换」，绝不点「卸下」——卸下是把装备拆掉，不是换装
         # 按钮文字实测有两种：「替换」或「装备」
-        # 绝不能点「卸下」/「一键卸下」——那是拆装备
+        before = _bottom_state(ui)
         hit = ui.vs.find("替换", R_BOTTOM) or ui.vs.find("装备", R_BOTTOM)
         if not hit:
             print("  底部没有「替换/装备」按钮")
             return 6
         print(f"  点「{hit['text']}」")
         ui.inp.click(hit["cx"], hit["cy"], wait=2.0)
-        log.log("装备", args.set_name, ok=True)
-        print("装备完成")
+
+        # **点完必须验证**（BUG-005：原来这里直接 log ok=True + print 装备完成）
+        after = _bottom_state(ui)
+        if _equip_confirmed(before, after):
+            log.log("装备", args.set_name, ok=True,
+                    detail=f"Lv{d['level']} 已验证")
+            print(f"  ✔ 已装备并确认：{args.set_name} Lv{d['level']}")
+        else:
+            log.log("装备", args.set_name, ok=False, detail="点了但没看到装备后的状态")
+            print("  ✘ 点了「替换/装备」，但界面上没出现装备后的状态")
+            print(f"     底部按钮前后都是：{after[:40]!r}")
+            print("     不能确认装上去了 —— 请人工看一眼。")
+            print()
+            print(log.summary())
+            return 1
 
     print()
     print(log.summary())
