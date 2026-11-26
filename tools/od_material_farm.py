@@ -41,7 +41,13 @@ def build_plans(args) -> list[tuple[str, str, int]]:
         plans.append(("实战模拟室", args.training, n))
     patrol_name = args.patrol_type or args.patrol
     if patrol_name:
-        plans.append(("区域巡防", args.patrol, n))
+        # **用 `patrol_name`，不是 `args.patrol`**（BUG-078）。
+        #
+        # 上一行刚算出「`--patrol-type` 优先」的结果，
+        # 这一行又退回 `args.patrol`。于是用户只传
+        # `--patrol-type 机师与叛甲` 时，计划里记的副本名是**空的**，
+        # 刷本必然失败，而且不报错。
+        plans.append(("区域巡防", patrol_name, n))
     if args.challenge:
         plans.append(("专业挑战室", args.challenge, n))
     if args.hunt:

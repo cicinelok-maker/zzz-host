@@ -2657,3 +2657,67 @@ class TestNoUndefinedVariables(unittest.TestCase):
         self.assertEqual(bad, [],
                          "这些名字读了但没赋值，运行到就是 NameError：\n  "
                          + "\n  ".join(bad))
+
+
+class TestBatteryAndPatrolParsing(unittest.TestCase):
+    r"""两个「输入解析」的坑（BUG-074 / BUG-078）。
+
+    ## BUG-074 电量只有一位数时读不到
+
+    ```python
+    m = re.search(r"(\d{2,3})\s*/\s*240", t)      # ← 至少两位
+    return int(m.group(1)) if m else -1
+    ```
+
+    电量 `9/240` 是**一位数**，匹配不到 → 返回 -1（未知）→
+    上层当「读不到电量」，刷本决策全被跳过。新账号很容易处在个位数电量。
+
+    ## BUG-078 传 `--patrol-type` 时副本名是空的
+
+    ```python
+    patrol_name = args.patrol_type or args.patrol    # ← 算出「优先 patrol_type」
+    if patrol_name:
+        plans.append(("区域巡防", args.patrol, n))     # ← 又退回 args.patrol
+    ```
+
+    只传 `--patrol-type 机师与叛甲` 时，`args.patrol` 是空串，
+    计划里记的副本名就是**空的**，刷本必然失败而且不报错。
+    """
+
+    def _pat(self):
+        import re
+        return re.compile(r"(\d{1,3})\s*/\s*240")
+
+    def test_one_digit_battery(self):
+        p = self._pat()
+        for t, want in (("9/240", "9"), ("0/240", "0"), ("5 / 240", "5")):
+            m = p.search(t)
+            self.assertIsNotNone(m, f"{t!r} 读不到电量")
+            self.assertEqual(m.group(1), want)
+
+    def test_two_three_digit_still_work(self):
+        p = self._pat()
+        for t, want in (("10/240", "10"), ("100/240", "100"), ("240/240", "240")):
+            self.assertEqual(p.search(t).group(1), want)
+
+    def test_leading_digits_dont_break(self):
+        """`1240/240` 这种要从后面开始配，不能得到 `124`。"""
+        p = self._pat()
+        self.assertEqual(p.search("1240/240").group(1), "240")
+
+    def test_garbage_is_unknown(self):
+        self.assertIsNone(self._pat().search("abc"))
+
+    def test_plans_uses_patrol_name(self):
+        """`_plans()` 里必须用 `patrol_name`，不能用 `args.patrol`。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import od_material_farm as omf
+        src = inspect.getsource(omf)
+        i = src.find("patrol_name = args.patrol_type or args.patrol")
+        self.assertGreater(i, -1, "找不到 patrol_name 的计算")
+        tail = src[i:i + 500]
+        self.assertIn('("区域巡防", patrol_name, n)', tail,
+                      "计划里还是用的 args.patrol —— 传 --patrol-type 会是空")
