@@ -222,16 +222,39 @@ def main() -> int:
                 ok=ok, detail=desc)
 
         if args.cmd == "upgrade" and ok:
-            c = vs.find("确定", (700, 850, 1500, 950))
-            if c:
+            # **`--max` 现在真的生效了**（BUG-055）。
+            #
+            # 原来这里只点一次「确定」—— `--max` 定义了（`default=1`）、
+            # 文档里也写着 `--max 3`，但**从来没被读过**。
+            # 于是不管用户传几，每个技能都只升 1 级。
+            #
+            # 现在按 `--max` 循环：升一级 → 回格子 → 重新打开面板看还够不够，
+            # 够了就再升一级，不够（材料/满级）就停。
+            _want = max(1, int(getattr(args, "max", 1) or 1))
+            for _k in range(_want):
+                c = vs.find("确定", (700, 850, 1500, 950))
+                if not c:
+                    print("      找不到「确定」")
+                    break
                 inp.click(c["cx"], c["cy"], wait=1.6)
                 vs.frame(force=True)
-                print(f"      → 已升级")
+                print(f"      → 已升级（{_k + 1}/{_want}）")
                 log.log(name, "升级", ok=True)
                 upgraded += 1
                 back_to_grid(ui)
-            else:
-                print("      找不到「确定」")
+
+                if _k + 1 >= _want:
+                    break
+                # 再开一次面板，看还能不能升
+                vs.frame(force=True)
+                if not open_upgrade_panel(ui, name):
+                    break
+                _info2 = parse_panel(vs)
+                _ok2, _desc2 = judge(_info2["pairs"])
+                if not _ok2:
+                    print(f"      材料不够了，{name} 停在 Lv{_info2['to']}")
+                    inp.key("esc", wait=1.2)
+                    break
         else:
             # 关掉面板
             inp.key("esc", wait=1.2)

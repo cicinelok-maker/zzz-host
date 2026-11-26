@@ -45,16 +45,10 @@ from zzz_equip import open_custom,list_discs,R_DETAIL# noqa: E402
 R_BOTTOM = (0, 900, 1920, 1080)
 
 
-def rolls(sub: str) -> int:
-    # 游戏显示 +N = 升级次数。
-    # 有效权重 = 1（本身存在）+ N（升过几次）
-    m = re.search(r"\+(\d+)", sub)
-    return 1 + (int(m.group(1)) if m else 0)
-
-
-def stat_of(sub: str) -> str:
-    m = re.match(r"\s*([^\s+]+)", sub)
-    return m.group(1) if m else ""
+# **`rolls()` 和 `stat_of()` 已删除**（BUG-059）：
+# 它们是 2026-11-24 统一到 `core.disc_cfg` 之前的旧实现，
+# 之后**再没有任何调用**。留着只会让人以为「这里还有一套算法」，
+# 而两套算法不一致正是这个项目反复出问题的地方。
 
 
 def eff_of(detail_text: str, good, half) -> tuple[float, list[str]]:
