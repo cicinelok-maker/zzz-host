@@ -125,6 +125,38 @@ def judge(label: str, out: str) -> tuple[int, list[str]]:
     return total, notes
 
 
+def _farm_log_path():
+    return BASE / "state" / "farm_log.json"
+
+
+def _farm_count_today() -> int:
+    """今天已经刷过几次本。读不到返回 0。"""
+    try:
+        d = json.loads(_farm_log_path().read_text(encoding="utf-8"))
+        if d.get("date") == time.strftime("%Y-%m-%d"):
+            return int(d.get("count") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def _farm_record(dungeon: str, times: int) -> None:
+    """记一次刷本。**失败不影响主流程**（记账不该让流程崩）。"""
+    try:
+        from core import atomic as _aw
+        today = time.strftime("%Y-%m-%d")
+        n = _farm_count_today() + 1
+        _aw.write_json(_farm_log_path(), {
+            "date": today,
+            "count": n,
+            "last": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "last_dungeon": dungeon,
+            "last_times": times,
+        })
+    except Exception as _e:
+        print(f"  （记刷本日志失败：{_e}）")
+
+
 def _cached_battery() -> int:
     """读缓存的电量，**不碰游戏**。没有/过期返回 -1。
 
@@ -310,6 +342,8 @@ def main() -> int:
     ap.add_argument("--focus-wait", type=float, default=300.0,
                     help="窗口失焦后等多少秒（默认 300），超时存断点退出")
     ap.add_argument("--no-farm", action="store_true")
+    ap.add_argument("--again", action="store_true",
+                    help="今天已经刷过也要再刷（电量回满了想继续刷时用）")
     ap.add_argument("--skip", default="", help="跳过的步骤，逗号分隔：wengine,level,skill,core,disc,farm")
     ap.add_argument("--wengine-times", type=int, default=8, help="音擎批量轮数")
     ap.add_argument("--level-times", type=int, default=10, help="等级批量轮数")
@@ -462,6 +496,17 @@ def main() -> int:
                 print(f"\n--- 刷本 --- [计划] 缓存电量 {n}（可能过期，真跑会重读）")
             else:
                 print("\n--- 刷本 --- [计划] 不读游戏（电量未知，加 --run 才读）")
+        # **今天已经刷过就不再刷**（BUG-091）。
+        #
+        # 原来完全不记「刷过没」—— `zzz_daily --run` 一天跑两次就刷两次，
+        # 第二天的电量被提前烧掉。而这是「每日养成」工具，
+        # 每天的额度应该只花一次。
+        #
+        # 加 `--again` 可以强制再刷（电量回满了想继续刷就用它）。
+        _already = _farm_count_today()
+        if args.run and _already and not getattr(args, "again", False):
+            print(f"  今天已经刷过 {_already} 次了 —— 跳过（要再刷加 --again）")
+            n = -1
         if args.run and n >= FARM_COST:
             # 2026-11-24 合并：od_farm.py 的独有参数已并进 od_material_farm.py，
             # 两个总控统一走同一个刷本入口，避免行为不一致。
@@ -474,7 +519,9 @@ def main() -> int:
                 print(f"    按缺口选：{dungeon} × {times}")
             # **按副本名路由参数** —— 原来一律 `--patrol`，
             # 只能刷区域巡防；芯片/认证章/高维数据/周本全都刷不了。
-            run("刷本", _farm_cmd(dungeon, times), 3600)
+            _ok_farm = run("刷本", _farm_cmd(dungeon, times), 3600)
+            if _ok_farm[0]:
+                _farm_record(dungeon, times)
             # 2026-11-24 修：zzz_mark.py 点的是仓库底部弃置按钮（已失效，是灰的）。
             # 改走实测可用的链路：升级→判定→标记(R键)→拆解。
             # 刷本拿到素材后再转化一次（材料可双向转化，缺什么补什么）

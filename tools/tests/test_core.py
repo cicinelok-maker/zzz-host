@@ -1330,3 +1330,60 @@ class TestGrindGapDetection(unittest.TestCase):
     def test_unspecified_fallback(self):
         """只说「材料不足」没说是什么 —— 才走兜底猜。"""
         self.assertEqual(self.f("材料不足\n"), ["特化芯片"])
+
+
+class TestDailyFarmLog(unittest.TestCase):
+    """`zzz_daily --run` 要记得今天刷过没（BUG-091）。
+
+    ## 原来完全不记
+
+    `zzz_daily --run` 一天跑两次就刷两次本 —— **第二天的电量被提前烧掉**。
+    而这是「每日养成」工具，每天的额度应该只花一次。
+
+    修法：`state/farm_log.json` 记 `{date, count, last, last_dungeon}`，
+    刷本前看今天的 count；已有就跳过（`--again` 可强制）。
+    """
+
+    def setUp(self):
+        import zzz_daily as zd
+        self.zd = zd
+        self.f = zd._farm_log_path()
+        self.bak = self.f.read_text(encoding="utf-8") if self.f.exists() else None
+        self.f.unlink(missing_ok=True)
+
+    def tearDown(self):
+        if self.bak is not None:
+            self.f.write_text(self.bak, encoding="utf-8")
+        else:
+            self.f.unlink(missing_ok=True)
+
+    def test_starts_at_zero(self):
+        self.assertEqual(self.zd._farm_count_today(), 0)
+
+    def test_record_increments(self):
+        self.zd._farm_record("测A", 1)
+        self.assertEqual(self.zd._farm_count_today(), 1)
+        self.zd._farm_record("测B", 2)
+        self.assertEqual(self.zd._farm_count_today(), 2)
+
+    def test_yesterday_does_not_count(self):
+        """昨天的记录不能算今天的。"""
+        import json
+        self.zd._farm_record("测A", 1)
+        d = json.loads(self.f.read_text(encoding="utf-8"))
+        d["date"] = "2000-01-01"
+        self.f.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(self.zd._farm_count_today(), 0)
+
+    def test_record_survives_bad_file(self):
+        """坏 JSON 不能让记账崩掉，也不能误判成「刷过了」。"""
+        self.f.write_text("{半截", encoding="utf-8")
+        self.assertEqual(self.zd._farm_count_today(), 0)
+        self.zd._farm_record("测A", 1)          # 不抛异常
+        self.assertEqual(self.zd._farm_count_today(), 1)
+
+    def test_again_flag_exists(self):
+        import inspect
+        import zzz_daily
+        self.assertIn("--again", inspect.getsource(zzz_daily.main),
+                      "没有 --again —— 电量回满了想再刷就没法强制")
