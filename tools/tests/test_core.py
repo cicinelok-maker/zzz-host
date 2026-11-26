@@ -791,3 +791,71 @@ class TestOcclusionHonesty(unittest.TestCase):
         from core.vision import Vision
         src = inspect.getsource(Vision.__init__)
         self.assertIn("self.occluded", src, "Vision.__init__ 没初始化 occluded")
+
+
+class TestElementFamily(unittest.TestCase):
+    """变体属性角色拿到正确主词条不能被判 bad（BUG-010）。
+
+    ## 原来的问题
+
+    ```python
+    ELEM_DMG = {"火","冰","电","物理","以太"}     # 只有 5 项
+    if full == m and element and e != element:
+        return "bad"
+    ```
+
+    · 烈霜/玄墨/凛刃是冰/以太/物理的**变体**，
+      `冰 != 烈霜` 恒真 → **正确的主词条被判 bad**，那块盘会被换掉
+    · 风属性（维琳娜）根本不在表里
+    · 游戏里同时有 `X伤害加成` 和 `X属性伤害加成` 两种写法
+
+    ## 修的时候还踩了一个坑
+
+    `expand_want()` 把配置里的泛称「属性伤害」展开后，
+    `verdict` 用**子串**匹配 —— 而 `"属性伤害" in "风属性伤害加成"` 为真，
+    于是冰角色会把风伤害认成 good。**现在属性伤害词条优先走精确同族判定。**
+    """
+
+    def setUp(self):
+        from core.disc_main import verdict
+        self.f = verdict
+        self.want = {"5": ["属性伤害", "攻击力"]}
+
+    def _v(self, main, elem):
+        return self.f(main, 5, self.want, elem)[0]
+
+    def test_variant_elements_accept_base(self):
+        """变体属性接受基属性的伤害词条。"""
+        for elem, term in (("烈霜", "冰属性伤害加成"),
+                           ("玄墨", "以太伤害加成"),
+                           ("凛刃", "物理伤害加成")):
+            self.assertEqual(self._v(term, elem), "good",
+                             f"{elem} 角色装「{term}」应判 good")
+
+    def test_base_accepts_variant(self):
+        for elem, term in (("冰", "烈霜属性伤害加成"),
+                           ("以太", "玄墨属性伤害加成"),
+                           ("物理", "凛刃属性伤害加成")):
+            self.assertEqual(self._v(term, elem), "good",
+                             f"{elem} 角色装「{term}」应判 good")
+
+    def test_wrong_element_is_bad(self):
+        """不同族才判 bad —— 而且不能被子串误匹配。"""
+        for elem, term in (("冰", "风属性伤害加成"),
+                           ("以太", "火属性伤害加成"),
+                           ("电", "物理伤害加成")):
+            self.assertEqual(self._v(term, elem), "bad",
+                             f"{elem} 角色装「{term}」应判 bad")
+
+    def test_wind_supported(self):
+        """风属性原来根本不在表里。"""
+        self.assertEqual(self._v("风属性伤害加成", "风"), "good")
+
+    def test_both_term_spellings(self):
+        """游戏里两种写法并存，都要认。"""
+        self.assertEqual(self._v("以太伤害加成", "以太"), "good")
+        self.assertEqual(self._v("以太属性伤害加成", "以太"), "good")
+
+    def test_empty_element_is_unknown(self):
+        """属性读不到时返回 unknown，不要乱判 bad。"""
+        self.assertEqual(self._v("冰属性伤害加成", ""), "unknown")

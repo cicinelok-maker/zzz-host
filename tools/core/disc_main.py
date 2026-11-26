@@ -39,13 +39,61 @@ verdict("火属性伤害加成", 5, want, element="以太")
 from __future__ import annotations
 
 # 属性伤害 → 对应的属性名
-ELEM_DMG = {
-    "火": "火属性伤害加成",
-    "冰": "冰属性伤害加成",
-    "电": "电属性伤害加成",
-    "物理": "物理伤害加成",
-    "以太": "以太伤害加成",
+#
+# **BUG-010**：原来只有 5 项（火/冰/电/物理/以太），而 `disc_meta.json` 里
+# 实际出现的伤害词条有 8 种写法（含 `风属性伤害加成`，以及
+# `以太伤害加成` 和 `以太属性伤害加成` 两种写法并存）。
+#
+# 更要命的是**变体属性**：烈霜 / 玄墨 / 凛刃。
+# 它们不是「另一个属性」，而是冰/以太/物理的变体 ——
+# 烈霜角色装「冰属性伤害加成」是**对的**。
+# 原来用 `e != element` 直接比较，`冰 != 烈霜` 恒真 → 判 bad，
+# 于是**正确的主词条被当成废条**，那块盘会被换掉。
+#
+# 现在按「同族」判定：属性 → 能用的属性名集合。
+ELEM_FAMILY = {
+    "火": ("火",),
+    "冰": ("冰", "烈霜"),
+    "电": ("电",),
+    "物理": ("物理", "凛刃"),
+    "以太": ("以太", "玄墨"),
+    "风": ("风",),
+    "流明": ("流明",),
+    # 反向也认：拿变体名当角色属性时，也接受基属性的词条
+    "烈霜": ("冰", "烈霜"),
+    "玄墨": ("以太", "玄墨"),
+    "凛刃": ("物理", "凛刃"),
 }
+
+
+def elem_terms(element: str) -> set[str]:
+    """该角色属性**能用**的所有伤害词条写法（含同族变体 + 泛称）。
+
+    同时覆盖游戏里并存的两种写法：
+    · `X伤害加成`（以太伤害加成）
+    · `X属性伤害加成`（冰属性伤害加成）
+    """
+    fams = ELEM_FAMILY.get(element, (element,))
+    # **不要把裸「属性伤害」放进来**：它是配置里的模板词，
+    # 而且作为子串会匹配到所有 `X属性伤害加成`（实测让冰角色认下风伤害）。
+    out = set()
+    for f in fams:
+        out.add(f"{f}伤害加成")
+        out.add(f"{f}属性伤害加成")
+    return {_norm(x) for x in out}
+
+
+def elem_family(element: str) -> tuple[str, ...]:
+    return ELEM_FAMILY.get(element, (element,))
+
+
+# 所有出现过的伤害词条写法（用来判断「这是不是一条属性伤害词条」）
+ALL_ELEM_TERMS = set()
+for _fams in ELEM_FAMILY.values():
+    for _f in _fams:
+        ALL_ELEM_TERMS.add(f"{_f}伤害加成")
+        ALL_ELEM_TERMS.add(f"{_f}属性伤害加成")
+# 注意：归一化要在 `_norm` 定义之后做（见文件下方），这里不能算。
 
 # 「属性伤害」这类泛称要按角色属性展开
 GENERIC_ELEM = ("属性伤害", "属性伤害加成")
@@ -63,6 +111,9 @@ def _norm(name: str) -> str:
     return (name or "").replace(" ", "").replace("％", "%").strip()
 
 
+
+# 属性伤害词条的归一化集合（必须在 `_norm` 之后才算）
+_ALL_ELEM_NORM = {_norm(x) for x in ALL_ELEM_TERMS}
 def expand_want(slot: int, want: dict, element: str = "") -> list[str]:
     """把配置里的泛称展开成具体词条名。
 
@@ -73,9 +124,13 @@ def expand_want(slot: int, want: dict, element: str = "") -> list[str]:
     for w in (want.get(str(slot)) or want.get(slot) or []):
         w = _norm(w)
         if w in GENERIC_ELEM:
-            for e, full in ELEM_DMG.items():
-                if e == element:
-                    out.append(full)
+            # **「属性伤害」这类泛称要按角色的属性族展开**（BUG-010）。
+            # 原来只按 `e == element` 精确匹配，于是：
+            #   · 烈霜角色 → 匹配不到「冰」，泛称一条都不展开
+            #   · 风角色   → ELEM_DMG 里根本没有「风」，同样展开不出
+            # 结果这些角色的「属性伤害」主词条永远判不到 good。
+            for term in sorted(elem_terms(element)):
+                out.append(term)
         elif w == "攻击力":
             # 攻击力 既可以指实数也可以指百分比，两个都认
             out.extend(["攻击力百分比", "攻击力"])
@@ -101,6 +156,20 @@ def verdict(main: str, slot: int, want: dict, element: str = "") -> tuple[str, s
     if slot <= 3:
         return "good", "1~3号位主词条固定"
 
+    # **属性伤害词条优先、精确判定**（BUG-010）
+    #
+    # 必须放在下面的子串匹配之前 —— 否则 `属性伤害` 作为子串
+    # 会匹配到所有 `X属性伤害加成`，冰角色会把风伤害认成 good。
+    if m in _ALL_ELEM_NORM:
+        if element == "特殊":
+            return "weak", "该角色伤害属性随队伍变化，这条可能有用"
+        if not element:
+            return "unknown", "读不到角色属性，无法判断这条属性伤害"
+        if m in elem_terms(element):
+            fam = "/".join(elem_family(element))
+            return "good", f"{fam} 族的属性伤害，对{element}角色有效"
+        return "bad", f"这条属性伤害不在{element}的同族里"
+
     wants = [_norm(x) for x in expand_want(slot, want, element)]
     if any(w == m or w in m or m in w for w in wants):
         return "good", "在推荐列表里"
@@ -108,14 +177,8 @@ def verdict(main: str, slot: int, want: dict, element: str = "") -> tuple[str, s
     # 伤害属性会变的角色（蕾米埃尔「属性流变」）：
     # 任何属性伤害都可能有用，但不确定 → weak
     if element == "特殊":
-        for e, full in ELEM_DMG.items():
-            if full == m:
-                return "weak", "该角色伤害属性随队伍变化，这条可能有用"
-
-    # 属性伤害但属性不对 → 完全废
-    for e, full in ELEM_DMG.items():
-        if full == m and element and e != element:
-            return "bad", f"{e}属性伤害对{element}角色无效"
+        if m in _ALL_ELEM_NORM:
+            return "weak", "该角色伤害属性随队伍变化，这条可能有用"
 
     if any(_norm(w) in m or m in _norm(w) for w in WEAK_OK.get(slot, [])):
         return "weak", "不在推荐里，但还能用"
