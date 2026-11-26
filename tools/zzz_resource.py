@@ -164,7 +164,14 @@ def _write_cache(data: dict) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    # **子命令不是必填，默认 check**（BUG-073）。
+    #
+    # 文件头第一条用法就是：
+    #     python tools/zzz_resource.py              # 体检：电量/母盘/镀剂
+    # 而 `required=True` 让这条命令直接 exit 2
+    # （「the following arguments are required: cmd」）——
+    # **最自然的那个写法，文档说能用，实际不能用。**
+    sub = ap.add_subparsers(dest="cmd", required=False)
     # --json 加在每个子命令上（子命令后面写才自然）
     pc = sub.add_parser("check")
     pc.add_argument("--json", action="store_true", help="输出结构化 JSON")
@@ -176,6 +183,10 @@ def main() -> int:
     vs, inp = Vision(), Input()
     ui = Ui(vs, inp)
     ui.start()
+
+    # 没给子命令 -> 默认 check（体检）
+    if not getattr(args, "cmd", None):
+        args.cmd = "check"
 
     if args.cmd == "check":
         return cmd_check(ui, as_json=getattr(args, "json", False))

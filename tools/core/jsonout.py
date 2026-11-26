@@ -34,7 +34,8 @@ from core.jsonout import emit
 # 工具内部收集好数据
 result = {"battery": 83, "mother_discs": 7}
 emit("zzz_resource", data=result, agent="佩洛伊斯",
-     artifacts=["state/resource.json"])
+     artifacts=["state/resource.json"],
+     enabled=args.json)      # ← 不传的话默认不打印（见下面「注意」）
 ```
 
 ## 注意
@@ -53,10 +54,19 @@ _START = time.time()
 def emit(tool: str, data: dict | None = None, agent: str = "",
          artifacts: list[str] | None = None,
          warnings: list[str] | None = None,
-         enabled: bool = True, **extra) -> None:
+         enabled: bool = False, **extra) -> None:
     """打印统一格式的 JSON。
 
-    enabled=False 时什么都不做（用于非 --json 模式）。
+    ## `enabled` 默认 **False**（BUG-072）
+
+    文件头的说明写着「`emit` 只在 `--json` 时才打印，否则什么都不做」——
+    而原来的签名是 `enabled: bool = True`，**文档和安全默认相反**。
+
+    后果：将来谁写 `emit("x", data)` 忘了传 `enabled`，
+    就会在**非 --json 模式**下也吐一段 JSON，把原来的文本输出弄脏，
+    而 `zzz_*` 工具的上层是按文本解析的。
+
+    `enabled=False` 时什么都不做（用于非 --json 模式）。
     """
     if not enabled:
         return

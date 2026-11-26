@@ -2721,3 +2721,94 @@ class TestBatteryAndPatrolParsing(unittest.TestCase):
         tail = src[i:i + 500]
         self.assertIn('("区域巡防", patrol_name, n)', tail,
                       "计划里还是用的 args.patrol —— 传 --patrol-type 会是空")
+
+
+class TestOutputContract(unittest.TestCase):
+    r"""输出契约：**安全默认**要和文档一致（BUG-072 / BUG-073）。
+
+    ## BUG-072 `emit()` 默认 `enabled=True`，和文档相反
+
+    文件头写着「`emit` 只在 `--json` 时才打印，否则什么都不做」，
+    而签名是 `enabled: bool = True`。
+
+    将来谁写 `emit("x", data)` 忘了传 `enabled`，就会在**非 --json 模式**下
+    也吐一段 JSON，把文本输出弄脏 —— 而 `zzz_*` 的上层是按文本解析的。
+
+    -> 默认改成 `False`（安全的那个方向）。
+
+    ## BUG-073 `zzz_resource` 的子命令是必填，和文档相反
+
+    文件头第一条用法是 `python tools/zzz_resource.py`（体检），
+    而 `subparsers(required=True)` 让这条命令**直接 exit 2**。
+
+    **最自然的那个写法，文档说能用，实际不能用。**
+    """
+
+    def test_emit_defaults_to_silent(self):
+        import io
+        import contextlib
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.jsonout import emit
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            emit("测试", data={"a": 1})          # 不传 enabled
+        self.assertEqual(buf.getvalue().strip(), "",
+                         "不传 enabled 时居然打印了 —— 默认应该是「不输出」")
+
+    def test_emit_with_enabled_true_prints(self):
+        import io
+        import contextlib
+        import json as _j
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.jsonout import emit
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            emit("测试", data={"a": 1}, enabled=True)
+        out = buf.getvalue().strip()
+        self.assertTrue(out.startswith("{"), "enabled=True 时没打印 JSON")
+        d = _j.loads(out)
+        self.assertEqual(d.get("tool"), "测试")
+
+    def test_resource_cmd_is_optional(self):
+        """`zzz_resource` 不带子命令时应该默认 check，不能 exit 2。
+
+        ## 用 **AST** 查 `add_subparsers` 的关键字
+
+        第一版写的是 `assertNotIn("required=True", 源码)` ——
+        而我修这个 bug 时**在注释里引用了 `required=True`** 来解释问题，
+        测试就把注释当成了「还没改」。
+
+        （这是自指陷阱的第五次：zzz_cost 的 range、outcome rules 的注释、
+          START_HERE 里解释 od_farm 的说明、DEFAULT_AGENT 的 docstring、
+          现在这个。）
+
+        **文本检查会被「解释问题的文字」污染；AST 不会。**
+        """
+        import ast as _ast
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_resource
+
+        tree = _ast.parse(inspect.getsource(zzz_resource))
+        found = False
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call):
+                continue
+            fn = node.func
+            if getattr(fn, "attr", None) != "add_subparsers":
+                continue
+            found = True
+            for kw in node.keywords:
+                if kw.arg == "required":
+                    self.assertFalse(
+                        getattr(kw.value, "value", True),
+                        "add_subparsers(required=True) —— 不带子命令会 exit 2")
+        self.assertTrue(found, "找不到 add_subparsers 调用")
+        self.assertIn('args.cmd = "check"', inspect.getsource(zzz_resource),
+                      "没有「没给子命令就默认 check」的处理")
