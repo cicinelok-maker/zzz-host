@@ -57,7 +57,7 @@ def save_cache(d: dict) -> None:
     CACHE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _read_name(vs: Vision) -> str:
+def _read_name_raw(vs: Vision) -> str:
     """读左下角的当前角色名。
 
     ## 踩过的三个坑（都是实测证据）
@@ -120,7 +120,48 @@ def _read_name(vs: Vision) -> str:
         for seg in re.findall(r"[\u4e00-\u9fa5]{1,8}", p):
             if len(seg) > len(best) and seg not in NOISE:
                 best = seg
-    return best
+    return _snap_to_library(best)
+
+
+def _snap_to_library(name: str) -> str:
+    """把 OCR 读残的名字**纠正到角色库里的真名**。
+
+    ## 为什么需要（实测）
+
+    扫出来的名单里有个「西」，但用户说那是「露西」——**OCR 把「露」截掉了。**
+
+    ## 规则
+
+    1. 精确命中库里某个名字 → 原样返回
+    2. 否则找「包含这个名字」的库内候选，**取丢失字数最少的**
+       - 「西」⊂「露西」（丢 1 字）和「西」⊂「卢西娅」（丢 2 字）
+       - → 选「露西」，因为截断通常只丢 1 个字
+    3. 有多个候选且丢失字数相同 → **不猜**，原样返回（交给上层处理）
+    4. 库里找不到 → 原样返回
+    """
+    if not name:
+        return name
+    try:
+        import json
+        from pathlib import Path as _P
+        meta = json.loads((_P(__file__).parent / "disc_meta.json")
+                          .read_text(encoding="utf-8"))
+        chars = list((meta.get("角色") or {}).keys())
+    except Exception:
+        return name
+
+    if name in chars:
+        return name
+
+    cands = [c for c in chars if name != c and name in c]
+    if not cands:
+        return name
+
+    # 按「多出来的字数」排序，取最少的
+    cands.sort(key=lambda c: len(c) - len(name))
+    if len(cands) >= 2 and (len(cands[0]) - len(name)) == (len(cands[1]) - len(name)):
+        return name                    # 平局不猜
+    return cands[0]
 
 
 def _describe_stable(vs, tries: int = 2, gap: float = 0.18) -> str:
@@ -392,6 +433,20 @@ def set_hide_owned(ui: Ui, m: "Machine", hide: bool) -> bool:
     inp.key("esc", wait=1.6)
     vs.frame(force=True)
     return state == want
+
+
+def _read_name(vs: Vision) -> str:
+    """读左下角角色名，**并纠正到角色库里的真名**。
+
+    ## 为什么要包一层（踩过）
+
+    `_read_name_raw` 里有三条 return 路径（① 单段匹配 / ② 整行拼接 / ③ 取最长中文段）。
+    我第一版只把「纠正」接在 ③ 的 return 上，
+    **结果 ① 先返回了，纠正压根没执行** —— 扫描输出里还是「西」不是「露西」。
+
+    → 正确做法：**raw 只负责读，纠正放在唯一的出口。**
+    """
+    return _snap_to_library(_read_name_raw(vs))
 
 
 def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
