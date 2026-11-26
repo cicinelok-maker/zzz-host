@@ -252,6 +252,9 @@ def main() -> int:
                     help="角色不在库里也继续（按强攻模板判定，可能不准）")
     ap.add_argument("agent", nargs="?",
                     help="角色名。用 --from-targets 时可以省略")
+    ap.add_argument("--convert", action="store_true",
+                    help="真的跑材料转化（会消耗低阶技能材料，不可逆）。"
+                         "不加则跳过这一步")
     ap.add_argument("--run", action="store_true")
     ap.add_argument("--resume", action="store_true",
                     help="从上次中断的地方继续（读 state/run_checkpoint.json）")
@@ -355,7 +358,12 @@ def main() -> int:
         ("角色等级", "level", [str(HERE / "zzz_level.py"), "up",
                             "--agent", args.agent, "--auto", "--times",
                             str(args.level_times)], 4800),
-        ("材料转化", "skill", [str(HERE / "zzz_convert.py"), "--all", "--confirm"], 1800),
+        # **材料转化会消耗低阶材料（BUG-008）。**
+        # 原来写死 `--all --confirm`，只要 `--run` 就自动转 5 种技能材料。
+        # 现在不加 `--convert` 就置 None（下面的循环会跳过）。
+        ("材料转化", "skill",
+         [str(HERE / "zzz_convert.py"), "--all", "--confirm"]
+         if args.convert else None, 1800),
         ("技能升级", "skill", [str(HERE / "zzz_skill.py"), "upgrade",
                             "--agent", args.agent], 2400),
         # 2026-11-24 补：核心技之前漏在步骤外，但 --skip 里却列了 core
@@ -405,7 +413,12 @@ def main() -> int:
             # 2026-11-24 修：zzz_mark.py 点的是仓库底部弃置按钮（已失效，是灰的）。
             # 改走实测可用的链路：升级→判定→标记(R键)→拆解。
             # 刷本拿到素材后再转化一次（材料可双向转化，缺什么补什么）
-            run("刷后转化", [str(HERE / "zzz_convert.py"), "--all", "--confirm"], 1800)
+            # BUG-008：会消耗低阶材料，不加 --convert 就跳过
+            if args.convert:
+                run("刷后转化",
+                    [str(HERE / "zzz_convert.py"), "--all", "--confirm"], 1800)
+            else:
+                print("  [跳过] 刷后转化（会消耗低阶材料，加 --convert 才做）")
         elif not args.run:
             print("  [计划] 电量够就刷本 → 标记弃置 → 拆解")
         else:
@@ -415,6 +428,11 @@ def main() -> int:
     for label, key, cmd, timeout in steps:
         if key in skip:
             print(f"\n--- {label} --- 跳过")
+            continue
+        if cmd is None:
+            # 步骤表用 None 表示「本次不跑」（比如没加 --convert 的材料转化）。
+            # 必须先判掉 —— 下面会 cmd[0] 取文件名、还会 run(label, cmd, ...)。
+            print(f"\n--- {label} --- 跳过（本次未启用）")
             continue
         if label in _done_before:
             print(f"\n--- {label} --- 断点里已完成，跳过")

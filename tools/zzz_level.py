@@ -115,7 +115,10 @@ def open_panel(ui: Ui) -> str:
 
 
 def read_material(vs: Vision) -> tuple[int, int]:
-    """从面板读认证章数量。返回 (拥有, 需要)，读不到返回 (-1,-1)。
+    """从面板读认证章数量。返回 (拥有, 已选)，读不到返回 (-1,-1)。
+
+    **拥有量是分母。** 面板约定 `0/3` = 已选 0 / 仓库拥有 3
+    （`parse_panel()` 的 docstring 里也写了这条）。
 
     先去掉「LV30/30」「LV30/40」这种等级显示，否则会被误当成材料。
     """
@@ -124,12 +127,26 @@ def read_material(vs: Vision) -> tuple[int, int]:
     pairs = [(int(a), int(b)) for a, b in re.findall(r"(\d+)\s*/\s*(\d+)", t_clean)]
     for a, b in pairs:
         if 1 <= b <= 500:
-            return a, b
+            # **面板约定是「已选 / 拥有」**（见 parse_panel 的 docstring）：
+            #   `0/3` = 已选 0，仓库拥有 3
+            # 所以「拥有几个」是**分母**，不是分子。
+            # 原来返回 (分子, 分母) 让上层拿 `have < req` 比，
+            # 而分子恒 0 → 恒真 → 每次都点「转化获取」吃材料（BUG-007）。
+            return b, a
     return -1, -1
 
 
-def do_ascend(ui: Ui) -> tuple[bool, str]:
+def do_ascend(ui: Ui, allow_convert: bool = False) -> tuple[bool, str]:
     """职级晋升。
+
+    ## allow_convert（BUG-007）
+
+    「转化获取」会**吃掉低阶材料**合成认证章，是不可逆动作。
+    原来无条件做，而 `cmd_read`（文档写「只读」）也调这个函数 ——
+    于是「读一下状态」就把材料吃了。
+
+    现在默认 `allow_convert=False`：只有 `cmd_up`（用户明确要升）才传 True。
+    `cmd_read` 根本不调这个函数了。
 
     **关键：先点「转化获取」自动合成**（用户指出的）。
     转化获取会消耗低阶材料合成认证章；如果还是不够，游戏会显示材料不足。
@@ -149,7 +166,11 @@ def do_ascend(ui: Ui) -> tuple[bool, str]:
         return False, "读不到材料数量"
 
     # 材料不够 → 先转化获取（自动合成）
+    # BUG-007：这一步会吃低阶材料，必须由调用方明确允许
     if have < req:
+        if not allow_convert:
+            return False, (f"认证章不足（拥有 {have} / 已选 {req}），"
+                           f"未开启自动转化")
         btn = vs.find("转化获取", (600, 700, 1600, 950))
         if not btn:
             return False, f"认证章不足 {have}/{req}，且找不到「转化获取」"
@@ -234,10 +255,20 @@ def cmd_read(ui: Ui, m: Machine, agent: str) -> int:
         print("打不开面板")
         return 0
     if kind == "晋升":
+        # **只读：绝不晋升、绝不转化**（BUG-007）
+        #
+        # 原来这里直接调 `do_ascend(ui)`，它会点「转化获取」（吃材料）
+        # 再点「晋升」（真升职级）—— 而 `read` 的文档写的是「只读」。
+        have, sel = read_material(vs)
+        if have < 0:
+            print("  职级晋升：读不到认证章数量")
+        else:
+            print(f"  职级晋升：拥有 {have} 个认证章（面板上是「已选 {sel} / 拥有 {have}」）")
+            print(f"  {'够晋升' if have > 0 else '没有认证章，升不了'}"
+                  f"　（本命令只读，不会晋升也不会转化）")
         t = vs.text((0, 0, 1920, 1080))
-        ok, why = do_ascend(ui)
-        print(f"  职级晋升：{'✔ ' if ok else '✖ '}{why}")
         print(f"  {t[:110]}")
+        ui.inp.key("esc", wait=1.4)
         return 0
     info = parse_panel(vs, cur_level)
     print(f"  升级：{info['from']} → {info['to']}")
@@ -272,7 +303,8 @@ def cmd_up(ui: Ui, m: Machine, agent: str, auto: bool, times: int) -> int:
             break
         if kind == "晋升":
             # 卡等级上限了，先晋升再继续培训
-            ok, why = do_ascend(ui)
+            # `up` 是用户明确要升，允许它自动转化材料
+            ok, why = do_ascend(ui, allow_convert=True)
             if ok:
                 print(f"第 {i + 1} 轮：✔ 职级晋升成功，继续")
                 log.log(f"第{i + 1}轮", "晋升", ok=True)

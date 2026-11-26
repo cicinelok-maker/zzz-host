@@ -447,6 +447,9 @@ def main() -> int:
     print()
     ap = argparse.ArgumentParser()
     ap.add_argument("--battery", type=int, default=240, help="电量预算")
+    ap.add_argument("--convert", action="store_true",
+                    help="刷完之后真的跑材料转化（会消耗低阶材料）。"
+                         "不加只打印命令，不动手")
     ap.add_argument("--run", action="store_true")
     args = ap.parse_args()
 
@@ -461,13 +464,32 @@ def main() -> int:
     print("=" * 56)
     print("第 0 步：材料转化（免费，先做）")
     print("=" * 56)
-    if args.run:
+    # **转化是个会消耗材料的动作（BUG-008）。**
+    #
+    # 原来是 `--run` 就无条件跑 `zzz_convert.py --all --confirm`：
+    # · `--all` 展开成 5 个技能材料各转化一遍
+    # · `--confirm`（「真的点确认，会消耗材料」）写死在命令行里
+    #
+    # 也就是说：只要加了 `--run`，不管刷什么本，都会顺手把 5 种技能材料
+    # 从低阶转化成高阶。没有预览、没有数量控制、没法拒绝。
+    #
+    # 现在：默认**只打印**该跑什么，要动手必须显式加 `--convert`。
+    _conv_cmd = f"{HERE / 'zzz_convert.py'} --all --confirm"
+    if not args.run:
+        print("  [计划] 刷完可跑：" + str(HERE / "zzz_convert.py") + " --all --confirm")
+    elif not args.convert:
+        print("  [跳过] 材料转化（会消耗低阶材料，默认不做）")
+        print("         要转化就加 --convert：")
+        print(f"           python tools/zzz_convert.py --all --confirm")
+    else:
         import os
         import subprocess
         from core.paths import one_dragon_python, one_dragon_env
         PY = one_dragon_python()
         env = dict(os.environ)
         env.update(one_dragon_env())
+        print("  ⚠ 正在转化**全部 5 种**技能材料（--all --confirm）")
+        print("     这一步会消耗低阶材料，且不可逆。")
         try:
             r = subprocess.run([PY, "-u", str(HERE / "zzz_convert.py"),
                                 "--all", "--confirm"],
@@ -483,8 +505,6 @@ def main() -> int:
                     print(f"    {line.strip()}")
         except Exception as e:
             print(f"  转化异常：{e}")
-    else:
-        print("  [计划] 会跑 zzz_convert.py --all --confirm")
 
     rows = plan_rows(need, meta)
 
