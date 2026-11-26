@@ -210,47 +210,24 @@ def current_name(vs: Vision) -> str:
 def reset_to_world(ui: Ui, max_esc: int = 6) -> bool:
     """退回大世界。
 
-    **不要在第一帧判不出来时就按键。** ESC 在大世界会打开菜单，
-    越按画面越不像大世界 —— 实测会反复重试白花 28 秒。
-    所以：先多判几次；确实要按键时，优先用手柄 B（无副作用），ESC 兜底。
+    ## **实现统一在 `core/recovery.py`，这里只做转发**
+
+    原来有两份独立实现：
+    · `pick_agent.reset_to_world`（这份）——
+      **9 个工具在用**（zzz_resource / zzz_mark / zzz_material / read_elements …）
+    · `core.recovery.reset_to_world` —— 我修 bug 时改的是这份
+
+    于是「代理人详情页 ESC/B 都无效，要点左上角返回箭头」那个修复
+    **对 9 个工具一个都没生效**。
+
+    实测后果：`zzz_resource check` 停在装备页上，
+    这份实现在那儿连按 6 次手柄 B 都没用，白等 **228 秒**
+    （正常 106 秒）。
+
+    **同一个函数写两遍，改一份等于没改。** 现在只留一处。
     """
-    vs, inp = ui.vs, ui.inp
-
-    # 第一轮：只判不按。画面可能还在过渡 —— 先等稳再判。
-    try:
-        vs.wait_still(quiet=0.3, timeout=2.5)
-    except Exception:
-        time.sleep(0.4)
-    if _describe_stable(vs, tries=3, gap=0.4) == "世界":
-        return True
-
-    for i in range(max_esc):
-        # 用手柄 B（Xbox 的返回键，走 vgamepad 虚拟手柄）。
-        # **不调 pad_mode()** —— 那个函数发的是「方向键上」，
-        # 作用是把游戏切到手柄态，但副作用是会移动菜单的选中项。
-        #
-        # 代价：Ui.start() 把游戏切成了键鼠态，所以第一次 B 可能被游戏
-        # 当成「切换到手柄态」的信号吃掉，要按 2~3 次才真生效。
-        # 实测（朋友那边）从主菜单退出去要按 3 次。
-        #
-        # **这个取舍是有意的**：慢一点 vs 可能移动菜单选中项。
-        # B 在任何界面都无副作用，方向键上有。所以选慢。
-        try:
-            inp.pad_tap("b", wait=1.0)
-        except Exception:
-            inp.key("esc", wait=1.5)      # 手柄不可用才用 ESC
-
-        # **等画面真的稳了再判**，不要固定睡 0.15 秒就重判 ——
-        # 实测界面切换有约 3 秒的过渡画面，期间判出来是「未知界面」。
-        # 之前等太短，会在过渡期连按 B，退过头或把按键喂给过渡动画。
-        try:
-            vs.wait_still(quiet=0.3, timeout=3.0)
-        except Exception:
-            time.sleep(0.4)
-        if _describe_stable(vs, tries=3, gap=0.5) == "世界":
-            return True
-
-    return _describe_stable(vs, tries=3, gap=0.2) == "世界"
+    from core.recovery import reset_to_world as _impl
+    return _impl(ui, limit=max(6, max_esc * 2))
 
 
 def _scan_portraits(vs: Vision) -> list[tuple[int, int]]:
