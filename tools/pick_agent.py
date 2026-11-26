@@ -58,22 +58,69 @@ def save_cache(d: dict) -> None:
 
 
 def _read_name(vs: Vision) -> str:
-    """读左下角的当前角色名（纯中文 2~6 字）"""
+    """读左下角的当前角色名。
+
+    ## 踩过的三个坑（都是实测证据）
+
+**1 只允许纯中文 2~6 字 → 带「·」的名字全丢**
+       `简·杜` / `星徽·比利` / `妮可·德玛拉` 的 `·` 不在 `[\u4e00-\u9fa5]`。
+
+**2 OCR 在名字后面带等级符号 → 整条被拒**
+       实测原文：`'简☆ | 2'`、`'凯撒 | ☆'`、`'比利 | ☆双'`。
+       `☆` 不在允许集里，`fullmatch` 直接失败。
+
+**3 单字名 + 回退正则要求 `{2,8}` → 单字名救不回来**
+       「简」就一个字，`re.findall(r"[\u4e00-\u9fa5]{2,8}")` 捞不到。
+       **这就是「简·杜」扫不到的真正原因** （诊断脚本打出 `'简☆ | 2'` 才发现的）。
+
+    ## 现在的做法
+
+    1. **先剥掉等级符号和数字**：`☆★◇◆○●` + 数字 + 空白
+    2. 允许 **1~12 个中文字**（单字名存在：简 / 雅 / 西）
+    3. 用 UI 词黑名单挡噪音（`非` `山` `人` `友` `目` 这种纯图标碎片）
+    4. 整行拼接兜底（OCR 可能把名字拆成多段）
+    """
     vs.frame(force=True)
     t = vs.text(R_NAME)
+
+    BAD = ("等级", "UID", "装备", "技能", "基础", "面板", "WIKI", "代理人")
+    # 纯图标/界面碎片，不是名字
+    NOISE = {"非", "山", "人", "友", "目", "具", "力", "口", "十", "土"}
+
+    def _clean(x: str) -> str:
+        x = re.sub(r"[☆★◇◆○●◯◎✦✧＊*]", "", x)
+        x = re.sub(r"\d+", "", x)
+        x = x.replace(" ", "").strip()
+        return x
+
+    cands: list[str] = []
     for part in t.split("|"):
         p = part.strip()
-        if not p or "等级" in p or "UID" in p:
+        if not p or any(b in p for b in BAD):
             continue
-        if re.fullmatch(r"[\u4e00-\u9fa5]{2,6}", p):
+        c = _clean(p)
+        if c:
+            cands.append(c)
+
+    NAME_RE = re.compile(r"^[\u4e00-\u9fa5·・.‧•∙]{1,12}$")
+
+    # ① 单段匹配（允许单字名）
+    for p in cands:
+        if NAME_RE.fullmatch(p) and p not in NOISE and re.search(r"[\u4e00-\u9fa5]", p):
             return p
-    return ""
 
+    # ② 整行拼接（OCR 把名字拆成多段时）
+    joined = _clean("".join(cands))
+    if joined and NAME_RE.fullmatch(joined) and joined not in NOISE:
+        return joined
 
-def current_name(vs: Vision) -> str:
-    if not anchors.is_(vs, "代理人列表"):
-        return ""
-    return _read_name(vs)
+    # ③ 取最长中文段（允许单字）
+    best = ""
+    for p in cands:
+        for seg in re.findall(r"[\u4e00-\u9fa5]{1,8}", p):
+            if len(seg) > len(best) and seg not in NOISE:
+                best = seg
+    return best
 
 
 def _describe_stable(vs, tries: int = 2, gap: float = 0.18) -> str:
@@ -94,6 +141,12 @@ def _describe_stable(vs, tries: int = 2, gap: float = 0.18) -> str:
         if i + 1 < tries:
             time.sleep(gap)
     return last
+
+
+def current_name(vs: Vision) -> str:
+    if not anchors.is_(vs, "代理人列表"):
+        return ""
+    return _read_name(vs)
 
 
 def reset_to_world(ui: Ui, max_esc: int = 6) -> bool:
@@ -149,9 +202,27 @@ def _scan_portraits(vs: Vision) -> list[tuple[int, int]]:
     for it in vs.items(R_GRID):
         if not it["text"].startswith("等级"):
             continue
-        pts.append((it["cx"], it["cy"] + AGENT_LABEL_DY))
-    pts.sort(key=lambda p: (p[1], p[0]))
-    return pts
+        x = int(it["cx"])
+        y = int(it["cy"]) + AGENT_LABEL_DY
+
+        # **必须夹在屏幕内** —— 实测「等级1」的标签在 y=31，
+        # 减掉 AGENT_LABEL_DY(-40) 之后是 y=-9，点到屏幕外去了。
+        # 屏幕上沿那一行的角色因此永远点不到
+        # （新抽到的低级角色往往就排在那儿 → 「简·杜」就是这么漏的）。
+        y = max(4, min(1076, y))
+        x = max(4, min(1916, x))
+        pts.append((x, y))
+
+    # 去重（夹取后可能产生重复点）
+    seen = set()
+    uniq = []
+    for p in pts:
+        if p in seen:
+            continue
+        seen.add(p)
+        uniq.append(p)
+    uniq.sort(key=lambda p: (p[1], p[0]))
+    return uniq
 
 
 def _select_once(ui: Ui, m: Machine, name: str, verbose: bool) -> bool:
@@ -248,6 +319,13 @@ def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
     # 但步长必须保持 `wheel(-3)`：试过改成 -5，行会被跳过（14 → 13 个，丢了波可娜）。
     #
     # 所以：**步长不动（实测 -3 不跳行），只放开轮数上限。**
+    # **先滚回顶部** —— 列表是有滚动位置的，如果上次停在中间，
+    # 上面的角色永远看不到（截图确认：顶部两行会被切掉）。
+    # 这一步是「简·杜」漏掉的直接原因之一。
+    for _ in range(12):
+        inp.wheel(6, wait=0.5)
+    vs.frame(force=True)
+
     MAX_ROUNDS = 15
     _last_sig = ""
     for round_i in range(MAX_ROUNDS):
