@@ -54,7 +54,22 @@ class Vision:
     def __init__(self, ocr=None, cache_ms: int = 120):
         self.win = live.find_window()
         if not self.win:
-            raise RuntimeError("没找到游戏窗口")
+            # **游戏没开是「最常见、最可预期」的情况，不该变成未捕获异常。**
+            #
+            # 真机实测（RT-REPORT N-1）：8 个碰游戏的工具全是
+            # `RuntimeError: 没找到游戏窗口` + traceback + exit=1。
+            # 而 exit=1 在码表里是「一般失败」——**调用方无从区分
+            # 「游戏没开」和「代码有 bug」**，于是不知道是该启动游戏还是报障。
+            #
+            # 这里改成 SystemExit(5)：
+            # · 5 = 等窗口/条件超时（AGENTS.md 码表里最接近的一个）
+            # · SystemExit 继承 BaseException，**不会被 `except Exception` 吞掉**
+            # · 一处修掉全部 8 个工具，不用逐个加守卫
+            print("✘ 没找到绝区零窗口。", file=sys.stderr)
+            print("  游戏没开就先跑：python tools/zzz_launch.py", file=sys.stderr)
+            print("  （退出码 5 = 等窗口/条件超时，见 AGENTS.md 码表）",
+                  file=sys.stderr)
+            raise SystemExit(5)
         self.ocr = ocr or self._make_ocr()
         self._img = None
         self._img_t = 0.0

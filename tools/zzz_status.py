@@ -262,7 +262,18 @@ def main() -> int:
         # 打时间戳 —— 三天前读的状态算出来的缺口是错的，但文件看着正常。
         # 见 core/state.py 的 check_fresh()。
         from core.state import stamp as _stamp
+        # **下游读的字段必须在这里写全**（RT-REPORT 确认第 1 条 / N-3）。
+        #
+        # 真机实测：文件里只有 agent/total/slots/skills/char_level，
+        # 而 `zzz_who` 读 `blue_total`、`zzz_plan`/`zzz_grind` 读 `unread`，
+        # 于是 `zzz_who` 的「主词条×N」告警**永久失效**，
+        # `zzz_grind` 的进展永远是 `0.0 → 0.0`。
+        #
+        # 而且这不是「旧文件残留」——文件内容三次运行一字不变，
+        # 说明这两个键**从来没被写过**。
         _payload = {"agent": args.agent, "total": total,
+                    "blue_total": blue_count,   # 游戏里标蓝的副词条个数
+                    "unread": list(unread),     # 读取失败的位号
                     "slots": result, "skills": sk,
                     "char_level": char_lv}
         out.write_text(json.dumps(_stamp(_payload), ensure_ascii=False, indent=2),

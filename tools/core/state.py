@@ -92,11 +92,22 @@ STALE_HOURS = {
 _TS_KEY = "_ts"
 
 
+# **状态文件的 schema 版本**（RT-REPORT 最小修复第 2 条）。
+#
+# 真机实测踩过：写入方只写 5 个字段、读取方读 8 个，
+# 而文件看着完全正常 —— 于是「字段从没被写过」被当成「旧文件残留」，
+# 谁都没发现契约从未实现。
+#
+# 有版本号之后，读取方可以判断「这份文件的写入方是不是我期望的版本」。
+SCHEMA = 2
+
+
 def stamp(data: dict) -> dict:
-    """给状态字典打时间戳（原地改 + 返回，方便链式）。"""
+    """给状态字典打时间戳 + schema 版本（原地改 + 返回，方便链式）。"""
     if isinstance(data, dict):
         import time as _t
         data[_TS_KEY] = _t.strftime("%Y-%m-%dT%H:%M:%S")
+        data["_schema"] = SCHEMA
     return data
 
 
