@@ -387,7 +387,7 @@ python tools/audit_patterns.py
 改完代码或怀疑有问题时：
 
 ```bash
-python tools/run_tests.py             # 单元测试（判盘/止损/调律/名字/等级匹配/换装确认/成本表，76 个用例）
+python tools/run_tests.py             # 单元测试（判盘/止损/调律/名字/等级匹配/换装确认/成本表，138 个用例）
 python tools/smoke_test.py             # 全部工具的语法 + 导入
 python tools/audit_self.py             # 有没有违反项目自己的规矩
 python tools/audit_stale_frame.py      # 读旧帧（改画面后立刻读）

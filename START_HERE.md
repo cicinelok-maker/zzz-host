@@ -1,80 +1,103 @@
-# 早上好 —— 30 秒版
+# 从这里开始
 
-## 现在在跑什么
+绝区零的角色养成自动化：**说一个角色名，它自己把能做的都做了**——
+读装备、算缺口、升级音擎/技能/等级/核心技、调律训练驱动盘、刷本补材料、换装。
 
-每天 **20:00** 会自动跑一轮（任务名 `ZZZ养成托管`）：
-体检 → 扫描 20 个角色真实等级 → 算缺口/ETA → 执行能执行的升级 → 写记录。
-游戏没开的话它会自己启动。
+不是库，是命令行程序。所有交互都通过 `python tools/xxx.py` + 文件输出。
 
-昨晚实测 7 轮，7 轮全绿，最后一轮是完整路径：
+---
 
-```
-✔ 启动游戏 10s  ✔ 体检 4s  ✔ 扫描 145s  ✔ 导入 2s  ✔ 计划 2s  ✔ 执行 97s
-```
+## 前置条件（缺一个就跑不了）
 
-## 刷本：已跑通（2026-11-22 00:05 首次全自动进战斗）
+| 要求 | 说明 |
+|---|---|
+| Windows | 本工具用 `ImageGrab` + 虚拟手柄，只支持 Windows |
+| 游戏分辨率 1920×1080 | 坐标按这个分辨率标定 |
+| 游戏窗口化或全屏窗口化 | 独占全屏抓不到画面 |
+| OneDragon 已安装 | 提供 OCR 和刷本能力 |
+| 管理员权限 | 注入键鼠需要 |
 
-`tools/od_material_farm.py` 不开 GUI 就能把缺口写进 OneDragon「体力刷本」并触发它。
-（原来的 `od_farm` 已于 2026-11-24 合并进这里，参数一致。）
-现在能一路走到自动战斗，跑到电量耗尽自己回大世界：
-
-```
-实战模拟室·共鸣测试 → 向前移动准备战斗 → 开始自动战斗
-→ 战斗结果-完成 → 回到快捷手册 → 下一轮 → 电量不足 → 返回大世界
-执行结果：成功  剩余电量 40
-```
+一条命令查全部：
 
 ```powershell
-python tools/od_material_farm.py --plan-only    # 只写配置
-python tools/od_material_farm.py --run          # 触发 OneDragon（已实测可跑）
-python tools/loop.py --farm            # 连刷本一起跑
+python tools/check_config.py
 ```
 
-刷本前会先跑 `tools/to_world.py` 退回大世界 —— 停在仓库/装备页时，
-OneDragon 第一步「打开快捷手册」就会失败，整段白跑（昨晚 359s 全废就是这个）。
+**它会告诉你缺什么。** 退出码 0 = 环境齐了；非 0 = 有致命项（缺 `disc_meta.json`、角色没有定位等）。
 
-## 代理人晋升：现在可以直接交给刷本
+---
 
-以前这张表要手动打，现在同一件事有一条命令：
+## 五条命令跑通
 
 ```powershell
-python tools/od_material_farm.py --agent 莱卡恩 --times 10 --run    # 代理人晋升 · 击破演练 ×10
-python tools/od_material_farm.py --agent 苍角  --times 5  --run     # 支援演练 ×5
+python tools/check_config.py                     # 1 环境
+python tools/zzz_launch.py                       # 2 游戏（约 72 秒，没开就自己启动）
+python tools/zzz_status.py 佩洛伊斯 --json        # 3 读状态（**必须先做**）
+python tools/zzz_disc_daily.py 佩洛伊斯 --offline # 4 出计划（秒出，不碰游戏）
+python tools/zzz_daily.py 佩洛伊斯 --run          # 5 真跑
 ```
 
-它写进 OneDragon 的「体力刷本」再自己开跑（导航 + 自动战斗 + 回大世界）。
-电量不够会自己用储蓄电量，还不行就停在「剩余电量 N」并回大世界。
+第 3 步是必须的：不盘点一次，后面所有工具都读不到数据。
 
-| 角色 | 缺多少 | 刷哪个本 | 次数 |
-|---|---|---|---|
-| 莱卡恩 | 0/20 | 击破认证章 | 10 |
-| 安比 | 0/20 | 击破认证章 | 10 |
-| 苍角 | 3/12 | 支援认证章 | 5 |
+想看账号上有哪些角色：`python tools/zzz_who.py --scan`
 
-一共 **25 次 ≈ 500 电量**。20:00 那轮会自动把能升的升掉。
+---
 
-## 想看状态
+## 常用命令
 
 ```powershell
-cd C:\Users\<user>\Documents\deepseek-harness\default-workspace\zzz-host
-python status.py
+# 只出计划，不花任何东西（约 1 秒，不碰游戏）
+python tools/zzz_daily.py 佩洛伊斯
+
+# 真跑一轮（会花电量和材料）
+python tools/zzz_daily.py 佩洛伊斯 --run
+
+# 刷到毕业为止（每轮看进展，没进展就补材料）
+python tools/zzz_grind.py 佩洛伊斯 --run
+
+# 看还差多少
+python tools/zzz_who.py 佩洛伊斯
+
+# 只做某几步（跳过其他）
+python tools/zzz_daily.py 佩洛伊斯 --run --skip wengine,core,disc,farm
 ```
 
-## 想临时关掉自动跑
+**不确定会发生什么就跑不带 `--run` 的版本**——所有工具都支持「计划模式」，
+计划模式**保证零副作用**（不读游戏、不写文件、不花资源）。
 
-```powershell
-schtasks /change /tn "ZZZ养成托管" /disable   # 关
-schtasks /change /tn "ZZZ养成托管" /enable    # 开
-```
+---
 
-## 已知限制（不用怀疑是自己没弄好）
+## 一定要知道的几件事
 
-- 打副本得手动：手柄没有快捷手册入口，键盘 F2 被反作弊过滤
-- 商城买不到材料：那是付费时装商店
-- 11 个角色里只有 4 个读到完整三维数据，ETA 因此偏乐观（系统会自己标注）
-- 如果游戏停在**登录/协议页**，自动化进不去，需要你手动过
+**① 退出码有意义**
 
-## 文件在哪
+| 码 | 含义 | 你该做什么 |
+|---|---|---|
+| 0 | 成功 | — |
+| 1 | 一般失败 | 看输出 |
+| 2 | 配置错 | 跑 `check_config.py` |
+| 3 | 选不中角色 | 确认角色名 |
+| 4 | 到不了目标界面 | 游戏可能卡在某个面板 |
+| 5 | 找不到游戏窗口 | 启动游戏 |
 
-- `status.py` 一屏状态 · `daily.ps1` 每日入口 · `TASKS.md` 全部决策与踩坑记录
-- `README.md` 系统说明 · `legacy/` 早期实验脚本
+完整表见 [AGENTS.md](AGENTS.md)。
+
+**② 哪些操作不可逆**
+
+会消耗资源的：`--run`、`zzz_convert.py --confirm`、`run_dismantle.py --run`、
+`zzz_disc_cycle.py`。这些工具**不加确认参数就只出计划**，加了才真做。
+
+**③ 数据都在 `state/` 目录**
+
+`status_<角色>.json` 是最重要的中间产物，所有分析都基于它。
+
+---
+
+## 出问题了
+
+1. `python tools/check_config.py` —— 先看环境
+2. `python tools/zzz_status.py <角色> --json` —— 看能不能读到数据
+3. 卡在某个界面：`python tools/zzz_launch.py --check` 看状态
+
+更多细节见 [AGENTS.md](AGENTS.md)（面向调用方）、
+[TOOLS.md](TOOLS.md)（工具清单）、[DISC_LOOP.md](DISC_LOOP.md)（驱动盘养成的原理）。

@@ -1484,18 +1484,33 @@ class TestDocsMatchCode(unittest.TestCase):
         # 到**仓库根**要三个 parent。（我第一版只写两个，
         # 于是去找 tools/AGENTS.md —— 不存在。）
         root = pathlib.Path(__file__).resolve().parent.parent.parent
-        have = {p.stem for p in (root / "tools").glob("*.py")}
-        have |= {p.stem for p in (root / "tools" / "_legacy").glob("*.py")}
+        # **要用 rglob**：`tools/core/*.py` 也是工具的一部分，
+        # 只用 glob("*.py") 会把 core/ 下的全漏掉
+        # （我第一版就漏了，于是 `tools/core/game_cfg.py` 被误报成不存在）。
+        have = {p.stem for p in (root / "tools").rglob("*.py")}
         bad = {}
         for md in self.DOCS:
             f = root / md
             if not f.exists():
                 continue
             ghosts = set()
+            # 占位符不算：文档里会写 `python tools/xxx.py` 表示「随便哪个工具」
+            PLACEHOLDER = {"xxx", "xx", "x", "角色名", "agent", "<agent>"}
             for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                # ① zzz_xxx.py / od_xxx.py 形式
                 for m in re.finditer(r"\b(zzz_[a-z0-9_]+|od_[a-z_]+)\.py", line):
                     if m.group(1) not in have:
                         ghosts.add(m.group(1))
+                # ② tools/xxx.py 形式 —— **不限前缀**（曾经漏过 loop.py / to_world.py）
+                #
+                # `have` 存的是**文件名主干**（不含目录），所以这里拿 stem 比。
+                for m in re.finditer(r"tools/([\w/]+)\.py", line):
+                    path_in = m.group(1)                 # 例如 "core/vocab" 或 "loop"
+                    stem = path_in.split("/")[-1]
+                    if stem in PLACEHOLDER:
+                        continue
+                    if stem not in have:
+                        ghosts.add(f"tools/{path_in}.py")
             if ghosts:
                 bad[md] = sorted(ghosts)
         self.assertEqual(bad, {}, f"文档提到了不存在的工具：{bad}")
