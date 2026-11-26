@@ -480,7 +480,9 @@ def main() -> int:
         dungeon = "机师与叛甲"
         if _fp.get("farms"):
             dungeon = _fp["farms"][0]["dungeon"]
-        print(f"   副本：{dungeon}（{len(dungeons)} 个候选）")
+        # **`dungeons` 从来没定义过**（BUG-068）—— 这行会在刷本时 NameError。
+        # 候选来自 `_fp["farms"]`（缺口计划里算出来的副本列表）。
+        print(f"   副本：{dungeon}（{len(_fp.get('farms') or [])} 个候选）")
         ok, out = run("od_material_farm.py",
                       ["--patrol", dungeon, "--times", str(n), "--run"], 5400)
         if "挑战完成" not in out:
@@ -517,7 +519,9 @@ def main() -> int:
         for _t in _tune["targets"]:
             _slot = _t["slot"]
             _cur = next((x.get("set") for x in slots if x.get("slot") == _slot), "")
-            _want = _plan_sets.get(_slot) or _cur or _cfg.get("四件套") or ""
+            # **`_cfg` 是 `cfg` 的笔误**（BUG-068）—— 调律那段会 NameError。
+            # `cfg = cfg_of(args.agent)` 在上面（读角色配装）。
+            _want = _plan_sets.get(_slot) or _cur or cfg.get("四件套") or ""
             if not _want:
                 print(f"   {_slot}号位：不知道要哪个套装，跳过调律")
                 continue

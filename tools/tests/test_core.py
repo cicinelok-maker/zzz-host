@@ -2583,3 +2583,77 @@ class TestReleaseSensitiveGate(unittest.TestCase):
         from audit_ship import SENSITIVE_PATTERNS
         self.assertGreaterEqual(len(SENSITIVE_PATTERNS), 5,
                                 "敏感文件模式太少，等于没有")
+
+
+class TestNoUndefinedVariables(unittest.TestCase):
+    """函数里「读了但从没赋值、也不是全局/内建」的名字 = 运行时 NameError。
+
+    ## 为什么加
+
+    这一类 bug **能骗过所有现有检查**：
+    · `compile()` 过 —— 语法没错
+    · `audit_ship` 的 import 过 —— 定义在函数里，不 import 不执行
+    · `smoke_test` 的 `--help` 过 —— 走不到那行
+    · 包在 `try/except` 里时**连运行时都不报**
+
+    实测抓到三个：
+    · `zzz_disc_daily` 的 `dungeons`（刷本时崩）
+    · `zzz_disc_daily` 的 `_cfg`（笔误，应为 `cfg`，调律时崩）
+    · `zzz_daily` 的 `_snap_before`（**在整轮养成跑完之后**崩，活干完报告丢了）
+
+    `_snap_before` 更隐蔽：它被包在 `try/except Exception` 里，
+    于是「本轮变化（全部系统）」这个功能**从来没工作过**，
+    只打印一句「（全系统对比跳过：name '_snap_before' is not defined）」。
+    """
+
+    def _scan(self, root):
+        import ast as _ast
+        GLOBALS = set()
+        for f in root.rglob("*.py"):
+            if "_legacy" in str(f):
+                continue
+            try:
+                t = _ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in _ast.walk(t):
+                if isinstance(node, _ast.Name) and isinstance(node.ctx, _ast.Store):
+                    GLOBALS.add(node.id)
+                elif isinstance(node, (_ast.FunctionDef, _ast.ClassDef)):
+                    GLOBALS.add(node.name)
+                elif isinstance(node, _ast.alias):
+                    GLOBALS.add((node.asname or node.name).split(".")[0])
+        import builtins
+        BUILTIN = set(dir(builtins)) | {"__file__", "__name__", "__doc__"}
+        bad = []
+        for f in sorted(root.rglob("*.py")):
+            if "_legacy" in str(f) or f.name.startswith("test"):
+                continue
+            try:
+                tree = _ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for fn in _ast.walk(tree):
+                if not isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    continue
+                loaded, stored = {}, set()
+                for node in _ast.walk(fn):
+                    if isinstance(node, _ast.Name):
+                        if isinstance(node.ctx, _ast.Store):
+                            stored.add(node.id)
+                        else:
+                            loaded.setdefault(node.id, node.lineno)
+                    elif isinstance(node, _ast.arg):
+                        stored.add(node.arg)
+                for v, ln in loaded.items():
+                    if v not in stored and v not in BUILTIN and v not in GLOBALS:
+                        bad.append(f"{f.name}:{fn.name} 变量 {v!r} (L{ln})")
+        return sorted(set(bad))
+
+    def test_no_undefined_names(self):
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = self._scan(root)
+        self.assertEqual(bad, [],
+                         "这些名字读了但没赋值，运行到就是 NameError：\n  "
+                         + "\n  ".join(bad))

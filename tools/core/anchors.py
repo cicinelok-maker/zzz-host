@@ -379,13 +379,7 @@ def describe(vision) -> str:
             _DESC_CACHE.clear()
         _DESC_CACHE[vk] = out
     return out
-    out = fp_name or "未知界面"
-    if vk is not None:
-        # 只留最近几帧，别无限涨
-        if len(_DESC_CACHE) > 32:
-            _DESC_CACHE.clear()
-        _DESC_CACHE[vk] = out
-    return ou
+
 
 def at(vision, target: str, tries: int = 3, need: int = 2,
        gap: float = 0.12) -> bool:

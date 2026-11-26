@@ -43,7 +43,9 @@ for f in files:
     for m in CONST_RE.finditer(read(f)):
         name = m.group(1)
         val = re.split(r"\s+#", m.group(2).strip())[0]
-        if name in ("PY", "OUT", "HERE", "BASE", "ENV_EXTRA", "UID"):
+        # ENV_EXTRA 已从白名单去掉（BUG-069）—— 那个变量从来没定义过，
+        # 把它列进「允许的全局」等于把错误设成合法。
+        if name in ("PY", "OUT", "HERE", "BASE", "UID"):
             continue
         consts[name].append((f.name, val))
 

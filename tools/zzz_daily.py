@@ -415,6 +415,22 @@ def main() -> int:
         battery = charge_now()
         print(f"  电量 {battery}/240")
 
+        # **跑之前先拍一张快照**（BUG-068 相关）。
+        #
+        # 收尾那段用 `_snap_before` 和 `_snap_after` 对比「本轮变化」，
+        # 但 `_snap_before` **从来没被赋值过** —— 于是那个 try 每次都走 except，
+        # 打印「（全系统对比跳过：name '_snap_before' is not defined）」。
+        #
+        # 也就是说：**「本轮变化（全部系统）」这个功能从未工作过**，
+        # 而且因为包在 try 里，谁也没发现。
+        try:
+            _snap_before = _snap_all(args.agent)
+            _nb = sum(1 for v in _snap_before.values() if v is not None)
+            print(f"  已记录跑前快照（{_nb}/{len(_snap_before)} 项可读）")
+        except Exception as _e:
+            _snap_before = {}
+            print(f"  （跑前快照失败：{_e}）")
+
         print("\n--- 缺口 + 电量规划 ---")
         try:
             from core.charge_plan import report as _crep
