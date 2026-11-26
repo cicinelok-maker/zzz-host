@@ -48,6 +48,27 @@ import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 PY = sys.executable
 # state/ 和 od_test/ 是 core/__init__.py 自己建的（运行时产物目录），
 # targets.json 是故意发布的空模板 —— 这三个都不算泄漏。
+# **按模式拦，不只按名字**（BUG-050）。
+#
+# `EXPECT_ABSENT` 是一份**名字黑名单** —— 只有写进去的文件会被检查。
+# 新出现一个没登记过的敏感文件（比如以后加了 `ai_config.json` 带 key），
+# 它照样会被打进发布集，而且**没人知道**。
+#
+# 这里按文件名/路径模式再拦一道。这份清单宁可宽一点：
+# 误报的代价是「多看一眼」，漏报的代价是「把密钥发到 GitHub」。
+SENSITIVE_PATTERNS = [
+    (r"(^|[/\\])state[/\\]", "运行时数据（含 UID / chat_id / 养成记录）"),
+    (r"(^|[/\\])feishu_conf\.json$", "飞书凭证"),
+    (r"(^|[/\\])paths\.json$", "本机路径配置（不含 .example）"),
+    (r"(^|[/\\])config\.local\.json$", "本机配置"),
+    (r"(^|[/\\])\.env", "环境变量文件"),
+    (r"(^|[/\\])\.git[/\\]", "git 内部文件"),
+    (r"\.(pem|key|pfx|p12|keystore)$", "私钥/证书"),
+    (r"(^|[/\\])id_(rsa|dsa|ecdsa|ed25519)", "SSH 私钥"),
+    (r"(secret|credential|apikey|api_key)", "名字里带密钥字样"),
+    (r"(^|[/\\])journal[/\\]", "运行日志（含坐标和截图记录）"),
+]
+
 EXPECT_ABSENT = ["zzz_host.py", "status.py", "graduate.py", "od_bridge.py",
                  "paths.json", "tools/feishu.py", "tools/capture_fp_we.py",
                  "roster.json", "feishu_conf.json"]
@@ -163,6 +184,26 @@ def main() -> int:
         fails.append("文件泄漏")
     else:
         print(f"  ✔ {len(EXPECT_ABSENT)} 个都不在")
+
+    # **按模式再扫一遍**（BUG-050）
+    import re as _re
+    hits = []
+    for rel in files:
+        r = str(rel).replace("\\", "/")
+        for pat, why in SENSITIVE_PATTERNS:
+            if _re.search(pat, r):
+                hits.append((r, why))
+                break
+    print()
+    print("⑤ 发布集里有没有敏感文件（按模式）")
+    print("-" * 74)
+    if hits:
+        for r, why in hits:
+            print(f"  ✘ {r}  ← {why}")
+        print(f"\n→ {len(hits)} 个不该进发布集的文件")
+        fails.append("敏感文件")
+    else:
+        print(f"  ✔ {len(SENSITIVE_PATTERNS)} 条模式都没命中")
 
     print()
     print("=" * 74)

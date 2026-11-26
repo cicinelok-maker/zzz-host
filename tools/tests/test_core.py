@@ -2535,3 +2535,51 @@ class TestExitCodeNumbering(unittest.TestCase):
                       "超时没有返回 7（全局码「等进入游戏超时」）")
         self.assertNotIn("return 3", tail,
                          "超时还在返回 3 —— 会和「选不中角色」撞号")
+
+
+class TestReleaseSensitiveGate(unittest.TestCase):
+    """发布集里不该有敏感文件 —— 而且必须**按模式**查（BUG-050）。
+
+    ## 原来只有名字黑名单
+
+    ```python
+    EXPECT_ABSENT = ["zzz_host.py", "status.py", ..., "feishu_conf.json"]
+    leaked = [x for x in EXPECT_ABSENT if (tmp / x).exists()]
+    ```
+
+    只有写进这份清单的文件会被检查。**新出现一个没登记过的敏感文件
+    （比如以后加了带 key 的配置文件），它照样会被打进发布集，而且没人知道。**
+
+    现在 `audit_ship` 多了一道 `SENSITIVE_PATTERNS`（10 条），
+    按路径/文件名模式再扫一遍。
+    """
+
+    def _hit(self, path: str):
+        import re
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from audit_ship import SENSITIVE_PATTERNS
+        r = path.replace("\\", "/")
+        return next((why for pat, why in SENSITIVE_PATTERNS
+                     if re.search(pat, r)), None)
+
+    def test_sensitive_files_blocked(self):
+        for p in ("state/feishu.json", "tools/feishu_conf.json", "paths.json",
+                  "config.local.json", ".env", "deploy/id_rsa", "cert.pem",
+                  "my_secret_config.json"):
+            self.assertIsNotNone(self._hit(p), f"{p} 没被拦下来")
+
+    def test_legitimate_files_pass(self):
+        """别把正常文件也拦了 —— 误报会让人养成「这个红灯不用管」的习惯。"""
+        for p in ("paths.example.json", "targets.json", "tools/disc_meta.json",
+                  "tools/zzz_daily.py", "README.md", "admin.ps1"):
+            self.assertIsNone(self._hit(p), f"{p} 被误拦了")
+
+    def test_patterns_not_empty(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from audit_ship import SENSITIVE_PATTERNS
+        self.assertGreaterEqual(len(SENSITIVE_PATTERNS), 5,
+                                "敏感文件模式太少，等于没有")
