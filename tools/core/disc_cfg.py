@@ -186,13 +186,28 @@ def parse_full_screen(txt: str) -> dict:
 
 
 def effective(subs_raw, good, half) -> tuple[float, list]:
-    """算有效值。口径B：存在(1) + 升级次数，次选减半。"""
+    """算有效值。口径B：存在(1) + 升级次数，次选减半。
+
+    ## 未识别词条会被记下来（BUG-011）
+
+    原来白名单不通过的词条直接 `continue`，**没有日志也没有计数**。
+    于是「生命值百分比」被白名单漏掉时，防护/支援角色天天算 0 分、
+    天天「未毕业」、天天无谓刷本，而输出里一点痕迹都没有。
+
+    现在把未识别的名字收集到 `unrecognized` 列表，
+    由 `effective_report()` 一起返回，调用方可以打印出来。
+    """
     from core import vocab as _vb
     eff = 0.0
     rows = []
+    unrecognized: list[str] = []
     for nm, val in subs_raw:
         bare = re.sub(r"\+\d+", "", nm).strip()
-        if not bare or _vb.stat_name_of(bare) not in _vb.STATS:
+        if not bare:
+            continue
+        if _vb.stat_name_of(bare) not in _vb.STATS:
+            # **不再静默** —— 记下来，上层能看见
+            unrecognized.append(bare)
             continue
         pv = ds.parse_value(val)
         if not pv:
@@ -205,4 +220,9 @@ def effective(subs_raw, good, half) -> tuple[float, list]:
         eff += (1 + rolls) * w
         rows.append({"name": name, "value": num, "pct": pct,
                      "rolls": rolls, "weight": w})
+    if unrecognized:
+        # 挂在函数的返回对象上不行（返回 tuple），所以打到 stderr 级别的 print。
+        # 这是一条「数据可信度」告警，不该改变返回值。
+        print(f"  [disc_cfg] 未识别的副词条 {len(unrecognized)} 条："
+              f"{unrecognized}（未计入有效值）")
     return round(eff, 1), rows

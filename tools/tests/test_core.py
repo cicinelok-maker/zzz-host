@@ -456,3 +456,70 @@ def pathlib_path():
     """tools 目录（测试文件在 tools/tests/ 下）。"""
     from pathlib import Path
     return Path(__file__).resolve().parent.parent
+
+
+class TestStatWhitelist(unittest.TestCase):
+    """白名单必须覆盖生命/防御的百分比版本（BUG-011）。"""
+
+    def test_pct_variants_present(self):
+        from core import vocab
+        for n in ("生命值百分比", "防御力百分比", "攻击力百分比",
+                  "生命值", "防御力", "攻击力"):
+            self.assertIn(n, vocab.STATS, f"{n} 不在 STATS 里")
+
+    def test_shield_character_scores(self):
+        """防护角色靠生命值百分比/防御力百分比算分，不能是 0。"""
+        from core.disc_cfg import effective
+        good = {"生命值百分比", "防御力百分比"}
+        eff, rows = effective([("生命值百分比+1", "6%")], good, set())
+        self.assertGreater(eff, 0, f"生命值百分比 算出 0 分，明细={rows}")
+        names = [r["name"] for r in rows]
+        self.assertIn("生命值百分比", names)
+
+
+class TestRollsCap(unittest.TestCase):
+    """强化次数封顶 5（BUG-013）。"""
+
+    def test_real_roll_values(self):
+        from core.disc_stats import resolve
+        CASES = [
+            ("防御力百分比", 4.8, True, 0), ("防御力百分比", 9.6, True, 1),
+            ("防御力百分比", 14.4, True, 2), ("防御力百分比", 28.8, True, 5),
+            ("生命值百分比", 3.0, True, 0), ("生命值百分比", 18.0, True, 5),
+            ("攻击力百分比", 6.0, True, 1), ("暴击率", 7.2, True, 2),
+            ("暴击伤害", 14.4, True, 2), ("穿透值", 9.0, False, 0),
+        ]
+        for hint, v, pct, want in CASES:
+            got, rolls = resolve(hint, v, pct)
+            self.assertEqual(got, hint, f"{hint} {v} 被改成了 {got}")
+            self.assertEqual(rolls, want, f"{hint} {v} rolls={rolls}，期望 {want}")
+
+    def test_never_exceeds_five(self):
+        """任何值都不该算出 rolls > 5。"""
+        from core.disc_stats import resolve
+        for hint, v in [("攻击力百分比", 18.0), ("攻击力百分比", 21.0),
+                        ("攻击力百分比", 24.0), ("暴击率", 24.0),
+                        ("生命值百分比", 99.0)]:
+            _, rolls = resolve(hint, v, True)
+            self.assertLessEqual(rolls, 5, f"{hint} {v}% 算出 rolls={rolls}")
+
+
+class TestResolveKeepsName(unittest.TestCase):
+    """名字和数值对不上时，保留名字，不换属性。
+
+    属性名是固定词表，OCR 读错数字的概率远高于读错名字。
+    换成别的属性会让角色按错误的词条算分。
+    """
+
+    def test_keeps_name_on_impossible_value(self):
+        from core.disc_stats import resolve
+        got, rolls = resolve("防御力百分比", 7.2, True)
+        self.assertEqual(got, "防御力百分比",
+                         f"被换成了 {got}（7.2% 不是防御力百分比的有效 roll）")
+        self.assertEqual(rolls, 0, "对不上的值应该记 0 次，不要编造")
+
+    def test_unknown_name_still_falls_back(self):
+        """名字读残（不在词表）时才允许按数值挑。"""
+        from core.disc_stats import resolve
+        got, rolls = resolve("暴击卒", 7.2, True)
+        self.assertIn(got, ("暴击率", "穿透率", "异常掌控"))

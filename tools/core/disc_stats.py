@@ -95,7 +95,10 @@ def rolls_from_value(value: float, is_pct: bool) -> dict[str, int]:
     """给定数值，返回 {可能的属性名: roll 次数}"""
     out = {}
     for name, base in SUB_BASE.items():
-        for n in range(0, 8):
+        # BUG-013：真实上限是「1 次初始 + 5 次强化」= 基础值的 6 倍，
+        # 即 n ∈ {0..5}。原来 `range(0, 8)` 允许 n=6,7，
+        # 把 24%（= 2.4 × 10）解析成 rolls=7，单条被抬到 8 分。
+        for n in range(0, 6):
             target = base * (1 + n)
             if abs(value - target) < 0.06 * max(1.0, target * 0.02):
                 out[name] = n
@@ -131,7 +134,24 @@ def resolve(name_hint: str, value: float, is_pct: bool) -> tuple[str, int]:
             return flat[0], cands[flat[0]]
         if hint in ("攻击力", "生命值", "防御力") and hint in flat:
             return hint, cands[hint]
-    # 兜底：取候选里第一个
+    # **名字是已知属性时，以名字为准，不要换属性。**
+    #
+    # 走到这里说明「名字和数值对不上」。属性名是固定词表，
+    # OCR 读错名字的概率远低于读错数字 —— 所以相信名字，rolls 记 0。
+    #
+    # 原来的兜底是 `k = list(cands)[0]`，随便挑一个候选：
+    # 实测 `resolve('防御力百分比', 7.2, True)` → `('暴击率', 2)`，
+    # 于是防护角色的防御词条被按暴击率算分，等于白算。
+    if hint in SUB_BASE:
+        base = SUB_BASE[hint] or 1.0
+        n_exact = value / base - 1.0
+        n_round = round(n_exact)
+        if abs(n_exact - n_round) < 0.08 and 0 <= n_round <= 5:
+            return hint, n_round
+        # 数值明显对不上这个名字 → 保留名字，rolls 记 0（可信度低）
+        return hint, 0
+
+    # 名字不在词表里（OCR 读残）才退回按数值挑
     k = list(cands)[0]
     return k, cands[k]
 
