@@ -55,6 +55,13 @@ def main() -> int:
         print("  → OneDragon 可能版本太旧，或不是完整包")
         return 1
 
+    # **致命项计数**（BUG-110）。
+    #
+    # 原来「缺 disc_meta.json」「角色连定位都没有」这两项只打 ✘，
+    # 末尾照样 `return 0` —— RT 实测：「25 行全 ⚠，却 exit=0」。
+    # 于是 `python tools/check_config.py; echo $?` 永远看不出环境有问题。
+    fatal = 0
+
     # 检查 disc_meta 和角色
     meta_p = HERE / "disc_meta.json"
     print()
@@ -85,9 +92,11 @@ def main() -> int:
             print(f"      要精确的话在 disc_meta.json 补「四件套/主词条/有效副词条」")
         if broken:
             print(f"  ✘ 连定位都没有 {len(broken)} 个：{broken}")
-            print(f"      → 这些角色会被当成强攻处理，可能判错")
+            print(f"      → 这些角色会被当成强攻处理，**可能判错、刷错本**")
+            fatal += 1
     else:
-        print("✘ 缺 tools/disc_meta.json")
+        print("✘ 缺 tools/disc_meta.json —— 没有任何角色配置，工具全跑不了")
+        fatal += 1
 
     # 检查飞书（本机可选，发布版不含）
     print()
@@ -129,6 +138,10 @@ def main() -> int:
     except Exception as e:
         print(f"· 管理员权限：查不到（{type(e).__name__}）")
 
+    if fatal:
+        print()
+        print(f"✘ 有 {fatal} 个致命问题 —— 上面的 ✘ 行必须处理才能正常跑")
+        return 1
     return 0
 
 

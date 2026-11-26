@@ -77,8 +77,26 @@ def check_status_schema(agent: str, d: dict, path=None) -> list[str]:
 
 
 def load_status(agent: str = "") -> dict:
-    """读 state/status_{agent}.json。"""
+    """读 state/status_{agent}.json。
+
+    **角色名先归一化**（BUG-95）。
+    原来直接用调用方传进来的名字，而 `status_*.json` 是按**库里的正式名**建的。
+    于是 `load_status("佩洛依斯")`（错一个字）会去找
+    `status_佩洛依斯.json` —— 不存在 → 提示「先跑
+    `python tools/zzz_status.py 佩洛依斯 --json`」—— **而那条命令同样会失败**，
+    因为它也会用这个名字去查角色库。提示等于没用。
+    """
     agent = current_agent(agent)
+    try:
+        from core.agent_name import canonical_agent
+        canon = canonical_agent(agent)
+        if canon and canon != agent:
+            if not (STATE / f"status_{agent}.json").exists() \
+                    and (STATE / f"status_{canon}.json").exists():
+                print(f"  （「{agent}」按「{canon}」找状态文件）")
+            agent = canon
+    except Exception:
+        pass
     p = STATE / f"status_{agent}.json"
     if not p.exists():
         _hint(agent, "状态数据")
