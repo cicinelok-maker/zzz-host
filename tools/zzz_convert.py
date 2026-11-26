@@ -74,8 +74,23 @@ def goto_skill(ui: Ui, m: Machine, agent: str) -> bool:
 def open_convert_dialog(ui: Ui, slot: int) -> dict | None:
     """进技能详情 → 技能强化 → 转化获取，返回对话框信息"""
     vs, inp = ui.vs, ui.inp
+    # **少读格子时位置索引会整体错位**（BUG-94）。
+    #
+    # `locate.skill_cells()` 返回的是**位置列表**（按 x 排序的前 5 个）。
+    # 如果只读出 4 个（某个图标没识别到），`live[2]`（3 号技能）
+    # 拿到的是**第 3 个被认出的格子**，可能其实是 4 号或 5 号 ——
+    # 于是「点 3 号技能」实际点了别的技能，然后**转化/升级花掉了材料**。
+    #
+    # 现在：只有认全 5 个才用实测坐标，否则退回固定坐标
+    # （固定坐标是按 1920x1080 标定的，本项目也强制这个分辨率）。
     live = locate.skill_cells(vs)
-    xy = live[slot - 1] if 0 <= slot - 1 < len(live) else SKILL_CELLS.get(slot)
+    if len(live) == len(SKILL_CELLS):
+        xy = live[slot - 1]
+    else:
+        if live:
+            print(f"    ⚠ 只认出 {len(live)}/5 个技能格，位置索引会错位，"
+                  f"改用固定坐标")
+        xy = SKILL_CELLS.get(slot)
     if not xy:
         return None
     inp.click(xy[0], xy[1], wait=1.8)

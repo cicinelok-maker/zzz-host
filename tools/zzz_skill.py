@@ -129,8 +129,22 @@ def open_upgrade_panel(ui: Ui, name: str) -> bool:
     vs, inp = ui.vs, ui.inp
     back_to_grid(ui)                      # 必须先确保在格子页
     idx = list(SKILLS).index(name)
+    # **少读格子时位置索引会整体错位**（BUG-94，和 zzz_convert 同一个毛病）。
+    #
+    # `live` 是「按 x 排序的前 5 个被认出的格子」。
+    # 只认出 4 个时，`live[2]`（第 3 个技能）拿到的是**第 3 个被认出的格子**，
+    # 可能其实是第 4 个 —— 于是「升闪避」实际升了支援技，材料就这么花了。
+    #
+    # 只有认全 5 个才用实测坐标（它确实会漂 20+ px，值得用），
+    # 否则退回写死的 SKILLS 坐标。
     live = locate.skill_cells(vs)
-    xy = live[idx] if idx < len(live) else SKILLS[name]
+    if len(live) == len(SKILLS):
+        xy = live[idx]
+    else:
+        if live:
+            print(f"  ⚠ 只认出 {len(live)}/{len(SKILLS)} 个技能格，"
+                  f"位置索引会错位，改用固定坐标")
+        xy = SKILLS[name]
     inp.click(xy[0], xy[1], wait=1.8)
     vs.frame(force=True)
     hit = vs.find("技能强化", (1200, 950, 1920, 1080))

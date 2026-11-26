@@ -53,6 +53,9 @@ def find_all_above(vs, pattern: str, dy: int, region=(0, 0, 1920, 1080)):
     return out
 
 
+# 技能格的标准 x（1920x1080 标定），用来把 OCR 读到的格子归位
+SKILL_SLOTS_X = [984, 1158, 1332, 1503, 1679]
+
 def skill_cells(vs) -> list[tuple[int, int]]:
     """技能页五个格子。
 
@@ -65,7 +68,23 @@ def skill_cells(vs) -> list[tuple[int, int]]:
         if re.fullmatch(r"\d{2}12", it["text"].strip()):
             cells.append((it["cx"], it["cy"] + SKILL_LABEL_DY))
     cells.sort()
-    return cells[:5]
+
+    # **按 x 就近归到「第几格」，不要靠列表下标**（BUG-94）。
+    #
+    # 原来直接返回 `cells[:5]` —— 少读一格就整体错位：
+    # 读到 4 个时，下标 2（第 3 格）拿到的是第 3 个**被认出的**格子，
+    # 而它可能其实是第 4 格。
+    #
+    # 现在用「离标准槽位 x 最近」来定身份，少读格子也不会串位。
+    slots_x = SKILL_SLOTS_X
+    if not slots_x:
+        return cells[:5]
+    by_slot: dict[int, tuple[int, int]] = {}
+    for cx, cy in cells:
+        k = min(range(len(slots_x)), key=lambda i: abs(slots_x[i] - cx))
+        by_slot.setdefault(k + 1, (cx, cy))
+    # 按槽位号顺序返回（保持和以前一样的「列表」形状，但没有错位风险）
+    return [by_slot[k] for k in sorted(by_slot)]
 
 
 def core_nodes(vs) -> dict[str, tuple[int, int]]:
