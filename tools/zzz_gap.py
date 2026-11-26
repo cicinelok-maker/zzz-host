@@ -200,19 +200,27 @@ def where_to_farm(mat: str, role: str = "", attr: str = "") -> dict | None:
                 "每次电量": 40, "每次产出": 5, "周本": False}
 
     # ---------- boss 材料（恶名狩猎）----------
-    # 这些名字不在任何「分类词」里，用 materials.json 的对照表 + 游戏内 boss 名反查
+    #
+    # **踩过的坑**：`恶名狩猎_材料对照` 的结构是
+    #     {boss: {"材料": "刻命残蜕", "类别": ..., "来源": ...}}
+    # 我原来写 `if m in mats` —— mats 是 dict，`in` 查的是 key（"材料"/"类别"/"来源"），
+    # **永远匹配不上 value**，所以「刻命残蜕」查不到。
+    # 正确写法：`mats.get("材料") == m`。
     ddata = _load("dungeon_data.json")
     boss_map = (ddata.get("恶名狩猎_材料对照") or {})
-    for boss, mats in boss_map.items():
-        if m in mats:
+    for boss, info in boss_map.items():
+        if isinstance(info, dict) and info.get("材料") == m:
             return {"副本": f"恶名狩猎·{boss}", "类型": "boss材料",
                     "每次电量": 60, "每次产出": 2, "周本": True}
 
     # ---------- 驱动盘套装 ----------
-    mx = _load("materials.json")
-    dungeons = (mx.get("驱动盘") or {}).get("副本") or {}
-    if m in dungeons:
-        return {"副本": f"区域巡防·{dungeons[m]}", "类型": "驱动盘",
+    # 权威来源是 `disc_meta.json` 的「套装副本」（zzz_farm_plan 也用这张），
+    # 不是 materials.json —— 我原来假设 materials.json 有「驱动盘.副本」，
+    # **实际只有「盘」和「镀剂」两个 key，没有套装映射。**
+    dmeta = _load("disc_meta.json")
+    set_dungeon = (dmeta.get("套装副本") or {})
+    if m in set_dungeon:
+        return {"副本": f"区域巡防·{set_dungeon[m]}", "类型": "驱动盘",
                 "每次电量": 60, "每次产出": 2, "周本": False}
 
     return None
