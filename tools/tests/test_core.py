@@ -1671,3 +1671,89 @@ class TestGrindStatusCache(unittest.TestCase):
         sig = inspect.signature(zg.status)
         self.assertIn("max_age", sig.parameters,
                       "status() 没有 max_age 参数")
+
+
+class TestDocumentedCommandsWork(unittest.TestCase):
+    """AGENTS.md 里写的命令，参数形式必须真的被接受。
+
+    ## 为什么加这条
+
+    BUG-183 的教训：AGENTS.md 说「这 6 个有 `--json`」，实际 6 个里 5 个没有，
+    照着调用会 `unrecognized arguments: --json` → **exit 2**，
+    而 exit 2 在这套工具里的语义是「配置缺失」，很容易误判。
+
+    **文档里的每条命令都是对用户的一个承诺。** 这条测试逐条兑现承诺：
+    把 AGENTS.md 里 `python tools/xxx.py ...` 的每一行拿出来，
+    **加上 `--help` 跑一遍**，只要求 argparse 不报 "unrecognized arguments"
+    （不真执行，所以安全）。
+    """
+
+    def test_all_documented_commands_accept_their_args(self):
+        import re
+        import pathlib
+        import subprocess
+        import sys
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        doc = root / "AGENTS.md"
+        if not doc.exists():
+            self.skipTest("AGENTS.md 不在当前集合里")
+        text = doc.read_text(encoding="utf-8")
+        cmds = []
+        for line in text.splitlines():
+            m = re.match(r"\s*(python tools/[\w.]+\.py[^\s#]*(?:\s+[^\s#][^#]*)?)", line)
+            if not m:
+                continue
+            c = m.group(1).strip()
+            # 跳过带占位符的（没法测）
+            if "<" in c or "XXX" in c or "角色名" in c:
+                continue
+            if c not in cmds:
+                cmds.append(c)
+        self.assertGreater(len(cmds), 5, "一条命令都没提取到，正则可能失效了")
+
+        bad = []
+        for c in cmds:
+            parts = c.split()
+            tool = root / parts[1]
+            if not tool.exists():
+                bad.append((c, "文件不存在"))
+                continue
+            # **只测 `zzz_*` 工具**。
+            #
+            # 踩过两次：
+            # ① `run_tests.py` 不用 argparse，`--help` 被当普通参数 →
+            #    **真的跑起了整个测试套件**（含这条测试自己），120 秒超时 + 近似递归
+            # ② `audit_ship.py` 同样不是 argparse 程序，`--help` 会
+            #    **真的跑整套发布验证**（要几分钟，而且内部又会调 run_tests）
+            #
+            # 规则很简单：**文档里教用户「带参数运行」的都是 `zzz_*` 工具**，
+            # 其余是自检脚本，没有「参数形式」这回事。
+            if not tool.name.startswith("zzz_"):
+                continue
+            try:
+                _src = tool.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "argparse" not in _src:
+                continue
+            # `--help` 应该是**瞬间**的。给 15 秒 ——
+            # 超时说明这条文档命令会真的干活（比如某个工具把 --help 当普通参数
+            # 然后开始执行），那本身就是个问题，要报出来而不是静默跳过。
+            try:
+                r = subprocess.run([sys.executable, "-u", str(tool)]
+                                   + parts[2:] + ["--help"],
+                                   capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   cwd=str(root), timeout=15)
+            except subprocess.TimeoutExpired:
+                bad.append((c, "--help 15 秒没返回，说明它会真干活"))
+                continue
+            except (OSError, subprocess.SubprocessError) as e:
+                bad.append((c, f"跑不起来：{e}"))
+                continue
+            err = (r.stderr or "")
+            if "unrecognized arguments" in err:
+                bad.append((c, err.strip().splitlines()[-1]))
+        self.assertEqual(bad, [],
+                         "这些文档命令的参数形式不被接受：\n"
+                         + "\n".join(f"  {c}\n    {e}" for c, e in bad))
