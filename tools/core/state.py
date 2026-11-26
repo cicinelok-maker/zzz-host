@@ -66,6 +66,14 @@ def check_status_schema(agent: str, d: dict, path=None) -> list[str]:
     """
     miss = [k for k in REQUIRED_STATUS_KEYS if k not in d]
     if not miss:
+        # **字段齐了不代表数据可信**（BUG-130）。
+        # `_valid` 缺省时按「老文件」放行，但明确 False 就要喊出来。
+        if d.get("_valid") is False:
+            n_read = d.get("_slots_read", len(d.get("slots") or []))
+            print(f"  ⚠ 「{agent}」的状态快照**无效**：只读到 {n_read}/6 个位号")
+            print(f"     total=0 可能是「读取失败」而不是「真的没盘」。")
+            print(f"     重跑一次：python tools/zzz_status.py {agent} --json")
+            return ["_valid"]
         return []
     where = f"（{path.name}）" if path is not None else ""
     print(f"  ⚠ 「{agent}」的状态文件{where}缺字段：{miss}")

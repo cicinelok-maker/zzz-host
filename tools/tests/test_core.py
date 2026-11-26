@@ -955,3 +955,46 @@ class TestDataConsistency(unittest.TestCase):
         missing = sorted(set(ds.SUB_BASE) - set(vocab.STATS))
         self.assertEqual(missing, [],
                          f"这些副词条不在 vocab.STATS 里，会被静默丢弃：{missing}")
+
+
+class TestSnapshotValidity(unittest.TestCase):
+    """「全空快照」和「读取失败」必须能区分（BUG-130）。
+
+    ## 两种 total=0 长得一样
+
+    ```
+    丽娜：slots=0（一个都没读到）      ← 读取失败/不完整
+    苍角：slots=6，6 个全空位          ← 真的没装盘
+    ```
+
+    读取方只看 `total` 分不出来，会把「读取失败」当成「角色没盘」，
+    于是 `zzz_who` 报「未毕业」、`zzz_grind` 觉得「没进展」——
+    而且**两者都会一直循环下去**。
+    """
+
+    def test_invalid_snapshot_detected(self):
+        from core.state import check_status_schema
+        # 字段齐但 _valid=False → 要算无效
+        d = {"total": 0, "slots": [], "blue_total": 0,
+             "_valid": False, "_slots_read": 0}
+        self.assertEqual(check_status_schema("测试", d), ["_valid"])
+
+    def test_genuinely_empty_snapshot_is_valid(self):
+        """6 个空位 + total=0 是**有效**快照，不能报警。"""
+        from core.state import check_status_schema
+        d = {"total": 0, "slots": [{"slot": i, "set": ""} for i in range(1, 7)],
+             "blue_total": 0, "_valid": True, "_slots_read": 6}
+        self.assertEqual(check_status_schema("测试", d), [])
+
+    def test_old_file_without_valid_flag_passes(self):
+        """老文件没有 `_valid` 字段 —— 不能因此挡住它。"""
+        from core.state import check_status_schema
+        d = {"total": 20.5, "slots": [{"slot": 1}], "blue_total": 3}
+        self.assertEqual(check_status_schema("测试", d), [])
+
+    def test_zzz_status_writes_valid_flag(self):
+        import inspect
+        import zzz_status
+        src = inspect.getsource(zzz_status.main)
+        self.assertIn('"_valid"', src, "zzz_status 没写 _valid")
+        self.assertIn('"_slots_read"', src, "zzz_status 没写 _slots_read")

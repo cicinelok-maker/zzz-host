@@ -283,7 +283,17 @@ def main() -> int:
         #
         # 而且这不是「旧文件残留」——文件内容三次运行一字不变，
         # 说明这两个键**从来没被写过**。
+        # **快照有效性标记**（BUG-130）。
+        #
+        # 两种「total=0」在数据上长得一样，含义完全不同：
+        #   丽娜：slots=0（一个都没读到）        ← 读取失败/不完整
+        #   苍角：slots=6，6 个全空位            ← 真的没装盘
+        # 读取方只看 total 分不出来，会把「读取失败」当成「角色没盘」，
+        # 于是 `zzz_who` 报「未毕业」、`zzz_grind` 觉得「没进展」。
+        _valid = bool(result) and len(unread) < len(result)
         _payload = {"agent": args.agent, "total": total,
+                    "_valid": _valid,
+                    "_slots_read": len(result),
                     "blue_total": blue_count,   # 游戏里标蓝的副词条个数
                     "unread": list(unread),     # 读取失败的位号
                     "slots": result, "skills": sk,
