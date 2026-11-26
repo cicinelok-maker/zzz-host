@@ -1972,3 +1972,56 @@ class TestResolutionCheck(unittest.TestCase):
         src = inspect.getsource(check_config.main)
         self.assertIn("1920", src, "check_config 不看分辨率")
         self.assertIn("游戏窗口", src, "check_config 不报窗口状态")
+
+
+class TestAdminIsFatal(unittest.TestCase):
+    """没有管理员权限要算**致命**，不能只是 ⚠。
+
+    ## 为什么
+
+    没有管理员时，Windows UIPI 会**静默丢弃**所有按键/点击 ——
+    工具不报错，而是白等到超时（实测 150~254 秒）。
+
+    `ui.start()` 已经正确拒绝了（`SystemExit(2)` + 清晰提示），
+    但 `check_config` 只打印 `⚠ 管理员权限：没有` 然后 **exit 0** ——
+    于是「环境检查通过」这句话是假的。
+
+    「缺一个就跑不了」的检查项就该报失败。
+    """
+
+    def test_admin_missing_counts_as_fatal(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import check_config
+        src = inspect.getsource(check_config.main)
+        i = src.find("管理员权限：没有")
+        self.assertGreater(i, -1, "没有「管理员权限：没有」的提示")
+        tail = src[i:i + 700]
+        self.assertIn("fatal += 1", tail,
+                      "管理员缺失没计入致命项 —— check_config 会照样 exit 0")
+
+    def test_admin_hint_points_to_existing_script(self):
+        """提示里让用户跑 `.\\admin.ps1`，那个文件必须真的存在且在发布集里。"""
+        import sys
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        sys.path.insert(0, str(root / "tools"))
+        script = root / "admin.ps1"
+        self.assertTrue(script.exists(), "admin.ps1 不存在，但提示里提到了它")
+        from publish_github import collect
+        files = {str(f) for f in collect(root)}
+        self.assertIn("admin.ps1", files,
+                      "admin.ps1 不在发布集里 —— 用户拿到手没这个文件")
+
+    def test_ui_start_refuses_without_admin(self):
+        """`ui.start()` 没管理员时必须抛 SystemExit，不是只打印。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import ui
+        src = inspect.getsource(ui.Ui.start)
+        self.assertIn("is_admin()", src, "ui.start 没查管理员")
+        self.assertIn("SystemExit", src, "ui.start 只打印没拒绝")

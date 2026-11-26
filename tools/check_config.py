@@ -169,10 +169,16 @@ def main() -> int:
         if is_admin():
             print("✔ 管理员权限：有（按键注入正常）")
         else:
-            print("⚠ 管理员权限：没有")
+            # **计入致命项**：没有管理员，所有会动游戏的工具全部跑不了
+            # （`ui.start()` 会直接 `SystemExit(2)`）。
+            # 原来这里只是 ⚠ —— `check_config` 照样 exit 0，
+            # 于是「环境检查通过」这句话是假的。
+            print("✘ 管理员权限：没有")
             print("   按键/点击会被 Windows UIPI 静默丢弃 ——")
-            print("   工具不会报错，而是白等到超时（实测 4 分钟）")
+            print("   工具不会报错，而是白等到超时（实测 150~254 秒）")
             print("   正确用法：右键终端 → 以管理员身份运行")
+            print("   或跑项目根的：.\\admin.ps1（自动提权）")
+            fatal += 1
     except Exception as e:
         print(f"· 管理员权限：查不到（{type(e).__name__}）")
 
