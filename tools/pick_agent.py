@@ -308,45 +308,64 @@ def select_agent(ui: Ui, m: Machine, name: str, verbose: bool = True) -> bool:
 def set_hide_owned(ui: Ui, m: "Machine", hide: bool) -> bool:
     """把代理人筛选里的「隐藏未拥有」开关设成 hide。
 
-    `hide=True`  → 只看已拥有（默认）
-    `hide=False` → 显示全部（未拥有的灰掉，也能点/读名字）
+    `hide=True`  → 只看已拥有
+    `hide=False` → 显示全部（未拥有的灰掉/带锁）
 
-    返回是否设置成功。
+    ## 开关长什么样（截图量的）
+
+    ```
+    代理人筛选
+      等级                        [⇅]
+      隐藏未拥有        [ ON  ○ ]      ← 绿色药丸 + 圆形滑块
+                        ↑
+                        点这一带才能切
+    底部还有一个「重置」按钮
+    ```
+
+    ## 踩过的坑
+
+    只点 `(1800, row_y)` 没反应 —— **那是滑块右边一点，落在按钮外面**。
+    现在按「药丸中心附近试几个点」+ 每次读完确认状态。
     """
     vs, inp = ui.vs, ui.inp
     if not m.go_to("代理人筛选"):
         return False
     vs.frame(force=True)
 
-    # 找「隐藏未拥有」那一行，右侧是 ON/OFF 文字
     lbl = vs.find("隐藏未拥有", (1250, 180, 1900, 300))
     if not lbl:
+        print("  找不到「隐藏未拥有」")
         return False
-    row_y = lbl["cy"]
+    row_y = int(lbl["cy"])
 
-    state = ""
-    for it in vs.items((1600, row_y - 30, 1920, row_y + 30)):
-        t = (it.get("text") or "").strip().upper()
-        if t in ("ON", "OFF"):
-            state = t
-            break
+    def read_state() -> str:
+        vs.frame(force=True)
+        for it in vs.items((1600, row_y - 35, 1920, row_y + 35)):
+            t = (it.get("text") or "").strip().upper()
+            if t in ("ON", "OFF"):
+                return t
+        return ""
 
     want = "ON" if hide else "OFF"
+    state = read_state()
     if state == want:
         print(f"  「隐藏未拥有」已经是 {want}")
     else:
         print(f"  「隐藏未拥有」现在 {state or '?'}，要点成 {want}")
-        # 开关在文字右侧，点 (1800, row_y)
-        inp.click(1800, int(row_y), wait=1.6)
-        vs.frame(force=True)
-        for it in vs.items((1600, row_y - 30, 1920, row_y + 30)):
-            t = (it.get("text") or "").strip().upper()
-            if t in ("ON", "OFF"):
-                state = t
+        # **在药丸那一带试几个位置** —— 只试一个点会点空（踩过）
+        for dx in (1755, 1795, 1730, 1820):
+            inp.click(dx, row_y, wait=1.4)
+            state = read_state()
+            if state == want:
+                print(f"    点 ({dx},{row_y}) 成功，现在是 {state}")
                 break
-        print(f"  点完变成 {state or '?'}")
+            # 点错了方向就再点一次
+            if state and state != want:
+                continue
+        if state != want:
+            print(f"    ✘ 试了 4 个位置还是 {state or '?'}")
 
-    # 回代理人列表
+    # 关掉筛选面板回列表
     inp.key("esc", wait=1.6)
     vs.frame(force=True)
     return state == want
