@@ -1,43 +1,36 @@
-"""刷本规划：先出清单，再批量刷，不是撞一个补一个。
+"""【已归档 2026-11-26】刷本规划（旧）—— 被 zzz_gap.py 取代。
 
-## 现在的问题（用户指出的「缺啥就立刻刷」）
+## 为什么归档
 
-`zzz_auto.py` 是**反应式**的：
+这个工具和 `zzz_gap.py` 做同一件事：**算材料缺口 → 调 od_material_farm 刷本**。
+区别只在数据来源：
+
+| | zzz_farm_plan（旧） | zzz_gap（新） |
+|---|---|---|
+| 缺口来源 | 自己算（materials.json + 公式 + inventory.json） | **读游戏官方养成指南** |
+| 材料名 | 手维护的表（错过 3 次） | 游戏原文 |
+| 库存 | 自己记 | 游戏自带 |
+| 定位/属性 | 查 disc_meta（64 个手写） | **从材料名反推** |
+| 新增角色 | 要改库 | 不改任何东西 |
+
+## 现状
+
+**还能跑**（`zzz_daily.py` 还在调它），但**新代码不要再用它**。
+等 `zzz_daily` 也切到 `zzz_gap` 之后，这个文件可以直接删。
+
+## 保留的原因
+
+`zzz_daily.py`（总控）现在依赖它。删了会连锁破坏。
+所以先「归档 = 标清楚，不删」。
+
+## 想用哪个
+
+```powershell
+python tools/zzz_gap.py 角色名          # 新的，读官方数据
+python tools/zzz_farm_plan.py           # 旧的，别用了
 ```
-执行动作 → 失败 → 看到「材料不足」→ 立刻刷一次 → 不管够不够
-```
-
-具体坏处：
-
-1. **一次只刷一趟**。缺 20 个认证章，刷一趟给 3 个，然后下一轮又失败又刷一趟，
-   一轮一停，效率极低。
-
-2. **不先试免费手段**。材料转化（低阶转高阶）是免费的，应该在刷之前先做。
-
-3. **不按属性合并**。物理角色有 5 个（凯撒/派派/潘引壶/猫又/简），
-   它们共用「特化物理芯片」。该一次刷够 5 个人的量，不是每人各刷一次。
-
-4. **不知道总量**。没有「这个月要刷多少电」的全局视图，只能撞墙。
-
-5. **电量浪费在低价值目标上**。核心技 F 要 960 电，等级 60→60 只要 0 电，
-   应该先做便宜的。但反应式逻辑先撞上哪个就刷哪个。
-
-## 正确做法
-
-```
-1. 汇总清单：所有角色 × 所有系统 → 缺什么、缺多少
-2. 按属性合并：同属性共用材料，数量相加
-3. 先免费后付费：能转化的先转化
-4. 批量刷：算出一共要刷几次，一次刷完
-5. 按性价比排：先刷便宜且卡住进度的
-```
-
-## 用法
-
-    python tools/zzz_farm_plan.py                # 出清单
-    python tools/zzz_farm_plan.py --battery 240  # 按电量预算排
-    python tools/zzz_farm_plan.py --run          # 真的按清单批量刷
 """
+
 from __future__ import annotations
 
 import argparse
@@ -445,6 +438,13 @@ def both_dungeons(agent: str) -> list[str]:
 
 
 def main() -> int:
+    print("=" * 66)
+    print("⚠ zzz_farm_plan.py 已归档，被 zzz_gap.py 取代")
+    print("=" * 66)
+    print("  新的是：python tools/zzz_gap.py <角色名>")
+    print("  它读游戏官方养成指南的缺口，不依赖手写的材料表。")
+    print("=" * 66)
+    print()
     ap = argparse.ArgumentParser()
     ap.add_argument("--battery", type=int, default=240, help="电量预算")
     ap.add_argument("--run", action="store_true")

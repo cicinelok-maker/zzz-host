@@ -383,6 +383,35 @@
    "destructive": false
   },
   {
+   "name": "zzz_calibrate",
+   "cmd": "python tools/zzz_calibrate.py",
+   "args": [
+    {
+     "pos": "name"
+    },
+    {
+     "flag": "--list"
+    },
+    {
+     "flag": "--auto"
+    },
+    {
+     "flag": "--samples"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    2,
+    5
+   ],
+   "purpose": "生成界面指纹库 —— 让每个用户都能给自己的机器校准",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "zzz_convert",
    "cmd": "python tools/zzz_convert.py",
    "args": [
@@ -715,7 +744,7 @@
     0,
     2
    ],
-   "purpose": "刷本规划：先出清单，再批量刷，不是撞一个补一个",
+   "purpose": "【已归档 2026-11-26】刷本规划（旧）—— 被 zzz_gap.py 取代",
    "outputs": [],
    "requires": [],
    "idempotent": true,

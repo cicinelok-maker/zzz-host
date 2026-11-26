@@ -98,6 +98,18 @@ TRANSITIONS: list[Transition] = [
                verify=("养成材料计算",), verify_region=R_ALL,
                note="点养成指南 @(1133,474)，加载约 3 秒"),
 
+    # 材料视图 → 方案视图（点左边的「方案概览」或「补充建议」标签）
+    Transition("养成指南", "养成指南方案",
+               [Action("click_text", "方案概览", region=(120, 100, 470, 420), wait=2.0)],
+               verify=("副属性推荐",), verify_region=R_ALL,
+               note="左边两个标签：方案概览 / 补充建议。"
+                    "点不到「方案概览」时也试「补充建议」（都在同一块）"),
+
+    Transition("养成指南方案", "养成指南",
+               [Action("click_text", "养成材料明细", region=(600, 200, 1400, 360), wait=2.0)],
+               verify=("养成材料计算",), verify_region=R_ALL,
+               note="点回「养成材料明细」标签"),
+
     # 回程：**只能 ESC** —— 这个全屏面板 B 键无效（实测）
     Transition("养成指南", "更多功能",
                [Action("key", "esc", wait=2.0)],

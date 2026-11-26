@@ -186,6 +186,13 @@ def select_agent(ui: Ui, name: str, max_clicks: int = 30) -> bool:
     vs, inp = ui.vs, ui.inp
     vs.frame(force=True)
 
+    # **先点左箭头回起点** —— 选择条点过末尾会进空槽（左面板全黑），
+    # 而且面板会**记住**这个空状态，关掉重开都恢复不了（实测）。
+    # 起点一定是有效角色，所以每次都从起点往右点。
+    for _ in range(25):
+        inp.click(P_SEL_PREV[0], P_SEL_PREV[1], wait=0.35)
+    vs.frame(force=True)
+
     cur = current_agent(ui)
     print(f"  当前角色：{cur or '?'}　目标：{name}")
     if cur and (cur == name or name in cur or cur in name):
