@@ -102,13 +102,38 @@ def main() -> int:
     for f in TOOLS.glob("*.json"):
         existing.add(f.name)
 
-    keep, move = [], []
+    keep, move, guarded = [], [], []
     for name in sorted(existing):
-        (keep if name in CANON else move).append(name)
+        if name in CANON:
+            keep.append(name)
+            continue
+        # **硬保护**（BUG-109）：这些永远不移动，哪怕不在 CANON 里。
+        #
+        # 原来的分拣是 `keep if name in CANON else move` ——
+        # **不在 CANON 里的一律移走**，包括 `core/` 里的活模块。
+        # 依赖检查只查「保留的文件是否 import 了要移走的」，
+        # 如果一整组活模块都被移走，它一个都查不出来 ——
+        # 搬完整个项目直接跑不起来（审计实测会搬走 43 个，含 14 个活 core 模块）。
+        if name.startswith("core/"):
+            guarded.append((name, "core/ 里的模块是地基，不动"))
+            keep.append(name)
+            continue
+        if name.endswith(".json"):
+            guarded.append((name, "数据文件，不是工具，不动"))
+            keep.append(name)
+            continue
+        move.append(name)
 
     print(f"总计 {len(existing)} 个文件")
     print(f"  保留 {len(keep)} 个")
-    print(f"  移走 {len(move)} 个\n")
+    print(f"  移走 {len(move)} 个")
+    if guarded:
+        print(f"  硬保护 {len(guarded)} 个（不在 CANON 里但绝不能动）")
+        for n, why in guarded[:20]:
+            print(f"    · {n:<28} {why}")
+        if len(guarded) > 20:
+            print(f"    …还有 {len(guarded) - 20} 个")
+    print()
 
     print("=== 保留 ===")
     for n in keep:
@@ -118,10 +143,14 @@ def main() -> int:
     print("\n=== 依赖检查（保留的文件是否 import 了要移走的）===")
     move_stems = {Path(n).stem for n in move}
     danger = []
-    for n in keep:
+    # **检查必须扫「全部文件」，不只是 keep**（BUG-109）。
+    # 否则「一整组活模块都被移走」这种情况一个都查不出来。
+    for n in sorted(existing):
         # 审计工具只是把名字当字符串列出来，不是真依赖，跳过
         if n.startswith("audit_") or n in ("cleanup_tools.py",):
             continue
+        if n in move_stems:
+            continue        # 自己要走的不用查
         p = (CORE / Path(n).name) if n.startswith("core/") else (TOOLS / n)
         if p.suffix != ".py":
             continue
