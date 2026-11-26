@@ -83,27 +83,36 @@ def read_stat_gaps(ui) -> list[dict]:
     def cy(it):
         return int(it.get("cy") or 0)
 
-    # 按 y 聚类成行
-    rows: dict[int, list] = {}
-    for it in items:
-        if not t(it):
-            continue
-        y = cy(it)
-        k = next((kk for kk in rows if abs(kk - y) <= 20), y)
-        rows.setdefault(k, []).append(it)
-
+    # **用「属性名列」做行锚点，不靠 y 容差聚类。**
+    #
+    # 踩过：`能量自动回复 1.2 → 2.1` 那一行和上一行的 y 差在 20px 内，
+    # 被合并成一行，于是那条属性丢了。
+    #
+    # 现在先找出所有「纯中文 2~8 字、不含『属性』」的条目当行首，
+    # 再按 x 取同一行的数值。
     NUM = re.compile(r"^[\d.]+%?$")
     out = []
-    for y in sorted(rows):
-        line = sorted(rows[y], key=cx)
-        name = next((t(x) for x in line
-                     if re.fullmatch(r"[\u4e00-\u9fa5]{2,8}", t(x))
-                     and "属性" not in t(x)), "")
-        nums = [t(x) for x in line if NUM.fullmatch(t(x))]
-        if name and len(nums) >= 2:
-            out.append({"属性": name, "当前": nums[0], "目标": nums[1]})
-        elif name and len(nums) == 1:
-            out.append({"属性": name, "当前": nums[0], "目标": ""})
+    anchors = [it for it in items
+               if re.fullmatch(r"[\u4e00-\u9fa5]{2,8}", t(it))
+               and "属性" not in t(it)
+               and cx(it) < 700]
+    for a in sorted(anchors, key=cy):
+        ay, ax = cy(a), cx(a)
+        # 同一行的数值：y 接近 **且 x 在属性名右边**
+        nums = [(cx(x), t(x)) for x in items
+                if abs(cy(x) - ay) <= 30
+                and cx(x) > ax + 40
+                and NUM.fullmatch(t(x))]
+        nums.sort()
+        vals = [v for _, v in nums]
+        ent = {"属性": t(a)}
+        if len(vals) >= 2:
+            ent["当前"], ent["目标"] = vals[0], vals[1]
+        elif len(vals) == 1:
+            ent["当前"], ent["目标"] = vals[0], ""
+        else:
+            continue
+        out.append(ent)
     return out
 
 
@@ -120,6 +129,48 @@ def read_disc_equipped(ui) -> str:
     if "当前装备驱动盘" in txt:
         return "有装备（具体盘面要另读）"
     return ""
+
+
+def read_wengine(ui) -> dict:
+    """读「音擎」节。
+
+    实测布局：
+    ```
+    当前音擎
+      ✓ 啜泣摇篮 Lv.20
+        基础属性  基础攻击力 +231
+        高级属性  穿透率 +12.5%
+    音擎推荐
+      [啜泣摇篮 推荐1]   [时光切片 推荐2]
+      • 建议将音擎提升至Lv.60
+    ```
+    """
+    vs = ui.vs
+    vs.frame(force=True)
+    out: dict = {"当前": "", "等级": "", "推荐": [], "建议": ""}
+
+    import re
+    txt = vs.text((430, 100, 1650, 1080))
+
+    # 「建议将音擎提升至Lv.60」
+    m = re.search(r"建议将音擎提升至\s*(Lv\.\d+)", txt)
+    if m:
+        out["建议"] = f"提升至 {m.group(1)}"
+
+    # 当前音擎名 + 等级
+    for it in vs.items((430, 150, 1650, 600)):
+        s_ = (it.get("text") or "").strip()
+        mm = re.fullmatch(r"(Lv\.\d+)", s_)
+        if mm and not out["等级"]:
+            out["等级"] = mm.group(1)
+
+    # 推荐1/推荐2
+    for it in vs.items((430, 150, 1650, 900)):
+        s_ = (it.get("text") or "").strip()
+        if s_.startswith("推荐"):
+            out["推荐"].append(s_)
+
+    return out
 
 
 def main() -> int:

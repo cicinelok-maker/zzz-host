@@ -177,8 +177,23 @@ def main() -> int:
         return 3
     app = ChargePlanApp(ctx)
     result = app.execute()
-    print(f"\n执行结果：{result}")
     ctx.run_context.stop_running()
+
+    # **必须检查 result.success，不能只打印对象。**
+    #
+    # 实测：`--training 代理人技能 --times 1 --run` 返回 exit 0，
+    # 打印 `<OperationResult object at 0x...>`，**但电量一点没扣（198→199，只是自然恢复）**。
+    # 也就是说「跑完了」是假的 —— 它压根没进副本，然后 exit 0 骗过了调用方。
+    #
+    # 这类「exit 0 但什么都没做」最难查：上层以为成功，继续往下走。
+    _ok = bool(getattr(result, "success", False))
+    if _ok:
+        print(f"\n执行成功：{getattr(result, 'status', '')}")
+    else:
+        _why = getattr(result, "status", "") or str(result)
+        print(f"\n✘ 执行失败：{_why}")
+        # 这个返回码要能让上层区分「没跑」和「跑成了」
+        return 4
 
     # 真跑完了才记周本次数
     try:
