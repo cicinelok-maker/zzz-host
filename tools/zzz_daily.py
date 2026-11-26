@@ -103,6 +103,33 @@ def judge(label: str, out: str) -> tuple[int, list[str]]:
     return total, notes
 
 
+def _cached_battery() -> int:
+    """读缓存的电量，**不碰游戏**。没有/过期返回 -1。
+
+    RT 实测：计划模式一次 `charge_now()` 要 48~85 秒，
+    把「10 秒出计划」拖成 76.5 秒。计划模式只需要大概知道电量，用缓存就够。
+    """
+    try:
+        import json as _j
+        import time as _t
+        from pathlib import Path as _P
+        cache = _P(BASE) / "state" / "resource_cache.json"
+        if not cache.exists():
+            return -1
+        d = _j.loads(cache.read_text(encoding="utf-8"))
+        batt = int(d.get("battery", -1))
+        ts = d.get("_ts") or d.get("ts") or ""
+        if batt < 0 or not ts:
+            return -1
+        # 超过 2 小时当作过期（电量 6 分钟回 1 点，2 小时能差 20 点）
+        t0 = _t.mktime(_t.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+        if abs(_t.time() - t0) > 7200:
+            return -1
+        return batt
+    except Exception:
+        return -1
+
+
 def charge_now() -> int:
     """读电量。走 zzz_resource --json，不再正则解析文本。"""
     from core.charge_plan import read_battery_via_cli
@@ -395,8 +422,24 @@ def main() -> int:
     # 刷本是唯一的资源获取步骤（花电量，掉盘/掉材料）。
     # 放最后的话，前面所有升级步骤只能吃仓库剩的，吃不到当天新刷的。
     if "farm" not in skip and not args.no_farm:
-        n = charge_now()
-        print(f"\n--- 刷本 --- 电量 {n}")
+        # **计划模式不读游戏**（RT-REPORT N-4 / N-5）。
+        #
+        # 原来这里无条件 `charge_now()` —— 它要起一个子进程跑
+        # `zzz_resource.py`，实测一次 48~85 秒。
+        # 于是「计划模式 10 秒出结果」实测是 **76.5–440.7 秒**（7.6–44 倍），
+        # 而且计划模式还会因为这次读盘写出 `resource_cache.json`。
+        #
+        # 计划模式只需要「知道要不要刷」，不需要精确电量：
+        # 有缓存就用缓存（标注可能过期），没有就说「真跑时才读」。
+        if args.run:
+            n = charge_now()
+            print(f"\n--- 刷本 --- 电量 {n}")
+        else:
+            n = _cached_battery()
+            if n >= 0:
+                print(f"\n--- 刷本 --- [计划] 缓存电量 {n}（可能过期，真跑会重读）")
+            else:
+                print("\n--- 刷本 --- [计划] 不读游戏（电量未知，加 --run 才读）")
         if args.run and n >= FARM_COST:
             # 2026-11-24 合并：od_farm.py 的独有参数已并进 od_material_farm.py，
             # 两个总控统一走同一个刷本入口，避免行为不一致。
