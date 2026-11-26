@@ -180,6 +180,24 @@ def main() -> int:
     print(f"轮数上限 {args.rounds}　无进展容忍 {args.patience} 轮")
     print(f"{'=' * 55}")
 
+    # **计划模式彻底不碰游戏**（RT-REPORT N-7）。
+    #
+    # 实测：`zzz_grind` 计划模式跑 **440.7 秒**，产出 `0.0 → 0.0`。
+    # 根因不是「循环里读了游戏」，而是**循环外也读**：
+    #   · 这行 `status()`      → 起子进程跑 zzz_status，实测 66 秒
+    #   · 每轮开头 `charge()`  → 起子进程跑 zzz_resource，实测 48~85 秒
+    # 于是 66 + 8 轮 × 48 ≈ 450 秒，和实测 440 秒对得上。
+    # 而计划模式每轮都 `continue`，这些读**一个都没用上**。
+    if not args.run:
+        print("\n[计划] 不读游戏（下面这些是执行模式才会做的）：")
+        print(f"  1. 盘点 {args.agent} 的当前状态（约 66 秒）")
+        print(f"  2. 最多 {args.rounds} 轮：查电量 → 跑 zzz_daily --run"
+              f" → 材料不够就补刷 → 重新盘点")
+        print(f"  3. 连续 {args.patience} 轮没进展就停")
+        print(f"  目标 {args.target} 条有效词条")
+        print("\n要真跑：加 --run")
+        return 0
+
     st = status(args.agent)
     base_total = st.get("total", 0)
     print(f"起点：{base_total} 条　空位 "
