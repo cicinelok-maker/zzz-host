@@ -294,6 +294,36 @@ def main() -> int:
         from core import atomic as _atomic
         _atomic.write_json(out, _data)
         print(f"\n已写入 {out}")
+
+        # **顺带更新 `state/agent_elements.json`**（BUG-128）。
+        #
+        # 这份文件原来只有 `_legacy/read_elements.py` 会写，它归档之后
+        # **有 3 个读者、0 个写者** —— 里面是 13 个角色的旧数据，
+        # 而 `zzz_cost` 按它的「等级」算成本、`agent_cfg.element_of` 拿它当属性兜底。
+        # 读者以为在拿当前数据，其实是一份没人维护的陈旧缓存。
+        #
+        # `zzz_status` 本来就**从游戏读到了等级**，属性也从 disc_meta 拿到了 ——
+        # 让它顺手写一份，这份文件就有了真正的产出者。
+        try:
+            from core import atomic as _aw
+            from core.game_cfg import element_of as _eo2
+            _ep = BASE / "state" / "agent_elements.json"
+            _all = {}
+            if _ep.exists():
+                try:
+                    import json as _j
+                    _all = _j.loads(_ep.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    _all = {}
+            if char_lv or _eo2(args.agent):
+                _all[args.agent] = {
+                    "属性": _eo2(args.agent) or (_all.get(args.agent) or {}).get("属性", ""),
+                    "等级": char_lv or (_all.get(args.agent) or {}).get("等级", ""),
+                }
+                _aw.write_json(_ep, _all)
+                print(f"  已更新 agent_elements.json（{args.agent}）")
+        except Exception as _e:
+            print(f"  （更新 agent_elements.json 失败：{_e}）")
         # **stdout 只留 JSON**（人类文本已经在 stderr 上了）
         sys.stdout = _real_stdout
         print(json.dumps(_data, ensure_ascii=False))
