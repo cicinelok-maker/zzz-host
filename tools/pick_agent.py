@@ -531,6 +531,39 @@ def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
             if any(nm != other and nm in other for other in names):
                 out.pop(nm, None)
 
+    # **白名单校验**：扫到的名字必须在角色库里（或者能纠正到库里）。
+    #
+    # 实测（2026-11-27）：账号 18 个角色扫出来第 10 个叫 **「2」** ——
+    # 真名是「11号」，OCR 把名字读残了。而原来的单字残段过滤只处理
+    # **单个汉字**（「西」⊂「露西」），数字残段完全逃过：
+    # `'2' in '11号'` 是 False，于是它被当成一个真角色留在了名单里。
+    #
+    # 用户看到的菜单会是「10. 2　强攻·?」，完全没法用。
+    #
+    # 现在：认不出的名字先试着纠正（`suggest` 唯一候选就直接换），
+    # 纠正不了就**从名单里去掉并打一行警告** —— 让用户知道扫描有遗漏，
+    # 而不是拿到一个假角色。
+    try:
+        from core.agent_cfg import meta as _meta
+        _known = set((_meta().get("角色") or {}).keys())
+        from core.agent_name import canonical_agent as _canon
+        _fixed, _dropped = {}, []
+        for _nm, _lv in out.items():
+            if _nm in _known:
+                _fixed[_nm] = _lv
+                continue
+            _c = _canon(_nm)
+            if _c in _known:
+                _fixed[_c] = _lv
+                continue
+            _dropped.append(_nm)
+        if _dropped:
+            print(f"  ⚠ 扫描到 {len(_dropped)} 个认不出的名字，已从名单去掉：{_dropped}")
+            print(f"     （多半是 OCR 读残了；要补的话用「python tools/zzz_status.py <角色>」手动盘点）")
+        out = _fixed
+    except Exception as _e:
+        print(f"  （白名单校验跳过：{_e}）")
+
     return out
 
 

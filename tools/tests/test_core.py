@@ -2025,3 +2025,72 @@ class TestAdminIsFatal(unittest.TestCase):
         src = inspect.getsource(ui.Ui.start)
         self.assertIn("is_admin()", src, "ui.start 没查管理员")
         self.assertIn("SystemExit", src, "ui.start 只打印没拒绝")
+
+
+class TestScanWhitelist(unittest.TestCase):
+    """`list_agents` 扫出来的名字必须在角色库里（实测扫出过一个「2」）。
+
+    ## 怎么发现的
+
+    真机跑 `python tools/zzz_who.py --scan`（零消耗，只读），18 个角色里
+    **第 10 个叫「2」**：
+
+    ```
+     10. 2　强攻·?　未盘点
+    ```
+
+    真名是 `11号`，OCR 把名字读残了。而原来的单字残段过滤只处理
+    **单个汉字**（「西」⊂「露西」），数字残段完全逃过 ——
+    `'2' in '11号'` 是 False。
+
+    用户看到的菜单里混进一个假角色，完全没法用。
+
+    ## 现在的行为
+
+    认不出的名字先试纠正（唯一候选就直接换），纠正不了就**从名单去掉**
+    并打一行警告，让用户知道扫描有遗漏，而不是拿到假角色。
+    """
+
+    def _validate(self, out):
+        """复刻 list_agents 里那段校验逻辑。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import meta
+        from core.agent_name import canonical_agent
+        known = set((meta().get("角色") or {}).keys())
+        fixed, dropped = {}, []
+        for nm, lv in out.items():
+            if nm in known:
+                fixed[nm] = lv
+                continue
+            c = canonical_agent(nm)
+            if c in known:
+                fixed[c] = lv
+                continue
+            dropped.append(nm)
+        return fixed, dropped
+
+    def test_garbage_names_dropped(self):
+        fixed, dropped = self._validate(
+            {"佩洛伊斯": "Lv60", "2": "Lv60", "": "Lv60", "??": "Lv60"})
+        self.assertIn("佩洛伊斯", fixed)
+        for bad in ("2", "", "??"):
+            self.assertNotIn(bad, fixed, f"「{bad}」被当成了真角色")
+            self.assertIn(bad, dropped)
+
+    def test_valid_names_kept(self):
+        fixed, dropped = self._validate(
+            {"苍角": "Lv20", "佩洛伊斯": "Lv60"})
+        self.assertEqual(set(fixed), {"苍角", "佩洛伊斯"})
+        self.assertEqual(dropped, [])
+
+    def test_list_agents_has_whitelist(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import pick_agent
+        src = inspect.getsource(pick_agent.list_agents)
+        self.assertIn("角色库", src, "list_agents 里没有白名单校验")
+        self.assertIn("认不出的名字", src, "没有「认不出」的警告")
