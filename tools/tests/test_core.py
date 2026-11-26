@@ -744,3 +744,50 @@ class TestAtomicWrite(unittest.TestCase):
         from core import atomic
         self.assertIsNone(atomic.read_json(self.dir / "nope.json"))
         self.assertEqual(atomic.read_json(self.dir / "nope.json", default=[]), [])
+
+
+class TestOcclusionHonesty(unittest.TestCase):
+    """窗口被遮挡时必须说「被遮挡」，不能伪装成「未知界面」（BUG-032）。
+
+    ## 为什么这条重要
+
+    `live.grab()` 是 `ImageGrab.grab(bbox=窗口坐标)` ——
+    **抓的是「屏幕那个位置」的像素，不是窗口内容**。
+    窗口被别的程序盖住时，读到的是遮挡物。
+
+    实测踩过：浏览器盖在游戏上，OCR 读出来的是 GitHub 页面，
+    而 `describe()` 只会说「未知界面」——
+    上层以为「游戏画面变了」，实际是**在拿别人的像素做判断**。
+    对换装/拆解这类破坏性操作来说，这是致命的。
+    """
+
+    def test_describe_says_occluded(self):
+        # 直接测 describe 的遮挡分支：造一个带 occluded 的哑对象
+        from core import anchors
+
+        class _FakeVision:
+            occluded = True
+            def frame(self, force=False): return None
+            def items(self, region, **kw): return []
+            def text(self, region, **kw): return ""
+
+        self.assertEqual(anchors.describe(_FakeVision()), "被遮挡")
+
+    def test_describe_normal_when_not_occluded(self):
+        from core import anchors
+
+        class _FakeVision:
+            occluded = False
+            def frame(self, force=False): return None
+            def items(self, region, **kw): return []
+            def text(self, region, **kw): return ""
+
+        # 没有任何锚点命中 → 未知界面（不是「被遮挡」）
+        self.assertEqual(anchors.describe(_FakeVision()), "未知界面")
+
+    def test_vision_has_occluded_attr(self):
+        """Vision 必须有 occluded 属性 —— 否则 describe 拿不到它。"""
+        import inspect
+        from core.vision import Vision
+        src = inspect.getsource(Vision.__init__)
+        self.assertIn("self.occluded", src, "Vision.__init__ 没初始化 occluded")

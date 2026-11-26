@@ -78,6 +78,7 @@ class Vision:
         self._ocr_cache: dict[tuple, tuple[float, list]] = {}
         self._ocr_ttl = 0.35               # OCR 结果有效期（秒）
         self._lock = threading.Lock()
+        self.occluded = False       # 上一帧是否可能读到遮挡物（BUG-032）
 
     @staticmethod
     def _make_ocr():
@@ -134,6 +135,17 @@ class Vision:
     def frame(self, force: bool = False) -> np.ndarray:
         now = time.time() * 1000
         if force or self._img is None or now - self._img_t > self._cache_ms:
+            # **遮挡检测（BUG-032 / RT-REPORT 柱 1）**
+            #
+            # `live.grab()` 是 `ImageGrab.grab(bbox=窗口坐标)` ——
+            # **抓的是「屏幕那个位置」的像素，不是窗口内容**。
+            # 窗口被别的程序盖住时，读到的是遮挡物。
+            #
+            # 实测踩过：浏览器盖在游戏上，OCR 读出来的是 GitHub 页面，
+            # 而 `describe()` 只会说「未知界面」——
+            # 上层以为「游戏画面变了」，实际上是**在拿别人的像素做判断**。
+            # 对破坏性操作（换装/拆解）来说这是致命的。
+            self._ensure_foreground()
             self._img = live.grab(self.win)
             self._img_t = now
             self._frame_id += 1
@@ -142,6 +154,25 @@ class Vision:
                 with self._lock:
                     self._ocr_cache.clear()
         return self._img
+
+    def _ensure_foreground(self) -> None:
+        """确认游戏在前台；不在就抢，抢不到就把 `occluded` 标起来。
+
+        不抛异常（用户可能只是切窗看个消息），但**必须让人知道** ——
+        静默读别人的画面比报错危险得多。
+        """
+        try:
+            if live.foreground(self.win):
+                if self.occluded:
+                    print("  ⚠ 游戏窗口之前被遮挡过，已抢回前台")
+                self.occluded = False
+                return
+        except Exception:
+            return          # 查不了就别拦，别把正常流程弄挂
+        if not self.occluded:
+            print("  ⚠ 游戏窗口不在前台 —— **现在读到的可能是别的程序的画面**")
+            print("     请把绝区零窗口切到最前。工具会在下一帧自动重试。")
+        self.occluded = True
 
     def crop(self, region: Region) -> np.ndarray:
         x0, y0, x1, y1 = region

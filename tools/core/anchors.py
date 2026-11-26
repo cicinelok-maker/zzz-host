@@ -249,6 +249,11 @@ def describe(vision) -> str:
 
     指纹的定位应该是「文字锚点认不出时兜底」，不是「优先」。
     """
+    # **被遮挡时要说真话**（BUG-032）。
+    # 此时读到的可能是别的程序的画面，任何「认出来了」都是假的。
+    if getattr(vision, "occluded", False):
+        return "被遮挡"
+
     a = detect(vision)                   # 精确：must 全中
     if a:
         return a.name
