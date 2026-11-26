@@ -21,6 +21,7 @@ except Exception:
 
 import numpy as np
 from PIL import ImageGrab
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 user32 = ctypes.windll.user32
 SHOTS = Path(__file__).resolve().parent.parent / "od_test" / "shots"

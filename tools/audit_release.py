@@ -39,6 +39,7 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE / "tools"))
 
 from publish_github import collect  # noqa: E402
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 # 第三方依赖（requirements.txt 里的 + 标准库不在这里）
 THIRD_PARTY = {

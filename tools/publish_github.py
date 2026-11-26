@@ -56,6 +56,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 API = "https://api.github.com"
 

@@ -43,6 +43,7 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE / "tools"))
 
 from publish_github import collect  # noqa: E402
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 PY = sys.executable
 # state/ 和 od_test/ 是 core/__init__.py 自己建的（运行时产物目录），

@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))

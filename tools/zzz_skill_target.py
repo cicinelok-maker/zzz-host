@@ -30,6 +30,7 @@ import json
 import re
 import sys
 from pathlib import Path
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 HERE = Path(__file__).resolve().parent
 BASE = HERE.parent

@@ -29,6 +29,7 @@ for it in d[:5]:
 
 print("=== 有效值分布 ===")
 from collections import Counter
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 c = Counter(it["eff_rolls"] for it in d)
 for k in sorted(c):
     print(f"  有效 {k}: {c[k]} 块")

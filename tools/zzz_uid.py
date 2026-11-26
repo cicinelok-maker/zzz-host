@@ -44,6 +44,7 @@ import json
 import pathlib
 import sys
 import urllib.request
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 BASE = pathlib.Path(__file__).resolve().parent.parent
 STATE = BASE / "state"

@@ -1,6 +1,7 @@
 """逐行审计所有「算有效值」的代码，确认口径统一。"""
 import pathlib
 import re
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 BASE = pathlib.Path(__file__).resolve().parent.parent
 files = sorted((BASE / "tools").glob("*.py")) + sorted((BASE / "tools" / "core").glob("*.py"))

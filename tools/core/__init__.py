@@ -1,3 +1,40 @@
+
+# ---------------------------------------------------------------- 控制台编码
+# **中文 Windows 默认控制台是 cp936（GBK），编不了 `✔ ✘ ⚠ ✗` 这些符号。**
+#
+# 全项目用了 4 个这样的字符，而它们恰好是「对不对/成没成」的主要标记 ——
+# 在没设 `PYTHONIOENCODING=utf-8` 的机器上，**任何工具一打印就
+# UnicodeEncodeError 崩掉，exit 1**，而且往往崩在写文件之后
+# （BUG-111 / BUG-170）。
+#
+# 这里在 import core 的第一时间把 stdout/stderr 改成 utf-8 + errors="replace"：
+# · 正常情况下和以前完全一样（终端能显示就显示）
+# · 编不了的字符变成 '?' 而不是抛异常
+# · 用户不需要任何环境变量
+#
+# `errors="replace"` 是关键 —— 即使某些老终端只认 GBK，
+# 顶多显示成问号，**不会让整个工具崩掉**。
+def _fix_console_encoding() -> None:
+    import sys as _sys
+    for name in ("stdout", "stderr"):
+        stream = getattr(_sys, name, None)
+        reconf = getattr(stream, "reconfigure", None)
+        if reconf is None:
+            continue
+        try:
+            enc = (getattr(stream, "encoding", "") or "").lower()
+            if enc.startswith("utf"):
+                continue                    # 已经是 utf-8，不动
+            reconf(encoding="utf-8", errors="replace")
+        except Exception:
+            # 改不了就退一步：至少别因为编码崩
+            try:
+                reconf(errors="replace")
+            except Exception:
+                pass
+
+
+_fix_console_encoding()
 """绝区零托管系统的底层操作层。
 
 ## 模块

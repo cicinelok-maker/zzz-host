@@ -17,6 +17,7 @@
 import json
 import sys
 from pathlib import Path
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 BASE = Path(__file__).resolve().parent.parent
 OUT = BASE / "state" / "filter_options.json"

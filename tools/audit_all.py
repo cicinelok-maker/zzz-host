@@ -9,6 +9,7 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
+import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
 BASE = Path(__file__).resolve().parent.parent
 TOOLS = BASE / "tools"
