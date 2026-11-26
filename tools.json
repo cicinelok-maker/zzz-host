@@ -92,6 +92,18 @@
    "destructive": false
   },
   {
+   "name": "enc",
+   "cmd": "python tools/enc.py",
+   "args": [],
+   "json_output": false,
+   "exit_codes": [],
+   "purpose": "控制台编码修复：**import 一下就生效，不需要任何环境变量",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "explain_crit",
    "cmd": "python tools/explain_crit.py",
    "args": [],
@@ -512,6 +524,9 @@
      "pos": "agent"
     },
     {
+     "flag": "--convert"
+    },
+    {
      "flag": "--run"
     },
     {
@@ -741,6 +756,9 @@
    "args": [
     {
      "flag": "--battery"
+    },
+    {
+     "flag": "--convert"
     },
     {
      "flag": "--run"

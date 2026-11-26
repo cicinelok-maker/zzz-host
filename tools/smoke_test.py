@@ -15,7 +15,14 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 from core.paths import one_dragon_python, one_dragon_env
 PY = one_dragon_python()
-ENV = one_dragon_env()
+# **必须叠加在系统环境之上，不能替换**（BUG-167）。
+#
+# `one_dragon_env()` 只返回 2 个键（PYTHONPATH / PYTHONIOENCODING），
+# 而系统环境有 50+ 个（PATH / SYSTEMROOT / TEMP / USERPROFILE …）。
+# 直接 `env={**ENV}` 会把那 50 多个全丢掉 ——
+# 子进程可能起不来、cv2 找不到 DLL、临时文件没地方放。
+import os as _os
+ENV = {**_os.environ, **one_dragon_env()}
 # (工具, 参数, 期望退出码, 说明) 只跑不碰游戏的
 SMOKE = [
     ("zzz_cost.py", ["佩洛伊斯"], 0, "养成成本表"),

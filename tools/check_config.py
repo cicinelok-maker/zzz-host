@@ -10,6 +10,7 @@ BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
 from core.paths import (summary, check, one_dragon_python, one_dragon_env)  # noqa: E402
+import os
 
 
 def main() -> int:
@@ -43,8 +44,20 @@ def main() -> int:
         print("✘ 找不到 OneDragon 的 python.exe")
         return 1
     _code = "import one_dragon.base.matcher.ocr.onnx_ocr_matcher as m; print('ok')"
-    _env = {"PYTHONPATH": one_dragon_env().get("PYTHONPATH", ""),
-            "PYTHONIOENCODING": "utf-8"}
+    # **字面量 dict 会把整个系统环境替换掉**（BUG-169）。
+    #
+    # 原来只传 2 个键，子进程丢了 PATH / SYSTEMROOT / TEMP 等 50 多个 ——
+    # Windows 上少 SYSTEMROOT 会导致 Python 找不到系统 DLL，直接起不来。
+    #
+    # 而且 `PYTHONPATH: ""` 是**空字符串**，Python 会把它当成
+    # 「把当前工作目录加入 sys.path」—— 于是子进程能 import 到 CWD 里的模块，
+    # 产生这里根本不该有的依赖。
+    _env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    _pp = one_dragon_env().get("PYTHONPATH", "")
+    if _pp:
+        _env["PYTHONPATH"] = _pp
+    else:
+        _env.pop("PYTHONPATH", None)      # 空值不要留，否则 CWD 进 sys.path
     _r = _sp.run([_py, "-c", _code], capture_output=True, text=True,
                  encoding="utf-8", errors="replace", env=_env, timeout=120)
     if _r.returncode == 0:
