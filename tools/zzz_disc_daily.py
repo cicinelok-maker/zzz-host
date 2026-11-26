@@ -151,16 +151,45 @@ def offline_banner(agent: str) -> None:
 
 
 def read_status(agent: str) -> dict:
-    """读 status 的 json。OFFLINE 时只读缓存，不跑 zzz_status。"""
+    """读 status 的 json。OFFLINE 时只读缓存，不跑 zzz_status。
+
+    ## **返回值可能是「读失败」，不能当成「一切正常」**（BUG-085）
+
+    原来是这样：
+
+    ```python
+    ok, out = run("zzz_status.py", [agent, "--json"], 1800)   # ← ok 被丢掉
+    ...
+    return json.loads(...)      # 不管命令成没成，读到啥就是啥
+    return {}                   # 没文件 → 空字典
+    ```
+
+    两个后果：
+    · `zzz_status` **失败**时（游戏没开、OCR 挂了），照样去读**上一次**的文件 ——
+      旧数据被当成当前数据，而且**一句话都不说**
+    · 文件不存在时返回 `{}`，调用方 `st.get("slots") or []` 得到空列表，
+      于是「读不到」和「这个角色没装盘」长得一模一样（和 BUG-130 同源）
+
+    现在每一种失败都明确打出来。
+    """
+    ok = True
     if not OFFLINE:
         ok, out = run("zzz_status.py", [agent, "--json"], 1800)
     p = BASE / "state" / f"status_{agent}.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    if not p.exists():
+        print(f"  ⚠ 没有 {p.name} —— 状态数据缺失（先跑 zzz_status.py {agent}）")
+        return {}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"  ⚠ {p.name} 读不了：{e}")
+        return {}
+    if not ok:
+        print(f"  ⚠ zzz_status 这次**失败了**，下面用的是上一次的旧数据")
+    if d.get("_valid") is False:
+        print(f"  ⚠ 这份快照无效（只读到 {d.get('_slots_read', 0)}/6 个位号），"
+              f"total=0 可能是读取失败而不是真的没盘")
+    return d
 
 
 def read_mother() -> int:

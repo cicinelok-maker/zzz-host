@@ -1387,3 +1387,57 @@ class TestDailyFarmLog(unittest.TestCase):
         import zzz_daily
         self.assertIn("--again", inspect.getsource(zzz_daily.main),
                       "没有 --again —— 电量回满了想再刷就没法强制")
+
+
+class TestReadStatusHonesty(unittest.TestCase):
+    """`read_status` 读失败必须说出来（BUG-085）。
+
+    ## 原来两个静默失败
+
+    ```python
+    ok, out = run("zzz_status.py", [agent, "--json"], 1800)   # ← ok 被丢掉
+    return json.loads(...)      # 不管命令成没成，读到啥就是啥
+    return {}                   # 没文件 → 空字典，还用空字典表示「读不到」
+    ```
+
+    · `zzz_status` 失败时照样读**上一次**的文件 —— 旧数据被当成当前数据
+    · 空字典既表示「读不到」也表示「没数据」，调用方分不出来
+    """
+
+    def test_missing_file_warns(self):
+        import io
+        import contextlib
+        import zzz_disc_daily as zd
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            d = zd.read_status("__绝对不存在的角色__")
+        self.assertEqual(d, {})
+        self.assertIn("状态数据缺失", buf.getvalue(),
+                      "文件不存在时没有提示")
+
+    def test_bad_file_warns(self):
+        import io
+        import contextlib
+        import pathlib
+        import zzz_disc_daily as zd
+        p = pathlib.Path(zd.BASE) / "state" / "status___坏文件测试__.json"
+        p.write_text("{半截", encoding="utf-8")
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                d = zd.read_status("__坏文件测试__")
+            self.assertEqual(d, {})
+            self.assertIn("读不了", buf.getvalue(),
+                          "坏文件时没有提示")
+        finally:
+            p.unlink(missing_ok=True)
+
+    def test_exit_code_not_discarded(self):
+        """源码里 `run(...)` 的返回必须被解包成两个名字，不能只接一个。"""
+        import inspect
+        import zzz_disc_daily as zd
+        src = inspect.getsource(zd.read_status)
+        self.assertIn("ok, out = run(", src,
+                      "read_status 没接住 run 的退出码")
+        self.assertIn("if not ok:", src,
+                      "接住了却没判 —— 等于没接")
