@@ -49,6 +49,33 @@ def _hint(agent: str, what: str) -> None:
     print(f"  python tools/zzz_status.py {agent} --json")
 
 
+# 读取方**必须**看到的字段（RT-REPORT N-3 的契约）。
+REQUIRED_STATUS_KEYS = ("total", "slots", "blue_total")
+
+
+def check_status_schema(agent: str, d: dict, path=None) -> list[str]:
+    """检查状态文件是否满足契约，返回缺失字段列表。
+
+    ## 为什么需要（RT-REPORT N-3）
+
+    写入方只写 5 个字段、读取方读 8 个，**而文件看着完全正常** ——
+    于是「字段从没被写过」被当成「旧文件残留」，谁都没发现契约从未实现。
+    实测 `status_丽娜.json` 里只有 `agent` 和 `total` 两个键。
+
+    现在读取前先对一遍契约，缺什么就打出来（不退出，因为下游可能只用一部分）。
+    """
+    miss = [k for k in REQUIRED_STATUS_KEYS if k not in d]
+    if not miss:
+        return []
+    where = f"（{path.name}）" if path is not None else ""
+    print(f"  ⚠ 「{agent}」的状态文件{where}缺字段：{miss}")
+    print(f"     这份数据可能是旧版本写的，或者写入被中断了。")
+    print(f"     重跑一次就好：python tools/zzz_status.py {agent} --json")
+    if "_schema" in d:
+        print(f"     文件 schema = {d.get('_schema')}")
+    return miss
+
+
 def load_status(agent: str = "") -> dict:
     """读 state/status_{agent}.json。"""
     agent = current_agent(agent)
@@ -57,11 +84,13 @@ def load_status(agent: str = "") -> dict:
         _hint(agent, "状态数据")
         raise SystemExit(2)
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        d = json.loads(p.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"「{agent}」的状态文件读不了：{e}")
         print(f"  文件：{p}")
         raise SystemExit(2)
+    check_status_schema(agent, d, p)
+    return d
 
 
 def load_meta(agent: str = "") -> dict:

@@ -859,3 +859,45 @@ class TestElementFamily(unittest.TestCase):
     def test_empty_element_is_unknown(self):
         """属性读不到时返回 unknown，不要乱判 bad。"""
         self.assertEqual(self._v("冰属性伤害加成", ""), "unknown")
+
+
+class TestStatusSchema(unittest.TestCase):
+    """状态文件的「写入方/读取方」契约（RT-REPORT N-3）。
+
+    ## 原来的问题
+
+    写入方只写 5 个字段、读取方读 8 个，**而文件看着完全正常**。
+    于是「字段从没被写过」被当成「旧文件残留」，谁都没发现契约从未实现。
+    实测 `status_丽娜.json` 里只有 `agent` 和 `total`。
+
+    后果：`zzz_who` 的「主词条×N」告警永久失效，
+    `zzz_grind` 的进展永远 `0.0 → 0.0`。
+    """
+
+    def test_missing_keys_detected(self):
+        from core.state import check_status_schema
+        miss = check_status_schema("测试", {"agent": "x", "total": 0})
+        self.assertIn("slots", miss)
+        self.assertIn("blue_total", miss)
+
+    def test_complete_payload_clean(self):
+        from core.state import check_status_schema
+        full = {"total": 1, "slots": [], "blue_total": 0}
+        self.assertEqual(check_status_schema("测试", full), [])
+
+    def test_schema_version_written(self):
+        """`stamp()` 要写 `_schema`，读取方才能判断写入方版本。"""
+        from core.state import stamp
+        d = stamp({"total": 1})
+        self.assertIn("_schema", d)
+        self.assertIn("_ts", d)
+
+    def test_zzz_status_payload_has_all_required(self):
+        """`zzz_status` 写出的 payload 必须包含全部 REQUIRED 键。"""
+        import inspect
+        import zzz_status
+        from core.state import REQUIRED_STATUS_KEYS
+        src = inspect.getsource(zzz_status.main)
+        for k in REQUIRED_STATUS_KEYS:
+            self.assertIn(f'"{k}"', src,
+                          f"zzz_status 的 _payload 没写 {k}")
