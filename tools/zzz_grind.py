@@ -69,9 +69,33 @@ def run(args: list[str], timeout: int = 3600) -> tuple[bool, str]:
         return False, "超时"
 
 
-def status(agent: str) -> dict:
-    run([str(HERE / "zzz_status.py"), agent, "--json"], 1800)
+def status(agent: str, max_age: float = 0) -> dict:
+    """读角色状态。
+
+    ## `max_age > 0` 时，文件够新就直接用，**不重读游戏**
+
+    原来这里**每次调用都先跑一遍 `zzz_status.py`**（实测约 100 秒）再读文件。
+    而它在收敛循环里被调了 3 处：开头 1 次、**每轮 1 次**、结尾 1 次 ——
+    `--rounds 5` 就是 7 次 × 100 秒 ≈ **700 秒白花**。
+
+    更关键的是：每轮那次是在 `zzz_daily --run` 之后立刻调的，
+    而 `zzz_daily` 收尾本来就会跑一次体检把 status 写新 ——
+    **重读等于把刚算出来的东西再算一遍。**
+
+    现在：文件 `_ts` 在 `max_age` 秒内就直接用；否则才重读。
+    """
     p = BASE / "state" / f"status_{agent}.json"
+    if max_age > 0 and p.exists():
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            ts = d.get("_ts") or ""
+            if ts:
+                t0 = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+                if time.time() - t0 <= max_age:
+                    return d
+        except Exception:
+            pass                        # 时间戳读不了就走慢路径
+    run([str(HERE / "zzz_status.py"), agent, "--json"], 1800)
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -263,7 +287,9 @@ def main() -> int:
             made += len(re.findall(r"实际完成", out2))
             out = out + out2
 
-        st = status(args.agent)
+        # `zzz_daily --run` 收尾刚跑过体检，status 是新鲜的 ——
+        # 10 分钟内直接用，省一次约 100 秒的重读
+        st = status(args.agent, max_age=600)
         total = st.get("total", 0)
         print(f"  当前 {total} 条（起点 {base_total}）")
 

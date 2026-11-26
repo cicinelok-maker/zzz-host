@@ -1623,3 +1623,51 @@ class TestSetCoverageAndThresholds(unittest.TestCase):
             alt = f"| {name} | {val:g} |"
             self.assertTrue(expect in txt or alt in txt,
                             f"DISC_LOOP.md 里 {name} 的阈值不是 {val:g}")
+
+
+class TestGrindStatusCache(unittest.TestCase):
+    """`zzz_grind.status(max_age=)` 要能跳过重读游戏（性能）。
+
+    ## 原来每次调用都跑一遍 zzz_status
+
+    `status()` 的实现是「先跑 `zzz_status.py`（实测约 100 秒），再读文件」。
+    而它在收敛循环里被调 3 处：开头 1 次、**每轮 1 次**、结尾 1 次 ——
+    `--rounds 5` 就是 7 次 × 100 秒 ≈ **700 秒白花**。
+
+    每轮那次更没必要：它紧跟在 `zzz_daily --run` 之后，
+    而 daily 收尾本来就会跑一次体检把 status 写新。
+
+    现在 `max_age > 0` 时，`_ts` 够新就直接用。
+    """
+
+    def test_fresh_file_returns_fast(self):
+        import time
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_grind as zg
+        # 先确认有可用的 status 文件
+        st_dir = pathlib.Path(zg.BASE) / "state"
+        files = sorted(st_dir.glob("status_*.json"))
+        if not files:
+            self.skipTest("没有 status 文件")
+        import json
+        d = json.loads(files[0].read_text(encoding="utf-8"))
+        agent = d.get("agent") or files[0].stem.replace("status_", "", 1)
+        if not d.get("_ts"):
+            self.skipTest("文件里没有 _ts 时间戳")
+        t0 = time.time()
+        zg.status(agent, max_age=3600)
+        dt = time.time() - t0
+        self.assertLess(dt, 5.0,
+                        f"max_age=3600 时仍花了 {dt:.1f} 秒 —— 说明还是去重读游戏了")
+
+    def test_signature_has_max_age(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_grind as zg
+        sig = inspect.signature(zg.status)
+        self.assertIn("max_age", sig.parameters,
+                      "status() 没有 max_age 参数")
