@@ -205,8 +205,17 @@ ANCHORS: list[Anchor] = [
                 "官方攻略：主属性/副属性推荐/音擎推荐/技能推荐。"
                 "**技能推荐是图标+数字，图标没文字只能读数字序列**。"),
 
+    # **判据改成 `any_of`**（2026-11-26 实测）：
+    # 原来 `must=("养成材料计算",)` 单靠一个词，而这页 OCR 会**间歇性漏它**
+    # —— 站在指南页上重跑 `go_to("养成指南")` 花了 58.9 秒，
+    # 就是因为 `_at()` 三帧里命中不到两帧，被当成「还没到」去重新导航。
+    #
+    # 用页面上**同时存在的三个稳定特征**任一命中即可：
+    #   养成材料计算 @(913,224)   切换方案 @(1615,179)   方案概览 @(291,213)
+    # 三个词都只在指南面板里出现（更多功能页只有「养成指南」这个按钮名）。
     Anchor("养成指南", R_GUIDE,
-           must=("养成材料计算",),
+           must=(),
+           any_of=("养成材料计算", "切换方案", "方案概览"),
            note="更多功能 → 养成指南 @(1133,474)。"
                 "**这个面板 B 键关不掉，只有 ESC**。"
                 "两个 tab（需要获取的材料 / 养成材料明细）都算这个状态。"),
@@ -279,6 +288,10 @@ def wait(vision, name: str, timeout: float = 10.0) -> bool:
     return False
 
 
+# 帧号 → describe 结果（只缓存最近若干帧）
+_DESC_CACHE: dict = {}
+
+
 def describe(vision) -> str:
     """**文字锚点优先，指纹兜底。**
 
@@ -294,8 +307,57 @@ def describe(vision) -> str:
     if getattr(vision, "occluded", False):
         return "被遮挡"
 
-    a = detect(vision)                   # 精确：must 全中
-    if a:
-        return a.name
-    fp_name = detect_by_fingerprint(vision)   # 兜底：打分最近
-    return fp_name or "未知界面"
+    # **同一帧里重复问，直接给上次答案**（性能）。
+    #
+    # 实测 `describe()` 要 **14.7 秒** —— 它按顺序试约 20 个锚点，
+    # 每个锚点一个**不同的区域**，每个区域各 OCR 一次。
+    # 而 `Machine.state()` 在一次导航里会被调很多次（go_to 判状态、
+    # run 判成败、verify 再判一次），**同一帧被反复问同一个问题**。
+    #
+    # 用 `_frame_key()` 做缓存键：`frame(force=True)` 会换 key，
+    # 所以「新画面」自动失效，不会读到旧结论。
+    vk = None
+    try:
+        vk = (id(vision), vision._frame_key())
+    except Exception:
+        pass
+    if vk is not None:
+        hit = _DESC_CACHE.get(vk)
+        if hit is not None:
+            return hit
+
+    # **检测期间冻结帧** —— 这既是性能问题，更是**正确性问题**。
+    #
+    # `_cache_ms` 默认 120 毫秒，而 `describe()` 实测要 **14 秒**
+    # （按顺序试约 20 个锚点，每个一个不同区域，各 OCR 一次）。
+    # 也就是说：**同一次 `describe()` 里，第 1 个锚点和第 20 个锚点
+    # 拿到的是不同的帧**。
+    #
+    # 这在界面切换的过渡动画里会给出自相矛盾的结论 ——
+    # 前几个锚点在旧画面上判否，后面几个在新画面上判是。
+    # `describe()` 应该回答「**这一帧**是什么界面」，不是「过去 14 秒里出现过什么」。
+    #
+    # 冻结后还有一个副产品：所有区域 OCR 共用同一帧，缓存全部命中。
+    _old_cache_ms = getattr(vision, "_cache_ms", None)
+    try:
+        if _old_cache_ms is not None:
+            vision._cache_ms = 10 ** 9          # 期间不再抓新帧
+        a = detect(vision)                   # 精确：must 全中
+        fp_name = None if a else detect_by_fingerprint(vision)   # 兜底：打分最近
+    finally:
+        if _old_cache_ms is not None:
+            vision._cache_ms = _old_cache_ms
+
+    out = a.name if a else (fp_name or "未知界面")
+    if vk is not None:
+        if len(_DESC_CACHE) > 32:
+            _DESC_CACHE.clear()
+        _DESC_CACHE[vk] = out
+    return out
+    out = fp_name or "未知界面"
+    if vk is not None:
+        # 只留最近几帧，别无限涨
+        if len(_DESC_CACHE) > 32:
+            _DESC_CACHE.clear()
+        _DESC_CACHE[vk] = out
+    return out
