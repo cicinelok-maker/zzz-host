@@ -144,6 +144,25 @@ TRANSITIONS: list[Transition] = [
                [Action("click_xy", xy=(1557, 174), wait=1.4)],
                verify=("驱动仓库[",), verify_region=R_TITLE,
                note="兜底：直接点驱动盘标签"),
+    # **仓库那一簇的出口**（2026-11-27）：
+    # 驱动仓库 / 音擎仓库 / 筛选面板 / 拆解页 互相跳，**没有任何一条通向世界** ——
+    # `go_to("世界")` 从驱动仓库出发时直接「不可达」。
+    # 实测出口是 ESC（回主菜单再退），用 esc_to_world 一次走完。
+    Transition("驱动仓库", "世界",
+               [Action("esc_to_world", wait=1.4)],
+               verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
+               note="仓库簇的出口：连退到世界"),
+
+    Transition("音擎仓库", "世界",
+               [Action("esc_to_world", wait=1.4)],
+               verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
+               note="仓库簇的出口：连退到世界"),
+
+    Transition("筛选面板", "世界",
+               [Action("esc_to_world", wait=1.4)],
+               verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
+               note="仓库簇的出口：连退到世界"),
+
     Transition("驱动仓库", "音擎仓库",
                [Action("click_xy", xy=(1450, 174), wait=1.2)],
                verify=("音擎仓库[",), verify_region=R_TITLE),
@@ -375,14 +394,32 @@ TRANSITIONS: list[Transition] = [
     # 调律界面的 ESC 出口不固定，用循环动作退到世界
     Transition("调律界面", "世界",
                [Action("esc_to_world", n=8, wait=1.5)],
-               verify=("快捷轮盘", "相机"), verify_region=(0, 0, 1400, 1080),
+               verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
                note="循环 ESC 直到大世界"),
 
-    # 主菜单 → 世界（ESC 关菜单）
+    # **主菜单 → 世界**
+    #
+    # 两个问题（2026-11-27 实测）：
+    # ① **单按 ESC 关不掉主菜单** —— 连按两次画面没动；
+    #    而「按 B → 过渡 → 按 ESC」才退得出去。
+    # ② `verify_region` 是 `(0,0,1400,1080)`，而「快捷导航」在 **x=1509** ——
+    #    这个验证**永远不可能通过**（又一个「恒假」的 verify）。
+    #
+    # 改走 `esc_to_world`（交替 B/ESC + 过渡期等待）。
+    # **实测结论（2026-11-27）：主菜单上单个 ESC 就够了。**
+    #
+    # 我一度改成 `esc_to_world`（交替 B/ESC），结果**更糟** ——
+    # 日志显示「动作失败：esc_to_world」，三轮都退不出去，
+    # 最后是 `*→世界` 的**单个 ESC** 把它救出来的。
+    #
+    # 原因是 B 键在主菜单上会**打开别的东西**（不是「返回」），
+    # 于是 B 和 ESC 交替反而在两个状态之间来回跳。
+    #
+    # 保留 `esc_to_world` 给仓库那一簇用（那里确实是多层退出）。
     Transition("主菜单", "世界",
-               [Action("key", "esc", wait=1.8)],
-               verify=("快捷轮盘", "相机"), verify_region=(0, 0, 1400, 1080),
-               note="ESC 关闭主菜单"),
+               [Action("key", "esc", wait=2.0)],
+               verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
+               note="ESC 关闭主菜单（**别加 B**：B 会打开别的面板）"),
 
     # 回退路径：实测左上角返回箭头 (120,52) 才可靠，B 键在这些页面无效
     Transition("驱动盘定制", "装备页",
@@ -403,7 +440,7 @@ TRANSITIONS: list[Transition] = [
                # ESC 是开关：按两次会又打开菜单，所以只按一次，
                # 没到目标就让 go_to 的下一轮重试
                [Action("key", "esc", wait=1.6)],
-               verify=("快捷轮盘", "相机"), verify_region=(0, 0, 1400, 1080),
+               verify=("快捷导航",), verify_region=(1400, 20, 1800, 340),
                note="连按 B/ESC 脱离"),
 ]
 class Machine:
@@ -470,13 +507,39 @@ class Machine:
         elif k == "key":
             self.inp.key(a.arg, wait=a.wait)
         elif k == "esc_to_world":
-            # 一路 ESC 退到大世界。层数不固定（各页面的出口不一样），
-            # 所以循环到认出「世界」为止，最多 8 次。
-            for _ in range(a.n or 8):
+            """一路退到大世界。
+
+            ## 原来只按 ESC，而 **ESC 关不掉主菜单**
+
+            实测（2026-11-27）：站在主菜单上单按 ESC 两次都没反应，
+            而「按 B → 过渡 → 按 ESC」才退得出去。
+            仓库那一簇（驱动仓库/音擎仓库/筛选面板）的出口也是 ESC 回主菜单，
+            所以只按 ESC 会在主菜单上卡死。
+
+            ## 现在的策略
+
+            · 交替按 B 和 ESC（B 在大多数面板上无副作用）
+            · **认出「未知界面」时先等**，不要按 ——
+              过渡期按键会把过渡打断（这个坑在 reset_to_world 上踩过）
+            · 最多 8 轮
+            """
+            # **每一轮 `state()` 要 2.18 秒**，所以这里必须省着用。
+            #
+            # 实测确认的顺序是「B → 过渡 → ESC」——
+            # 所以按固定节奏交替按，**只在按键之间判一次**，
+            # 而不是每帧都判（原来是 8 轮 × 1 次 = 17 秒纯判定）。
+            #
+            # 4 轮足够：B、ESC、B、ESC。
+            for i in range(a.n or 4):
+                if i % 2 == 0:
+                    self.inp.pad_tap("b", wait=a.wait or 1.3)
+                else:
+                    self.inp.key("esc", wait=a.wait or 1.3)
+                # 按完等过渡稳下来再判（过渡期判会得到「未知界面」）
+                time.sleep(0.8)
                 self.vs.frame(force=True)
                 if self.state() == "世界":
                     return True
-                self.inp.key("esc", wait=a.wait or 1.5)
             return self.state() == "世界"
         elif k == "click_slot":
             # 装备页盘位：优先找「等级xx/xx」标签（图标在标签上方约 60px）；

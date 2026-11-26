@@ -2150,3 +2150,93 @@ class TestStableStateCheck(unittest.TestCase):
         import pick_agent
         self.assertFalse(hasattr(pick_agent, "_describe_stable"),
                          "_describe_stable 还在 —— 它已无人调用且判法有缺陷")
+
+
+class TestTransitionVerifySane(unittest.TestCase):
+    """`verify` 词必须**可能**出现在 `verify_region` 里。
+
+    ## 发现的矛盾（BUG-198 同族）
+
+    ```python
+    Transition("主菜单", "世界", [Action("key", "esc")],
+               verify=("快捷导航",), verify_region=(0, 0, 1400, 1080))
+    ```
+
+    「快捷导航」在 **x=1509**，而区域只到 x=1400 —— **这个验证永远不可能通过**。
+    加上 `*→世界` 和 `调律界面→世界`，一共 3 处。
+
+    verify 层本来就被忽略（RT 报告点过），但**恒假的验证比没有更糟** ——
+    它会在日志里显示「验证 ✖」，让人以为「点击没生效」，其实是条件写错了。
+
+    ## 检查方式
+
+    拿一张「已知文字坐标表」，检查每条转移的 verify 词是否落在它的区域里。
+    只查表里有的词（未知位置的不管），避免误报。
+    """
+
+    # 实测过的文字坐标（1920x1080）
+    KNOWN = {
+        "快捷导航": (1509, 50),
+        "邮件": (600, 1038), "成就": (891, 1038),
+        "绳网": (1007, 1038), "仓库": (1123, 1038),
+        "更多功能": (317, 1040), "养成指南": (1133, 474),
+        "代理人攻略": (313, 49),
+    }
+
+    def test_verify_words_inside_region(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import TRANSITIONS
+        bad = []
+        for t in TRANSITIONS:
+            if not t.verify or not t.verify_region:
+                continue
+            g = t.verify_region
+            for w in t.verify:
+                if w not in self.KNOWN:
+                    continue
+                x, y = self.KNOWN[w]
+                if not (g[0] <= x <= g[2] and g[1] <= y <= g[3]):
+                    bad.append(f"{t.src}→{t.dst}: 「{w}」在 ({x},{y}) "
+                               f"但区域是 {g}")
+        self.assertEqual(bad, [],
+                         "这些转移的 verify 词不可能出现在它的区域里：\n  "
+                         + "\n  ".join(bad))
+
+    def test_no_single_esc_main_menu(self):
+        """主菜单不能用单个 ESC 退出（实测无效）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import TRANSITIONS
+        for t in TRANSITIONS:
+            if t.src == "主菜单" and t.dst == "世界":
+                kinds = [a.kind for a in t.actions]
+                self.assertNotIn("key", kinds,
+                                 f"主菜单→世界 还在用单键（{kinds}）—— 实测 ESC 无效")
+                self.assertIn("esc_to_world", kinds,
+                              "主菜单→世界 应该用 esc_to_world")
+
+    def test_warehouse_has_path_to_world(self):
+        """仓库那一簇必须有到世界的路（原来是死区）。"""
+        import sys
+        import pathlib
+        import collections
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import TRANSITIONS
+        g = collections.defaultdict(list)
+        for t in TRANSITIONS:
+            g[t.src].append(t.dst)
+        def reach(src):
+            q, seen = [src], {src}
+            while q:
+                c = q.pop(0)
+                if c == "世界":
+                    return True
+                for n in g.get(c, []):
+                    if n not in seen:
+                        seen.add(n); q.append(n)
+            return False
+        for s in ("驱动仓库", "音擎仓库", "筛选面板", "驱动盘拆解页"):
+            self.assertTrue(reach(s), f"{s} 到不了世界 —— 是个死区")
