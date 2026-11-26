@@ -511,7 +511,18 @@ def read_detail(ui: Ui) -> dict:
 
         # ---------- 材料行 ----------
         if nums and names:
-            ent = {"材料": txt(names[0])}
+            _nm = txt(names[0])
+            # **OCR 别名** —— 实测「「仓鼠笼」访问器」被读成 `CC`。
+            # 这种「读成完全不相干的短串」只能靠显式表。
+            try:
+                import json as _j
+                from pathlib import Path as _P
+                _M = _j.loads((_P(__file__).parent / "materials.json")
+                              .read_text(encoding="utf-8"))
+                _nm = (_M.get("OCR别名") or {}).get(_nm, _nm)
+            except Exception:
+                pass
+            ent = {"材料": _nm}
             for c, v in nums:
                 ent[c] = int(v.replace(",", ""))
             if section is not None:

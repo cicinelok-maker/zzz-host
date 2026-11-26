@@ -231,6 +231,17 @@ def _diff(before: dict, after: dict) -> list[tuple[str, object, object]]:
     return out
 
 
+def _farm_cmd(dungeon: str, times: int) -> list[str]:
+    """副本名 → od_material_farm 参数。
+
+    **实现统一在 `core/farm_cmd.py`** —— 这里只做转发。
+    （原来这份判断在 `zzz_gap` 和这里各写了一遍，属于「同一知识两处维护」，
+      而我这轮已经因为这类漂移踩了两次坑：属性表「感电/电击」、芯片副本名。）
+    """
+    from core.farm_cmd import farm_cmd
+    return farm_cmd(dungeon, times, run=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-targets", action="store_true",
@@ -388,8 +399,9 @@ def main() -> int:
                 dungeon = gap_plan["farms"][0]["dungeon"]
                 times = max(1, gap_plan["farms"][0].get("times", 1))
                 print(f"    按缺口选：{dungeon} × {times}")
-            run("刷本", [str(HERE / "od_material_farm.py"), "--patrol", dungeon,
-                        "--times", str(times), "--run"], 3600)
+            # **按副本名路由参数** —— 原来一律 `--patrol`，
+            # 只能刷区域巡防；芯片/认证章/高维数据/周本全都刷不了。
+            run("刷本", _farm_cmd(dungeon, times), 3600)
             # 2026-11-24 修：zzz_mark.py 点的是仓库底部弃置按钮（已失效，是灰的）。
             # 改走实测可用的链路：升级→判定→标记(R键)→拆解。
             # 刷本拿到素材后再转化一次（材料可双向转化，缺什么补什么）

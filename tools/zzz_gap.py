@@ -61,11 +61,24 @@ BASE = HERE.parent
 # 职业 → 演练名
 ROLES = ("强攻", "异常", "命破", "击破", "支援", "防护", "锋御")
 # 属性 → 芯片名
-CHIP_ATTR = {
-    "物理": "物理", "火": "引燃", "冰": "冰结", "电": "感电",
-    "以太": "以太", "风": "风蚀", "流明": "流明",
-    "烈霜": "冰结", "玄墨": "以太", "凛刃": "物理",
-}
+# **属性 → 芯片名，从 materials.json 读，不在这里复制一份。**
+#
+# 踩过：这里原来写死了一份（「电」还写成「感电」），
+# 而 materials.json 里已经改成「电击」了 —— **两份表漂移，查出来的副本名就不对。**
+# 现在统一以 materials.json 为唯一来源。
+def _chip_attr_map() -> dict:
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        m = _j.loads((_P(__file__).parent / "materials.json").read_text(encoding="utf-8"))
+        return (m.get("技能芯片") or {}).get("属性名") or {}
+    except Exception:
+        return {"物理": "物理", "火": "引燃", "冰": "冰结", "电": "电击",
+                "以太": "以太", "风": "风蚀", "流明": "流明"}
+
+
+CHIP_ATTR = _chip_attr_map()
+
 
 # 实战模拟室的电量/产出（每次刷本 = 5 卡）
 CARD_BATTERY = 20
@@ -176,7 +189,12 @@ def where_to_farm(mat: str, role: str = "", attr: str = "") -> dict | None:
 
     # ---------- 技能芯片 ----------
     if m.endswith("芯片"):
-        return {"副本": "实战模拟室·代理人技能", "类型": "芯片",
+        # **副本名带上属性** —— materials.json 里有模板
+        # `实战模拟室·代理人技能（{属性}测试）`，属性要换成游戏里的芯片名
+        # （电 → 电击 / 火 → 引燃 / 冰 → 冰结 …）
+        _a = CHIP_ATTR.get(attr or "", attr or "")
+        _d = ("实战模拟室·代理人技能（%s测试）" % _a) if _a else "实战模拟室·代理人技能"
+        return {"副本": _d, "类型": "芯片",
                 "每次电量": RUN_BATTERY, "每次产出": PROD["芯片"], "周本": False}
 
     # ---------- 音擎 ----------
@@ -368,25 +386,9 @@ def do_farm(rows: list[dict], max_elec: int = 240, run_it: bool = False) -> int:
             continue
         # 拆成 od_material_farm 能吃的参数
         d = t["副本"]
-        cmd = [sys.executable, str(HERE / "od_material_farm.py")]
-        if d.startswith("恶名狩猎·"):
-            cmd += ["--hunt", d.split("·", 1)[1]]
-        elif "代理人晋升" in d:
-            cmd += ["--training", "代理人晋升"]
-        elif "代理人技能" in d:
-            cmd += ["--training", "代理人技能"]
-        elif "音擎改装" in d:
-            cmd += ["--training", "音擎改装"]
-        elif "基础材料" in d:
-            cmd += ["--training", "基础材料"]
-        elif "专业挑战室" in d:
-            cmd += ["--challenge"]
-        elif d.startswith("区域巡防·"):
-            cmd += ["--patrol", d.split("·", 1)[1]]
-        else:
-            print(f"  ⚠ 不认识的副本「{d}」，跳过")
-            continue
-        cmd += ["--times", str(runs), "--run"]
+        # **路由统一在 core/farm_cmd.py** —— 不再在这里内联一份
+        from core.farm_cmd import farm_cmd
+        cmd = farm_cmd(d, runs, run=True, python=sys.executable)
 
         print()
         print(f"  ▶ {' '.join(cmd[1:])}")

@@ -47,6 +47,7 @@ sample_marked_discs.py  ...
 | `material_nav.py` | **材料弹窗 → 传送副本**：读 [获取] 按钮坐标并点它，副本导航不用硬编码 |
 | `characters.py` | **本地角色覆盖层**：用户自己的角色补充，不改发布集（pull 不冲突） |
 | `portrait.py` | **灰色头像 = 未解锁**（饱和度检测）。**采样点还没对齐头像中心，未接入主路径** |
+| `farm_cmd.py` | **副本名 → od_material_farm 参数**（唯一实现，给 zzz_daily / zzz_gap 共用） |
 | 词条数值表 | `core/disc_stats.py` |
 | 属性词表 | `core/vocab.py` |
 | 盘位坐标 | `core/slots.py` |
