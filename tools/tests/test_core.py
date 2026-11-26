@@ -930,8 +930,10 @@ class TestDataConsistency(unittest.TestCase):
         import json
         import pathlib
         from core import disc_main
-        m = json.loads((pathlib.Path(__file__).resolve().parent.parent
-                        / "materials.json").read_text(encoding="utf-8"))
+        mp = (pathlib.Path(__file__).resolve().parent.parent / "materials.json")
+        if not mp.exists():
+            self.skipTest("materials.json 不在当前集合里")
+        m = json.loads(mp.read_text(encoding="utf-8"))
         mat_attrs = set((m.get("技能芯片") or {}).get("属性名") or {})
         fam = set(disc_main.ELEM_FAMILY)
         self.assertEqual(mat_attrs, fam,
@@ -968,6 +970,9 @@ class TestDataConsistency(unittest.TestCase):
         import json
         import pathlib
         root = pathlib.Path(__file__).resolve().parent.parent
+        if not (root / "disc_meta.json").exists() \
+                or not (root / "materials.json").exists():
+            self.skipTest("disc_meta.json / materials.json 不在当前集合里")
         dm = json.loads((root / "disc_meta.json").read_text(encoding="utf-8"))
         mt = json.loads((root / "materials.json").read_text(encoding="utf-8"))
         names = (mt.get("技能芯片") or {}).get("属性名") or {}
@@ -1502,7 +1507,13 @@ class TestDocsMatchCode(unittest.TestCase):
         import subprocess
         import sys
         root = pathlib.Path(__file__).resolve().parent.parent.parent
-        txt = (root / "AGENTS.md").read_text(encoding="utf-8")
+        doc = root / "AGENTS.md"
+        if not doc.exists():
+            # **发布集里可能没有 AGENTS.md** —— `audit_ship` 会把发布集
+            # 复制到临时目录里跑测试，那份集合是仓库的子集。
+            # 测试不能假定「仓库里有的文件发布集里也有」。
+            self.skipTest("AGENTS.md 不在当前集合里（发布集子集）")
+        txt = doc.read_text(encoding="utf-8")
         # 取「只有这 6 个有 --json」之后那个代码块
         m = re.search(r"现在只有这 \d+ 个有：\s*```\s*\n(.*?)```", txt, re.S)
         if not m:

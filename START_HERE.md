@@ -14,7 +14,8 @@
 
 ## 刷本：已跑通（2026-11-22 00:05 首次全自动进战斗）
 
-`tools/od_farm.py` 不开 GUI 就能把缺口写进 OneDragon「体力刷本」并触发它。
+`tools/od_material_farm.py` 不开 GUI 就能把缺口写进 OneDragon「体力刷本」并触发它。
+（原来的 `od_farm` 已于 2026-11-24 合并进这里，参数一致。）
 现在能一路走到自动战斗，跑到电量耗尽自己回大世界：
 
 ```
@@ -24,8 +25,8 @@
 ```
 
 ```powershell
-python tools/od_farm.py --plan-only    # 只写配置
-python tools/od_farm.py --run          # 触发 OneDragon（已实测可跑）
+python tools/od_material_farm.py --plan-only    # 只写配置
+python tools/od_material_farm.py --run          # 触发 OneDragon（已实测可跑）
 python tools/loop.py --farm            # 连刷本一起跑
 ```
 
@@ -37,8 +38,8 @@ OneDragon 第一步「打开快捷手册」就会失败，整段白跑（昨晚 
 以前这张表要手动打，现在同一件事有一条命令：
 
 ```powershell
-python tools/od_farm.py --agent 莱卡恩 --times 10 --run    # 代理人晋升 · 击破演练 ×10
-python tools/od_farm.py --agent 苍角  --times 5  --run     # 支援演练 ×5
+python tools/od_material_farm.py --agent 莱卡恩 --times 10 --run    # 代理人晋升 · 击破演练 ×10
+python tools/od_material_farm.py --agent 苍角  --times 5  --run     # 支援演练 ×5
 ```
 
 它写进 OneDragon 的「体力刷本」再自己开跑（导航 + 自动战斗 + 回大世界）。
