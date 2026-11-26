@@ -248,13 +248,29 @@ def read_detail_all(ui: Ui, max_scroll: int = 8) -> dict:
     seen_sections: set[str] = set()
     last_sig = ""
 
+    # **滚轮跟着鼠标位置走** —— 实测不先把鼠标移到面板里，`wheel` 完全无效
+    # （试过 wheel(-4)、PageDown、方向键，文本长度一直是 217 不变）。
+    #
+    # 面板的可滚动区域大约在 x 620~1700、y 380~1050（看截图量的）。
+    # 顺便先按一下 ESC 关掉可能的材料详情弹窗（点材料行会弹出来）。
+    for _ in range(2):
+        if "所需" in vs.text((600, 380, 1800, 1080)) and "养成材料" not in vs.text(
+                (600, 380, 1800, 1080)):
+            inp.key("esc", wait=1.0)
+            vs.frame(force=True)
+        else:
+            break
+    inp.move(1200, 600)
+    time.sleep(0.3)
+
     for i in range(max_scroll + 1):
         if i > 0:
+            inp.move(1200, 600)          # 每次都确保鼠标在面板内
             inp.wheel(-4, wait=1.5)
             vs.frame(force=True)
 
         vs.frame(force=True)
-        sig = vs.text((0, 380, 1920, 1080))
+        sig = vs.text((600, 380, 1800, 1080))
         if i > 0 and sig == last_sig:
             break                       # 滚不动了
         last_sig = sig
@@ -262,6 +278,15 @@ def read_detail_all(ui: Ui, max_scroll: int = 8) -> dict:
         d = read_detail(ui)
         if d.get("角色") and not merged["角色"]:
             merged["角色"] = d["角色"]
+
+        # **丢掉「名字等于角色名」的行** —— 「音擎强化&进阶」那一节的材料表里
+        # 有一条是音擎本体（用来精炼/改造），名字恰好就是角色名
+        # （实测：挽昼的音擎叫「挽昼」，被当成材料 32 个）。
+        _self = merged.get("角色") or ""
+        if _self:
+            for _sec in d.get("分节") or []:
+                _sec["材料"] = [m for m in (_sec.get("材料") or [])
+                                if (m.get("材料") or "").strip() != _self]
 
         added = False
         for sec in d.get("分节") or []:

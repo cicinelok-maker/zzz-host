@@ -289,11 +289,144 @@ def plan(agent: str) -> dict:
     }
 
 
+def do_farm(rows: list[dict], max_elec: int = 240, run_it: bool = False) -> int:
+    """按「次数」刷本，**刷够就停，不刷到没电**。
+
+    rows 来自 `plan()` 的「行」：每行有 {材料, 副本, 次数, 电量, 周本}。
+
+    电量预算：`max_elec` 是**这一轮最多花多少电**（默认 240 = 一次满电回满）。
+    超出预算的条目**自动截断次数**，剩下的留给下一轮。
+    """
+    import json
+    import subprocess
+    import sys
+
+    if not rows:
+        print("没有缺口，不用刷")
+        return 0
+
+    print()
+    print("╔" + "═" * 62 + "╗")
+    print("║ 刷本执行" + " " * 53 + "║")
+    print("╚" + "═" * 62 + "╝")
+
+    left = max_elec
+    todo = []
+    for r in rows:
+        if r.get("副本") in ("（查不到）", ""):
+            continue
+        runs = int(r.get("次数") or 0)
+        per = 0 if r.get("周本") else (
+            int(r["电量"]) // max(1, runs) if runs else 0)
+        if runs <= 0:
+            continue
+        # 周本不吃电量（免费次数）
+        if r.get("周本"):
+            todo.append({**r, "本次刷": runs})
+            continue
+        afford = (left // per) if per else runs
+        take = min(runs, afford)
+        if take <= 0:
+            continue
+        todo.append({**r, "本次刷": take})
+        left -= take * per
+
+    if not todo:
+        print("  电量预算内没有可刷的（或全是查不到副本的材料）")
+        return 0
+
+    total_elec = 0
+    for t in todo:
+        per = 0 if t.get("周本") else (
+            int(t["电量"]) // max(1, int(t["次数"])) if t["次数"] else 0)
+        total_elec += per * t["本次刷"]
+        skip = "（原计划 %d 次，预算内先刷 %d 次）" % (t["次数"], t["本次刷"]) \
+            if t["本次刷"] < t["次数"] else ""
+        print(f"  {t['副本']:<28} 刷 {t['本次刷']} 次{skip}")
+
+    print()
+    print(f"  本轮电量 {total_elec}（上限 {max_elec}）")
+
+    if not run_it:
+        print()
+        print("  这是计划。要真刷加 --run")
+        return 0
+
+    # ---------- 真刷 ----------
+    log_path = BASE / "state" / "farm_log.json"
+    logs = []
+    if log_path.exists():
+        try:
+            logs = json.loads(log_path.read_text(encoding="utf-8"))
+        except Exception:
+            logs = []
+
+    ok_n = 0
+    for t in todo:
+        runs = int(t["本次刷"])
+        if runs <= 0:
+            continue
+        # 拆成 od_material_farm 能吃的参数
+        d = t["副本"]
+        cmd = [sys.executable, str(HERE / "od_material_farm.py")]
+        if d.startswith("恶名狩猎·"):
+            cmd += ["--hunt", d.split("·", 1)[1]]
+        elif "代理人晋升" in d:
+            cmd += ["--training", "代理人晋升"]
+        elif "代理人技能" in d:
+            cmd += ["--training", "代理人技能"]
+        elif "音擎改装" in d:
+            cmd += ["--training", "音擎改装"]
+        elif "基础材料" in d:
+            cmd += ["--training", "基础材料"]
+        elif "专业挑战室" in d:
+            cmd += ["--challenge"]
+        elif d.startswith("区域巡防·"):
+            cmd += ["--patrol", d.split("·", 1)[1]]
+        else:
+            print(f"  ⚠ 不认识的副本「{d}」，跳过")
+            continue
+        cmd += ["--times", str(runs), "--run"]
+
+        print()
+        print(f"  ▶ {' '.join(cmd[1:])}")
+        r = subprocess.run(cmd, cwd=str(BASE), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=36000)
+        tail = (r.stdout or "").strip().splitlines()[-4:]
+        for line in tail:
+            print(f"    {line}")
+        if r.returncode == 0:
+            ok_n += 1
+            logs.append({
+                "time": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                "材料": t["材料"], "副本": d, "次数": runs, "成功": True,
+            })
+        else:
+            print(f"    ✘ 返回 {r.returncode}")
+            logs.append({
+                "time": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                "材料": t["材料"], "副本": d, "次数": runs, "成功": False,
+                "code": r.returncode,
+            })
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(logs[-200:], ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    print()
+    print(f"  完成 {ok_n}/{len(todo)} 项，记账写入 {log_path}")
+    return 0 if ok_n == len(todo) else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="通用养成链条：读游戏缺口 → 排副本 → 出计划")
     ap.add_argument("agent", help="角色名")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--run", action="store_true",
+                    help="真刷（不加只出计划）")
+    ap.add_argument("--max-elec", type=int, default=240,
+                    help="本轮电量上限，默认 240（一次满电）。"
+                         "超出自动截断次数，剩下的留给下一轮")
     args = ap.parse_args()
 
     d = plan(args.agent)
@@ -334,7 +467,7 @@ def main() -> int:
     print(f"  合计电量 {d['总电量']}　按 240/轮算 {(d['总电量'] + 239) // 240} 轮")
     print()
     print("  「周」= 恶名狩猎，每周 3 次免费（免费时电量记 0）")
-    return 0
+    return do_farm(d["行"], max_elec=args.max_elec, run_it=args.run)
 
 
 if __name__ == "__main__":

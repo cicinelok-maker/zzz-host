@@ -305,6 +305,53 @@ def select_agent(ui: Ui, m: Machine, name: str, verbose: bool = True) -> bool:
     return _select_once(ui, m, name, verbose)
 
 
+def set_hide_owned(ui: Ui, m: "Machine", hide: bool) -> bool:
+    """把代理人筛选里的「隐藏未拥有」开关设成 hide。
+
+    `hide=True`  → 只看已拥有（默认）
+    `hide=False` → 显示全部（未拥有的灰掉，也能点/读名字）
+
+    返回是否设置成功。
+    """
+    vs, inp = ui.vs, ui.inp
+    if not m.go_to("代理人筛选"):
+        return False
+    vs.frame(force=True)
+
+    # 找「隐藏未拥有」那一行，右侧是 ON/OFF 文字
+    lbl = vs.find("隐藏未拥有", (1250, 180, 1900, 300))
+    if not lbl:
+        return False
+    row_y = lbl["cy"]
+
+    state = ""
+    for it in vs.items((1600, row_y - 30, 1920, row_y + 30)):
+        t = (it.get("text") or "").strip().upper()
+        if t in ("ON", "OFF"):
+            state = t
+            break
+
+    want = "ON" if hide else "OFF"
+    if state == want:
+        print(f"  「隐藏未拥有」已经是 {want}")
+    else:
+        print(f"  「隐藏未拥有」现在 {state or '?'}，要点成 {want}")
+        # 开关在文字右侧，点 (1800, row_y)
+        inp.click(1800, int(row_y), wait=1.6)
+        vs.frame(force=True)
+        for it in vs.items((1600, row_y - 30, 1920, row_y + 30)):
+            t = (it.get("text") or "").strip().upper()
+            if t in ("ON", "OFF"):
+                state = t
+                break
+        print(f"  点完变成 {state or '?'}")
+
+    # 回代理人列表
+    inp.key("esc", wait=1.6)
+    vs.frame(force=True)
+    return state == want
+
+
 def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
     """扫一遍代理人列表（含滚动），返回 {名字: 等级}"""
     vs, inp = ui.vs, ui.inp
@@ -360,6 +407,20 @@ def list_agents(ui: Ui, m: Machine) -> dict[str, str]:
                     lv = it["text"]
                     break
             out[nm] = lv
+
+    # **单字残段过滤** —— OCR 有时只读到名字的最后一个字，
+    # 变成一个独立的「角色」（实测：「西」是「露西」的残段，用户确认账号里没有「希格莉德」）。
+    #
+    # 规则：单字名如果是**另一个已扫到的名字的子串**，就当残段丢掉。
+    #        「西」⊂「露西」 → 丢
+    #        「简」不在别的名字里 → 保留
+    if len(out) > 1:
+        names = list(out.keys())
+        for nm in names:
+            if len(nm) != 1:
+                continue
+            if any(nm != other and nm in other for other in names):
+                out.pop(nm, None)
 
     return out
 

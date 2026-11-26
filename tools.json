@@ -730,6 +730,12 @@
     },
     {
      "flag": "--json"
+    },
+    {
+     "flag": "--run"
+    },
+    {
+     "flag": "--max-elec"
     }
    ],
    "json_output": true,

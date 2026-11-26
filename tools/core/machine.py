@@ -72,6 +72,19 @@ TRANSITIONS: list[Transition] = [
                verify=("邮件", "代理人"), verify_region=R_ALL,
                note="START 打开菜单"),
 
+    # ============ 代理人筛选 ============
+    # 漏斗在代理人列表右上角，实测 (1662,53)。用 click_xy 而不是 click_text ——
+    # 漏斗是图标没有文字。
+    Transition("代理人列表", "代理人筛选",
+               [Action("click_xy", xy=(1662, 53), wait=2.0)],
+               verify=("代理人筛选", "隐藏未拥有"), verify_region=R_ALL,
+               note="右上角漏斗图标 @(1662,53)，无文字"),
+
+    Transition("代理人筛选", "代理人列表",
+               [Action("key", "esc", wait=1.8)],
+               verify=("代理人",), verify_region=R_ALL,
+               note="ESC 关闭筛选面板"),
+
     # ============ 更多功能 / 养成指南 ============
     # 「更多」必须限定在底部图标栏找 —— 全屏找可能命中别处的同名文字
     Transition("主菜单", "更多功能",
