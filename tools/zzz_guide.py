@@ -806,6 +806,14 @@ def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
     inp.move(1200, 600)
     time.sleep(0.3)
 
+    # **先滚到顶** —— 面板会记住上一次的滚动位置。
+    # 实测：上次停在「技能升级」那一节，这次直接从那读，
+    # **「代理人升级&晋升」（认证章）和「音擎强化&进阶」（音擎组件）整节都丢了**，
+    # 而它们恰好在上面。
+    for _ in range(15):
+        inp.wheel(6, wait=0.28)
+    vs.frame(force=True)
+
     for i in range(max_scroll + 1):
         if i > 0:
             inp.move(1200, 600)          # 每次都确保鼠标在面板内
