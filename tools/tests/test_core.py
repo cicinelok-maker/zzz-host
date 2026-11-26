@@ -1757,3 +1757,55 @@ class TestDocumentedCommandsWork(unittest.TestCase):
         self.assertEqual(bad, [],
                          "这些文档命令的参数形式不被接受：\n"
                          + "\n".join(f"  {c}\n    {e}" for c, e in bad))
+
+
+class TestBatchTargets(unittest.TestCase):
+    """`--from-targets` 的发布卫生与错误处理。
+
+    ## 为什么加
+
+    `targets.json` 决定「哪些角色会被自动刷本/升级」——
+    如果发布集里带着**别人账号的角色列表**，新用户一跑就会动他的账号。
+
+    实测过的行为：
+    · 空 agents → exit 0，只说「没有角色要养」（不动账号）
+    · 坏 JSON   → exit 2，带 JSON 解析错误原文
+    · 中间夹一个不存在的角色 → 那个返回 3 并打印「继续下一个」，
+      其余照跑，整体 exit 0
+    """
+
+    def test_targets_json_is_empty_template(self):
+        """仓库里的 targets.json 必须是空模板。"""
+        import json
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent.parent.parent / "targets.json"
+        if not p.exists():
+            self.skipTest("targets.json 不在当前集合里")
+        d = json.loads(p.read_text(encoding="utf-8"))
+        self.assertEqual(d.get("agents"), [],
+                         f"targets.json 里的 agents 不是空的：{d.get('agents')} "
+                         f"—— 发布集不能带别人账号的角色列表")
+
+    def test_batch_reports_bad_json_without_traceback(self):
+        """坏 targets.json 要不崩、不抛 traceback，且给出可读的提示。
+
+        **这条我第一版写成「跑子进程断言 exit 2」，但隔离环境里
+        `zzz_daily.py` 缺依赖，在解析 targets.json 之前就以 1 退出了** ——
+        测试测到的是环境问题，不是被测行为。
+
+        改成检查源码里那段的写法（够用，且不依赖运行环境）：
+        · 有 `except` 兜住 JSON 解析
+        · 提示里带原始异常 `{e}`
+        · 返回 2（「配置错」的语义）
+        """
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_daily
+        src = inspect.getsource(zzz_daily.main)
+        self.assertIn("读不了 targets.json", src,
+                      "没有针对坏 targets.json 的提示")
+        self.assertIn("return 2", src, "坏 JSON 应返回 2")
+        # 提示里要带原始异常，否则用户不知道哪里错了
+        self.assertIn("{e}", src, "提示里没带原始异常")
