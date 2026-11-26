@@ -311,36 +311,50 @@ def switch_to_detail(ui: Ui) -> bool:
 
 
 def current_agent(ui: Ui) -> str:
-    """读养成指南当前选中的角色名（左侧面板下部）。"""
-    vs = ui.vs
+    """读养成指南当前选中的角色名。
+
+    ## 必须先滚回顶部（这轮最大的教训）
+
+养成指南右侧是**一个长页面**（不是标签页），左边那 7 个是跳转锚点。
+滚到下面的「属性&等级」「技能」之后，**顶部角色牌不在视野里** ——
+此时去读名字会读到正文（实测返回过 `'玩偶驻场时间较长'`）。
+
+我一开始以为「区域不对」「OCR 不稳」，查了半天。
+**实际是「名字在页面顶部，而页面被滚走了」。**
+
+→ 每次读名字前都滚回顶部。代价是一次 wheel，但这是唯一可靠的办法。
+    """
+    vs, inp = ui.vs, ui.inp
     vs.frame(force=True)
 
-    # **区域必须收窄到「角色牌」那块** —— 原来用 (180,830,700,1010)，
-    # 把方案视图右上角的「推荐队伍」也读进来了（实测误判成角色名）。
-    #
-    # 实测角色名在 (320±60, 868±30)：
-    #   材料视图  挽昼 @(344,908)
-    #   方案视图  知更鸟 @(320,868) 一带
-    SKIP = ("RANK", "WIKI", "前瞻", "UP", "推荐队伍", "养成指南",
-            "养成材料计算", "代理人攻略", "方案概览", "补充建议",
-            "属性", "驱动", "音擎", "技能", "切换方案", "方案来源",
-            "养成材料", "STR", "EMPTY")
+    def _read_regions() -> str:
+        SKIP = ("RANK", "WIKI", "前瞻", "UP", "推荐队伍", "养成指南",
+                "养成材料计算", "代理人攻略", "方案概览", "补充建议",
+                "属性", "驱动盘", "音擎", "技能", "切换方案", "方案来源",
+                "养成材料", "STR", "EMPTY", "推荐", "等级")
+        for region in ((640, 120, 1000, 200),      # 顶部角色牌（主要位置）
+                       (250, 850, 660, 930)):      # 材料视图的左下角
+            for it in vs.items(region):
+                t = (it.get("text") or "").strip()
+                if not t or any(k in t for k in SKIP):
+                    continue
+                if re.fullmatch(r"[\u4e00-\u9fa5·]{1,12}", t):
+                    return t
+        return ""
 
-    # **名字有两个位置，都要查** ——
-    #   材料计算视图：左下角 (250,850,660,960)
-    #   方案概览视图：**顶部角色牌**（实测 丽娜 @(687,152)，紧挨着 S 级图标）
-    # 只查左下角的话，在方案概览视图下会读不到（实测返回「中」「空」这种噪声）。
-    for region in ((600, 110, 1000, 200),      # 顶部角色牌
-                   (250, 850, 660, 930),       # 左下角
-                   (250, 890, 660, 960)):
-        for it in vs.items(region):
-            t = (it.get("text") or "").strip()
-            if not t or any(k in t for k in SKIP):
-                continue
-            # 角色名：中文字 + 可能带 ·
-            if re.fullmatch(r"[\u4e00-\u9fa5·]{1,12}", t):
-                return t
-    return ""
+    # ① 先直接试（可能已经在顶部）
+    n = _read_regions()
+    if _is_real_agent(n):
+        return n
+
+    # ② 滚回顶部再试
+    inp.move(1000, 500)
+    time.sleep(0.2)
+    for _ in range(12):
+        inp.wheel(6, wait=0.25)
+    vs.frame(force=True)
+    n = _read_regions()
+    return n
 
 
 def _is_real_agent(name: str) -> bool:
@@ -611,25 +625,45 @@ def read_detail(ui: Ui) -> dict:
     out: dict = {"分节": [], "角色": ""}
 
     # ---------- ① 找表头，拿三列的 x 锚点 ----------
+    # **表头要选「列标签最多」的那一行，不是 y 最小的那一行。**
+    #
+    # 踩过：页面上有一句说明文字 `所需材料与仓库内材料按照最高稀有度合成计算`，
+    # 它含「所需」而且 y 比真表头小（544 vs 862）。
+    # 我原来取 `min(cy)` 当表头行 → 只凑到 1 个列标签 → 直接返回空。
+    #
+    # 现在按 y 分组，**每组里能凑齐几个标准列名**，取最多的那组。
     heads = [it for it in items if "所需" in txt(it) or "仍需" in txt(it)
              or txt(it) in ("已有", "养成材料")]
     if not heads:
         return out
-    # 表头应该在同一行
-    hy = min(cy(x) for x in heads)
-    heads = [x for x in heads if abs(cy(x) - hy) <= 25]
 
-    col = {}
+    groups: dict[int, list] = {}
     for it in heads:
-        t = txt(it)
-        if "所需" in t:
-            col["所需"] = cx(it)
-        elif "仍需" in t:
-            col["仍需"] = cx(it)
-        elif t == "已有":
-            col["已有"] = cx(it)
-        elif t == "养成材料":
-            col["材料"] = cx(it)
+        y = cy(it)
+        k = next((kk for kk in groups if abs(kk - y) <= 25), y)
+        groups.setdefault(k, []).append(it)
+
+    def cols_of(group: list) -> dict:
+        c = {}
+        for it in group:
+            t = txt(it)
+            # **只认「等于」或「短标签」** —— 长句子里的「所需」不算
+            if t in ("所需", "所需：", "所需:"):
+                c["所需"] = cx(it)
+            elif t in ("仍需获取", "仍需", "仍需获取："):
+                c["仍需"] = cx(it)
+            elif t == "已有":
+                c["已有"] = cx(it)
+            elif t == "养成材料":
+                c["材料"] = cx(it)
+        return c
+
+    best = {}
+    for g in groups.values():
+        c = cols_of(g)
+        if len(c) > len(best):
+            best = c
+    col = best
     if len(col) < 3:
         return out
 
@@ -647,14 +681,20 @@ def read_detail(ui: Ui) -> dict:
     name_x = col.get("材料", min(v for _, v in anchors))
 
     # ---------- ② 角色名（左侧，材料表上方）----------
+    # **角色名只在「顶部角色牌」和「左下角」找，不要在材料表区域乱找** ——
+    # 踩过：`read_detail` 把「进阶物理芯片」当成角色名了（材料行也在那个 x 范围里）。
     SKIP_ROLE = ("RANK", "WIKI", "养成", "材料", "明细", "计算", "方案",
-                 "补充", "代理人技能", "代理人升级")
-    for it in vs.items((150, 780, 700, 1010)):
-        t = txt(it)
-        if not t or any(k in t for k in SKIP_ROLE):
-            continue
-        if re.fullmatch(r"[\u4e00-\u9fa5·]{1,12}", t):
-            out["角色"] = t
+                 "补充", "代理人技能", "代理人升级", "芯片", "组件", "认证章",
+                 "记录", "数据", "残蜕", "舞鞋", "引擎", "驱动", "推荐")
+    for _reg in ((640, 120, 1000, 200), (250, 850, 660, 940)):
+        for it in vs.items(_reg):
+            t = txt(it)
+            if not t or any(k in t for k in SKIP_ROLE):
+                continue
+            if re.fullmatch(r"[\u4e00-\u9fa5·]{1,12}", t):
+                out["角色"] = t
+                break
+        if out["角色"]:
             break
 
     # ---------- ③ 按 y 聚类成行 ----------

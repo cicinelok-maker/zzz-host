@@ -258,19 +258,18 @@ def plan(agent: str) -> dict:
     if not zzz_guide.open_guide(ui):
         return {"ok": False, "error": "到不了养成指南"}
 
-    # **校验面板显示的是不是你要的角色**。
+    # **确认面板显示的是不是你要的角色，不是就切过去。**
     #
-    # 养成指南有状态 —— 它停在上一次选中的角色。不校验就会拿别人的缺口当你的，
+    # 养成指南有状态 —— 停在上一次选中的角色。不处理就会拿别人的缺口当你的，
     # 而且**完全不会报错**（用户会以为那就是自己的清单）。
     #
-    # ## 为什么「校验」而不是「自动切」
+    # ## 之前为什么放弃了自动切
     #
-    # 自动切角色实测不可靠，两条路都试过：
-    # · 顶部箭头选择条：从「挽昼」往右点，**第 2 次就进空槽**（中间有空位）
-    # · ⊞ 网格：能找到名字 @(1290,573)，但点名字 / 点卡片都选不中
+    # 切完读不到名字，以为是切换失败。**实际是页面被滚走了** ——
+    # 养命指南右侧是一个长页面，顶部角色牌滚出视野后 `current_agent()`
+    # 会读到正文（实测返回 `'玩偶驻场时间较长'`）。
     #
-    # **所以这里只校验，不一致就明确报错让人手动切。**
-    # 静默读错数据的危害比「让用户多点一次」大得多。
+    # 现在 `current_agent()` 会先滚回顶部再读，所以自动切可以恢复。
     _shown = zzz_guide.current_agent(ui)
     try:
         from core.agent_name import canonical_agent as _canon
@@ -279,32 +278,17 @@ def plan(agent: str) -> dict:
     except Exception:
         _want, _got = agent, _shown or ""
 
-    # **三种情况区别对待**：
-    #   ① 读到真名字且和请求一致   → 继续
-    #   ② 读到真名字但不一致        → **报错**（宁可不做，也不能读错数据）
-    #   ③ 读不到真名字（噪声/空）   → **警告后继续**
-    #
-    # 为什么 ③ 要放行：角色名在面板上有两个位置（材料视图左下角 / 方案概览顶部），
-    # 而且 OCR 不稳（实测读到过「中」「国」「章」）。
-    # 如果读不到就拒绝执行，会把「面板其实是对的」也挡在外面。
-    try:
-        _real = zzz_guide._is_real_agent(_shown)
-    except Exception:
-        _real = bool(_shown)
-
-    if _real:
-        _same = (_got == _want or _want in _got or _got in _want)
-        if not _same:
-            return {"ok": False,
-                    "error": (f"养成指南当前显示的是「{_shown}」，不是「{agent}」。\n"
-                              f"  请在游戏里手动切到「{agent}」再跑一次。\n"
-                              f"  （自动切换不可靠 —— 箭头条中间有空位、"
-                              f"⊞ 网格点不中，这两条都试过了）")}
+    if _got and (_got == _want or _want in _got or _got in _want):
         print(f"  面板确认是「{_shown}」")
     else:
-        print(f"  ⚠ 读不到面板上的角色名（读到「{_shown or '空'}」），"
-              f"假设就是「{agent}」")
-        print(f"     如果下面的材料清单不对，先在游戏里确认指南选的是「{agent}」")
+        print(f"  面板当前是「{_shown or '读不到'}」，切到「{agent}」")
+        if not zzz_guide.select_agent(ui, agent):
+            return {"ok": False,
+                    "error": (f"切不到「{agent}」（面板停在「{_shown or '读不到'}」）。\n"
+                              f"  养成指南只覆盖当期有攻略的角色（约 46 个），"
+                              f"这个角色可能没有官方攻略。")}
+        zzz_guide.switch_to_detail(ui)
+
     if not zzz_guide.switch_to_detail(ui):
         return {"ok": False, "error": "切不到养成材料明细"}
 
