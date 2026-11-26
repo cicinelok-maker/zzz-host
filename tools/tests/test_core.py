@@ -2432,3 +2432,72 @@ class TestPathsConfigType(unittest.TestCase):
             except SyntaxError as e:
                 bad.append(f"{f.name}:{e.lineno} {e.msg}")
         self.assertEqual(bad, [], f"这些文件编译不过：{bad}")
+
+
+class TestFailureDiagnosis(unittest.TestCase):
+    """两种「失败」不能长得一样（BUG-033 / BUG-039）。
+
+    ## BUG-039 `click_verify` 把验证函数的异常吞成「点击失败」
+
+    ```python
+    try:
+        if check(): return True
+    except Exception:
+        pass                    # ← 判定函数崩了 = 点击没生效
+    ```
+
+    人于是去查坐标、查界面，而问题在判定函数里。
+
+    ## BUG-033 OCR 模型加载失败没有提示
+
+    `_make_ocr()` 只处理了「import 不到」（没装 OneDragon），
+    但「装了、模型文件坏了」是另一种情况 —— 裸异常一路冒到顶层变成 traceback，
+    表现却是「读不到画面」，很容易被当成「游戏卡了」。
+    """
+
+    def test_click_verify_reports_check_crash(self):
+        """验证函数抛异常时要说出「是它自己崩了」，不能说「点击失败」。"""
+        import io
+        import contextlib
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.click import click_verify
+
+        class FakeInp:
+            def click(self, x, y, wait=0): pass
+
+        class FakeVs:
+            def frame(self, force=False): pass
+
+        class FakeUi:
+            vs = FakeVs()
+            inp = FakeInp()
+
+        def broken():
+            raise TypeError("模拟判定函数崩了")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            r = click_verify(FakeUi(), (10, 20), broken, tries=2,
+                             wait=0.001, label="测试")
+        out = buf.getvalue()
+        self.assertFalse(r)
+        self.assertIn("验证函数本身抛异常", out,
+                      "没有区分「判定函数崩了」和「点击没生效」")
+        self.assertIn("TypeError", out, "没报出异常类型")
+
+    def test_ocr_load_failure_has_message(self):
+        """OCR 模型加载失败要有可读提示，不是裸 traceback。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import vision
+        src = inspect.getsource(vision)
+        self.assertIn("OCR 模块加载失败", src,
+                      "OCR 模型加载失败时没有提示")
+        i = src.find("init_model()")
+        self.assertGreater(i, -1)
+        self.assertIn("except Exception", src[max(0, i - 200):i + 800],
+                      "init_model() 没有被 try 包住")

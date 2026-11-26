@@ -127,8 +127,33 @@ class Vision:
                 print("     下载「完整包」而不是「源码包」")
             print("=" * 62)
             raise SystemExit(2)
-        o = OnnxOcrMatcher()
-        o.init_model()
+        # **模型加载失败也要说人话**（BUG-033）。
+        #
+        # 上面只处理了「模块 import 不到」（OneDragon 没装 / 路径不对），
+        # 但**装是装了、模型文件坏了**是另一种情况：
+        # `OnnxOcrMatcher()` 或 `init_model()` 会抛 ONNXRuntimeError /
+        # FileNotFoundError 之类，一路冒到顶层变成 30 行 traceback。
+        #
+        # 而这类错误的表现是「读不到画面」—— 很容易被当成
+        # 「到不了界面」或「游戏卡了」，人跑去查游戏。
+        try:
+            o = OnnxOcrMatcher()
+            o.init_model()
+        except Exception as e:
+            from core.paths import one_dragon_home as _oh
+            print("=" * 62)
+            print(f"✘ OneDragon 的 OCR 模块加载失败：{type(e).__name__}")
+            print(f"  {e}")
+            print("=" * 62)
+            print("  装是装了，但模型文件可能不完整。常见原因：")
+            print("  · 下载的是「源码包」不是「完整包」→ 缺 assets/models/onnx_ocr")
+            print("  · 解压时漏了 assets 目录")
+            print("  · 杀软删了 .onnx 文件")
+            print()
+            print(f"  当前 OneDragon 目录：{_oh() or '（没找到）'}")
+            print("  验证：python tools/check_config.py")
+            print("=" * 62)
+            raise SystemExit(2) from None
         return o
 
     # ================= 帧 =================

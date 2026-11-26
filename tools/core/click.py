@@ -67,6 +67,16 @@ def click_verify(ui, xy: tuple[int, int], check, tries: int = 4,
     """
     vs, inp = ui.vs, ui.inp
     x, y = xy
+    # **验证函数自己抛异常，不能被吞成「点击失败」**（BUG-039）。
+    #
+    # 原来 `except Exception: pass` —— `check()` 里要是崩了（OCR 挂了、
+    # 或者判定函数自己有 TypeError），表现出来是
+    # 「点「X」失败（试了 4 次）」，于是人跑去查坐标、查界面，
+    # 而真正的问题在判定函数里。
+    #
+    # 现在：异常记下来，第一次就报一句「验证函数本身抛异常」，
+    # 最后那条失败信息也会带上异常类型 —— 让两种失败长得不一样。
+    _exc = None
     for i in range(max(1, tries)):
         dx, dy, extra = RETRY_PLAN[min(i, len(RETRY_PLAN) - 1)]
         inp.click(x + dx, y + dy, wait=wait + extra)
@@ -74,8 +84,15 @@ def click_verify(ui, xy: tuple[int, int], check, tries: int = 4,
         try:
             if check():
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            if _exc is None:            # 只报第一次，别刷屏
+                print(f"    ⚠ 验证函数本身抛异常（{type(e).__name__}: {e}）"
+                      f"—— 这多半是 bug，不是「点击没生效」")
+            _exc = e
     if label:
-        print(f"    点「{label}」失败（试了 {tries} 次）")
+        if _exc is not None:
+            print(f"    点「{label}」未通过验证（试了 {tries} 次；"
+                  f"验证函数抛过 {type(_exc).__name__}）")
+        else:
+            print(f"    点「{label}」失败（试了 {tries} 次）")
     return False
