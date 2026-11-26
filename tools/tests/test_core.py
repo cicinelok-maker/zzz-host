@@ -2302,15 +2302,40 @@ class TestSilentFailureGuards(unittest.TestCase):
     """
 
     def test_unknown_key_raises(self):
-        """未知键名必须抛 ValueError，不能静默。"""
+        """未知键名必须变成错误，不能静默。
+
+        ## 这条测试我第一版写成了「真的去按一次」
+
+        ```python
+        i = Input()
+        with self.assertRaises(ValueError):
+            i.key("escape")
+        ```
+
+        而 `key()` 里**先跑焦点守卫**（`_guard("按键")`）——
+        游戏窗口不在前台时它先抛 `FocusLost`，根本走不到键名检查。
+
+        于是这条测试**依赖「游戏恰好在前台」**，时红时绿。
+        （和之前那条假定 `AGENTS.md` 一定存在的一样：测试不该依赖环境。）
+
+        现在拆成两半，都不碰游戏：
+        · `_scan("escape")` 返回 0 —— 这是「静默」的源头
+        · `key()` 里确实把这个 0 变成了 `ValueError`
+        """
         import sys
         import pathlib
+        import inspect
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-        from core.input import Input
-        i = Input()
-        with self.assertRaises(ValueError) as ctx:
-            i.key("escape")          # 故意打错（正确是 "esc"）
-        self.assertIn("未知的键名", str(ctx.exception))
+        from core.input import Input, _scan
+        # ① 未知名字在 _scan 里会变成 0 —— 这就是原来「静默什么都不做」的根
+        self.assertEqual(_scan("escape"), 0,
+                         "_scan 对未知名字居然返回了非 0")
+        # ② key() 把这个 0 变成错误（读源码，不真的按）
+        src = inspect.getsource(Input.key)
+        self.assertIn("未知的键名", src,
+                      "key() 里没有「未知的键名」的错误")
+        self.assertIn("raise ValueError", src,
+                      "key() 里没有 raise ValueError —— 还是静默返回")
 
     def test_known_key_names_still_work(self):
         """合法的键名不该受影响（不真的按，只验证 _scan 能解析）。"""
