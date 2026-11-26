@@ -843,6 +843,28 @@
    "destructive": false
   },
   {
+   "name": "zzz_guide_agents",
+   "cmd": "python tools/zzz_guide_agents.py",
+   "args": [
+    {
+     "flag": "--diff"
+    },
+    {
+     "flag": "--json"
+    }
+   ],
+   "json_output": true,
+   "exit_codes": [
+    0,
+    3
+   ],
+   "purpose": "枚举养成指南覆盖的角色（⊞ → 选择代理人 → 滚动读全）",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "zzz_guide_plan",
    "cmd": "python tools/zzz_guide_plan.py",
    "args": [],
