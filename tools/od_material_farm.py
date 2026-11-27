@@ -164,6 +164,27 @@ def main() -> int:
     for cat, name, n in plans:
         print(f"  {cat} · {name} ×{n}")
 
+    # **`mission_name` 空着写进去 = 计划跑不起来**（P0-3 / P0-4）。
+    #
+    # 下面 `ChargePlanItem(..., mission_name=getattr(args, "mission", ""))` ——
+    # 参数是传了的，但 `--mission` **默认空串**。
+    #
+    # 而「实战模拟室」需要子副本名（代理人技能要传角色名），
+    # 「专业挑战室」「恶名狩猎」也需要具体的关卡名。
+    # 空着写进 OneDragon 的计划里，**启动后会立刻失败**，而这里什么都不说。
+    #
+    # 现在：这些类别缺 `mission_name` 就直接拒绝，并说清楚该传什么。
+    _NEED_MISSION = {"实战模拟室", "专业挑战室", "恶名狩猎"}
+    _miss = [c for c, _n, _t in plans if c in _NEED_MISSION]
+    if _miss and not getattr(args, "mission", ""):
+        print(f"  ✘ {'、'.join(sorted(set(_miss)))} 需要子副本名，但没传 --mission")
+        print(f"     实战模拟室-代理人技能：--mission 要传**角色名**")
+        print(f"     其他：--mission 传具体关卡名")
+        print(f"     例：python tools/{Path(__file__).name} "
+              f"--training 代理人技能 --mission 佩洛伊斯 --times 2")
+        print(f"     （不加 --mission 也会写进 OneDragon 的计划，但**启动后必然失败**）")
+        return 2
+
     sys.path.insert(0, str(OD / "src"))
     sys.path.insert(0, str(OD / "plugins"))
     from zzz_od.context.zzz_context import ZContext
