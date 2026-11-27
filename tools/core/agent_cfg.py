@@ -64,12 +64,59 @@ _cache: dict | None = None
 
 
 def meta() -> dict:
+    """读 `tools/disc_meta.json`。
+
+    ## **读不了 ≠ 没有配置**（E3）
+
+    原来是：
+
+    ```python
+    try:
+        _cache = json.loads(META.read_text(...))
+    except Exception:
+        _cache = {"角色": {}, "职业模板": {}}      # 静默变空
+    ```
+
+    空 dict 的后果是连锁的：
+
+    · `role_of("丽娜")` -> 找不到 -> 回落 `DEFAULT_ROLE = "强攻"`
+    · `cfg_of("丽娜")`  -> 用「强攻」模板补 -> 提示「**这个角色没配置**」
+
+    而真实情况是**数据文件坏了**（手工改错 / 合并冲突留了 `<<<<<<<` /
+    编辑器保存中断）。用户看到「这个角色没配置」会去 disc_meta 里
+    加那个角色 —— **方向完全错了**，然后越改越乱。
+
+    现在：读不了就**当场说清楚并 exit 2**（配置缺失），
+    不要伪装成「角色级」的问题。
+    """
     global _cache
     if _cache is None:
+        if not META.exists():
+            print("=" * 62)
+            print(f"✘ 找不到角色配置：{META}")
+            print("=" * 62)
+            print("  这是工具的核心数据（角色套装 / 词条要求 / 职业模板）。")
+            print("  缺了它，任何角色都会被当成「没配置」—— 那不是真的。")
+            print("  恢复：git checkout tools/disc_meta.json")
+            print("=" * 62)
+            raise SystemExit(2)
         try:
             _cache = json.loads(META.read_text(encoding="utf-8"))
-        except Exception:
-            _cache = {"角色": {}, "职业模板": {}}
+        except Exception as e:
+            print("=" * 62)
+            print(f"✘ {META.name} **读不了**：{type(e).__name__}")
+            print(f"  {e}")
+            print("=" * 62)
+            print("  这不是「某个角色没配置」，是整个数据文件坏了。")
+            print("  常见原因：手工改错 / 合并冲突留了 <<<<<<< / 编辑器保存中断")
+            print(f"  文件：{META}")
+            print("  恢复：git checkout tools/disc_meta.json")
+            print("=" * 62)
+            raise SystemExit(2) from None
+        if not isinstance(_cache, dict):
+            print(f"✘ {META.name} 的内容是 {type(_cache).__name__}，不是对象 —— 数据文件坏了")
+            print(f"  恢复：git checkout tools/disc_meta.json")
+            raise SystemExit(2)
     return _cache
 
 

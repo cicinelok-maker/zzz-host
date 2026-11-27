@@ -1,5 +1,5 @@
 {
-  "_note": "成本/权重都是可校准的近似值：版本更新后按实测改这里，引擎只负责相对排序与电量预算。**账号信息（昵称/UID）不要写这里** —— 写 config.local.json（已 gitignore）。",
+  "_note": "成本/权重都是可校准的近似值：版本更新后按实测改这里，引擎只负责相对排序与电量预算。**账号信息（昵称/UID）不要写这里** —— 写 config.local.json（已 gitignore）。**真正生效的段：cost / gain / graduation / reset。**其余见 _unused_keys。",
   "denny_per_stamina": 5000,
   "reset": {
     "daily_hour": 4,
@@ -163,5 +163,12 @@
     "wengine": 60,
     "disc": 15
   },
-  "_account_note": "账号信息放 config.local.json，不要放这个文件。这个文件会进发布包。"
+  "_account_note": "账号信息放 config.local.json，不要放这个文件。这个文件会进发布包。",
+  "_unused": "以下配置段**目前没有任何代码读**（E4）。改了不会生效，留着是为了以后接上时不用重新想数值。**如果你要校准，只改 cost / gain / graduation / reset 这几段。**",
+  "_unused_keys": {
+    "denny_per_stamina": "每点电量折多少丁尼 —— 目前没有代码用它做决策",
+    "role_weight": "定位权重 —— 排序还没接这个",
+    "team_weight": "配队权重 —— 配队功能还没落地",
+    "stages": "阶段划分 —— 还没接"
+  }
 }

@@ -6089,3 +6089,181 @@ class TestUnreadableIsNotUnscanned(unittest.TestCase):
             self.assertTrue(p2.get("读不了"), "坏了却标成「没读过」")
         finally:
             W.STATE = orig
+
+
+class TestBrokenMetaIsNotAnEmptyConfig(unittest.TestCase):
+    """`disc_meta.json` 坏了不能静默回退「强攻」模板（E3）。
+
+    ## 原来
+
+    ```python
+    try:
+        _cache = json.loads(META.read_text(...))
+    except Exception:
+        _cache = {"角色": {}, "职业模板": {}}      # 静默变空
+    ```
+
+    空 dict 的后果是连锁的：
+
+        role_of("丽娜") -> 找不到 -> 回落 DEFAULT_ROLE = "强攻"
+        cfg_of("丽娜")  -> 用「强攻」模板补 -> 提示「这个角色没配置」
+
+    而真实情况是**数据文件坏了**。用户看到「这个角色没配置」会去
+    disc_meta 里加那个角色 —— **方向完全错了**，然后越改越乱。
+    """
+
+    def _try(self, content, exists=True):
+        import sys
+        import pathlib
+        import tempfile
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import agent_cfg as A
+
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        f = tmp / "disc_meta.json"
+        if exists:
+            f.write_text(content, encoding="utf-8")
+        orig_meta, orig_cache = A.META, A._cache
+        A.META, A._cache = f, None
+        buf = io.StringIO()
+        code = None
+        try:
+            with contextlib.redirect_stdout(buf):
+                A.meta()
+        except SystemExit as e:
+            code = e.code
+        finally:
+            A.META, A._cache = orig_meta, orig_cache
+        return code, buf.getvalue()
+
+    def test_missing_file_exits_2(self):
+        code, out = self._try(None, exists=False)
+        self.assertEqual(code, 2, "缺文件没有 exit 2")
+        self.assertIn("找不到角色配置", out)
+
+    def test_broken_json_exits_2(self):
+        code, out = self._try("{半截")
+        self.assertEqual(code, 2, "坏 JSON 没有 exit 2")
+        self.assertIn("读不了", out)
+        self.assertIn("不是「某个角色没配置」", out,
+                      "没点明「这和数据文件坏了是一回事」")
+
+    def test_wrong_type_exits_2(self):
+        code, out = self._try("[1,2,3]")
+        self.assertEqual(code, 2, "内容不是对象没有 exit 2")
+
+    def test_good_file_does_not_exit(self):
+        code, _ = self._try('{"角色": {}, "职业模板": {}}')
+        self.assertIsNone(code, "正常文件不该退出")
+
+
+class TestNoDeadConfigSections(unittest.TestCase):
+    """`config.json` 里不能有「配了但没人读」的段（E4）。
+
+    ## 原来
+
+    `_note` 说「成本/权重都是可校准的近似值……引擎只负责相对排序」，
+    而其中 4 段**零引用**：
+
+        denny_per_stamina / role_weight / team_weight / stages
+
+    用户照着改，什么都不会发生 —— 比「没有这个配置」更伤人，
+    因为它会让人怀疑「是不是我改错了地方」。
+
+    现在：死配置段列在 `_unused_keys` 里（并在 `_note` 里点明
+    「真正生效的只有 cost / gain / graduation / reset」）。
+    **以后新增的段必须被引用，或者也列进 `_unused_keys`。**
+    """
+
+    def test_every_section_is_live_or_declared_dead(self):
+        import json
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        cfg_p = root / "config.json"
+        if not cfg_p.exists():
+            self.skipTest("config.json 不在当前集合里")
+        cfg = json.loads(cfg_p.read_text(encoding="utf-8"))
+        declared_dead = set((cfg.get("_unused_keys") or {}).keys())
+
+        tools = root / "tools"
+        srcs = []
+        for f in sorted(tools.rglob("*.py")):
+            if "_legacy" in str(f):
+                continue
+            srcs.append(f.read_text(encoding="utf-8", errors="replace"))
+        blob = "\n".join(srcs)
+
+        idle = []
+        for k in cfg:
+            if k.startswith("_"):
+                continue
+            if k in declared_dead:
+                continue
+            if f'"{k}"' in blob or f"'{k}'" in blob:
+                continue
+            idle.append(k)
+        self.assertEqual(idle, [],
+                         f"这些配置段没人读，也没 declared dead：{idle}")
+
+    def test_unused_keys_are_still_present(self):
+        """`_unused_keys` 里写的段必须真的还在 config.json 里。"""
+        import json
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        cfg_p = root / "config.json"
+        if not cfg_p.exists():
+            self.skipTest("config.json 不在当前集合里")
+        cfg = json.loads(cfg_p.read_text(encoding="utf-8"))
+        for k in (cfg.get("_unused_keys") or {}):
+            self.assertIn(k, cfg, f"_unused_keys 里的 {k} 已经不在 config.json 里了")
+
+
+class TestAscendCertSingleSource(unittest.TestCase):
+    """认证章成本只能有**一个**定义，而且和 `materials.json` 的差额要可见（E2）。
+
+    ## 原来
+
+        zzz_farm_plan.py:108   ASCEND_CERT = {20: 4, 30: 20, 40: 20, 50: 30}
+        zzz_cost.py:28         ASCEND_CERT = {20: 4, 30: 20, 40: 20, 50: 30, 60: 0}
+
+    两份一模一样的常量 = 两份会漂移的真相。
+
+    ## 数值本身也对不上
+
+    `materials.json`（标注「zzz.gg/jp 角色页 7 个角色交叉」）：
+    初阶 4 + 高阶 32 + 专属 30 = **66**
+    代码：4 + 20 + 20 + 30 = **74**
+
+    **差 8。** 分档方式不同（按等级 vs 按层），把 66 摊到 4 档需要臆造映射 ——
+    所以这里只做「单一来源 + 差额可见」，数值留给作者按实测定。
+    """
+
+    def test_both_modules_agree(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_farm_plan as F
+        import zzz_cost as C
+        for lv in (20, 30, 40, 50):
+            self.assertEqual(F.ASCEND_CERT[lv], C.ASCEND_CERT[lv],
+                             f"{lv} 级两边不一致 —— 又分叉了")
+
+    def test_discrepancy_is_visible(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.cost_data import (ASCEND_CERT, materials_cert_total,
+                                    check_against_materials)
+        want = materials_cert_total()
+        if want < 0:
+            self.skipTest("读不到 materials.json")
+        got = sum(ASCEND_CERT.values())
+        why = check_against_materials()
+        if got != want:
+            # **现在确实不一致** —— 要求检测器把它说出来，而不是沉默
+            self.assertTrue(why, f"代码 {got} vs 数据 {want}，检测器却没报")
+        else:
+            self.assertEqual(why, [])
