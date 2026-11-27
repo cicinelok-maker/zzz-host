@@ -22,6 +22,11 @@
 """
 from __future__ import annotations
 
+import itertools as _itertools
+
+# Vision 实例的唯一序号（E12）—— 比 id() 可靠：id 会被回收复用
+_VISION_SEQ = _itertools.count(1)
+
 import sys
 import threading
 import time
@@ -71,6 +76,16 @@ class Vision:
                   file=sys.stderr)
             raise SystemExit(5)
         self.ocr = ocr or self._make_ocr()
+        # **实例唯一序号**（E12）。
+        #
+        # `describe()` 的缓存键原来是 `(id(self), frame_key)` ——
+        # 而 `id()` 在对象被回收后**会被复用**。两个不同的 Vision 实例
+        # 只要恰好拿到同一个地址，就会命中对方缓存的结论。
+        #
+        # 实测症状：同一份代码连跑两次，一次过一次不过；
+        # `audit_ship` 内部重跑 run_tests 时红而单独跑全绿 ——
+        # 看起来像环境问题，其实是缓存串台。
+        self._uid = next(_VISION_SEQ)
         self._img = None
         self._img_t = 0.0
         self._frame_id = 0                 # 每抓一帧 +1，OCR 缓存按它失效

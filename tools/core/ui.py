@@ -59,6 +59,44 @@ class Ui:
             time.sleep(0.3)
         self.vs.frame(force=True)
 
+        # **异常退出也要把输入模式还原**（E11）。
+        #
+        # `start()` 会把游戏从手柄态切成键鼠态（`mouse_mode()`），
+        # 而 `back_until()` 之类的动作还会临时切回手柄态。
+        # 如果进程在那中间崩了 / 被 Ctrl+C / 断电，
+        # **游戏就停在那个中间状态** —— 用户拿手柄玩发现没反应，
+        # 或者工具下次跑时鼠标注入不生效。
+        #
+        # 现在把恢复挂到 `atexit`：正常退出、异常退出、SystemExit 都会走。
+        # 进程被强杀（taskkill /F）时仍然无效，那是操作系统的保证边界。
+        self._stopped = False
+        import atexit as _atexit
+        try:
+            _atexit.register(self.stop)
+        except Exception:
+            pass
+        try:
+            import signal as _sig
+
+            def _sig_handler(_signum, _frame):
+                self.stop()
+                raise SystemExit(130)
+
+            # 只接管 SIGINT；SIGTERM 在 Windows 上行为不同，不碰
+            _sig.signal(_sig.SIGINT, _sig_handler)
+        except Exception:
+            pass
+
+    def stop(self) -> None:
+        """把输入模式还原成键鼠态。**可重复调用**（atexit 和正常路径都会走）。"""
+        if getattr(self, "_stopped", False):
+            return
+        self._stopped = True
+        try:
+            self.inp.mouse_mode()
+        except Exception:
+            pass
+
     # ---------- 点击 ----------
     def click_text(self, keyword: str, region: Region, *, exact: bool = False,
                    wait: float = 0.35, quiet: bool = True) -> bool:

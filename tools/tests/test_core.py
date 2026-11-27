@@ -2771,7 +2771,12 @@ class TestNoUndefinedVariables(unittest.TestCase):
                 elif isinstance(node, _ast.alias):
                     GLOBALS.add((node.asname or node.name).split(".")[0])
         import builtins
-        BUILTIN = set(dir(builtins)) | {"__file__", "__name__", "__doc__"}
+        # **`self` / `cls` 永远算「已定义」**：它们是方法接收者。
+        # 而嵌套函数（比如 `Ui.start()` 里的信号处理函数）会用到外层的 `self` ——
+        # 那个名字不在它自己的参数表里，但完全合法。
+        # 不加上这一条，扫描器会把每个嵌套的闭包都误报成未定义变量。
+        BUILTIN = (set(dir(builtins))
+                   | {"__file__", "__name__", "__doc__", "self", "cls"})
         bad = []
         for f in sorted(root.rglob("*.py")):
             if "_legacy" in str(f) or f.name.startswith("test"):
@@ -4762,3 +4767,99 @@ class TestDefaultAgentSingleSource(unittest.TestCase):
         from core.game_cfg import DEFAULT_AGENT
         self.assertEqual(DEFAULT_AGENT, "",
                          f"DEFAULT_AGENT 出厂值不是空串：{DEFAULT_AGENT!r}")
+
+
+class TestVisionCacheKeyIsUnique(unittest.TestCase):
+    """`describe()` 的缓存键不能用 `id(vision)`（E12）。
+
+    ## 为什么
+
+    `id()` 在对象被回收后**会被复用**。两个不同的 Vision 实例
+    只要恰好拿到同一个地址，就会命中对方缓存的结论。
+
+    实测症状：同一份代码连跑两次，一次过一次不过；
+    `audit_ship` 内部重跑 `run_tests` 时红而单独跑全绿 ——
+    看起来像环境问题，其实是缓存串台。
+
+    （我自己就踩过：`TestSkillPageNotStolen` 的假 Vision
+    `_frame_key()` 恒返回 1，加上 `id()` 复用，测试间歇性失败。）
+    """
+
+    def test_vision_has_uid(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.vision import Vision, _VISION_SEQ
+        self.assertTrue(hasattr(Vision, "__init__"))
+        self.assertTrue(callable(next), "_VISION_SEQ 不可迭代")
+        # 序号必须递增
+        a = next(_VISION_SEQ)
+        b = next(_VISION_SEQ)
+        self.assertNotEqual(a, b, "序号没递增")
+
+    def test_anchors_uses_uid_not_id(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "core" / "anchors.py").read_text(encoding="utf-8")
+        self.assertIn('_uid', src, "anchors 没用 _uid")
+        # 不能直接拿 id(vision) 当键
+        self.assertNotIn("vk = (id(vision),", src,
+                         "缓存键还是裸 id(vision)")
+
+
+class TestInputModeRestored(unittest.TestCase):
+    """进程异常退出也要把输入模式还原（E11）。
+
+    ## 问题
+
+    `Ui.start()` 会把游戏从手柄态切成键鼠态，
+    而 `back_until()` 之类的动作还会临时切回手柄态。
+    如果进程在那中间崩了 / 被 Ctrl+C，**游戏就停在那个中间状态** ——
+    用户拿手柄玩发现没反应，或者下次跑时鼠标注入不生效。
+
+    原来 `Ui` **没有 `stop()`，也没有 `atexit`**。
+    """
+
+    def test_ui_has_stop(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.ui import Ui
+        self.assertTrue(hasattr(Ui, "stop"), "Ui 没有 stop()")
+
+    def test_stop_is_idempotent(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.ui import Ui
+
+        class FV:
+            win = {"hwnd": 1}
+            occluded = False
+            def text(self, r): return ""
+            def items(self, r): return []
+            def frame(self, force=False): pass
+            def wait_still(self, **k): pass
+            def _frame_key(self): return 1
+
+        class FI:
+            def __init__(self): self.n = 0
+            def mouse_mode(self): self.n += 1
+
+        fake = FI()
+        u = Ui(FV(), fake)
+        u._stopped = False
+        u.stop()
+        u.stop()
+        self.assertEqual(fake.n, 1, "stop() 不幂等 —— mouse_mode 被调了多次")
+
+    def test_start_registers_atexit(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.ui import Ui
+        src = inspect.getsource(Ui.start)
+        self.assertIn("_atexit.register(self.stop)", src,
+                      "start() 没把 stop 挂到 atexit")
+        self.assertIn("SIGINT", src, "没接管 Ctrl+C")

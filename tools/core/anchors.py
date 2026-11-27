@@ -365,7 +365,9 @@ def describe(vision) -> str:
     # 所以「新画面」自动失效，不会读到旧结论。
     vk = None
     try:
-        vk = (id(vision), vision._frame_key())
+        # **用实例的唯一序号，不用 id()**（E12）。
+        # `id()` 在对象回收后会被复用 -> 两个不同的 Vision 会串台。
+        vk = (getattr(vision, "_uid", id(vision)), vision._frame_key())
     except Exception:
         pass
     if vk is not None:
