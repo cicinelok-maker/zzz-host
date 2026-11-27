@@ -138,7 +138,10 @@ def main() -> int:
                     seg2 = full.split("主属性", 1)[1].split("副属性", 1)[0]
                     for part in seg2.split("|"):
                         q = part.strip()
-                        if any(q.startswith(k) for k in _vb.STATS):
+                        # **同时查 STATS_MAIN_EXTRA**（RT-15）——
+                        # 「以太属性伤害加成」这种写法在 STATS 里没有。
+                        if any(q.startswith(k) for k in
+                               list(_vb.STATS) + list(_vb.STATS_MAIN_EXTRA)):
                             main_txt = q
                             break
                 main_raw = ""

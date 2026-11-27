@@ -137,7 +137,8 @@ def main() -> int:
             _seg0 = cur_detail.split("主属性", 1)[1].split("副属性", 1)[0]
             for _p0 in _seg0.split("|"):
                 _q0 = _p0.strip()
-                if any(_q0.startswith(k) for k in _vb0.STATS):
+                if any(_q0.startswith(k) for k in
+                       list(_vb0.STATS) + list(_vb0.STATS_MAIN_EXTRA)):
                     _cur_main = _q0
                     break
         _cur_mvd, _ = _mv0(_cur_main, slot, (cfg.get("主词条") or {}),
@@ -166,7 +167,8 @@ def main() -> int:
                 _seg = det.split("主属性", 1)[1].split("副属性", 1)[0]
                 for _part in _seg.split("|"):
                     _q = _part.strip()
-                    if any(_q.startswith(k) for k in vocab.STATS):
+                    if any(_q.startswith(k) for k in
+                           list(vocab.STATS) + list(vocab.STATS_MAIN_EXTRA)):
                         _main_txt = _q
                         break
             _mvd, _ = _mv(_main_txt, slot, (cfg.get("主词条") or {}),

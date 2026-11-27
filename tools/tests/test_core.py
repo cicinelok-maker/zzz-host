@@ -4009,3 +4009,92 @@ class TestScreenshotDirIsCreated(unittest.TestCase):
     def test_plan_mode_discloses_filter_touch(self):
         """计划模式动了筛选状态，要说出来（RT-09 后半）。"""
         self.assertIn("筛选状态被改过", self._src())
+
+
+class TestBossRoutingBeforeGeneric(unittest.TestCase):
+    """boss 材料要**比「高维数据」泛匹配先**查到（RT-14）。
+
+    ## 原来
+
+    ```python
+    if "高维数据" in m:                       # 泛匹配在前
+        return {"副本": "专业挑战室", ...}
+    ...
+    for boss, info in boss_map.items():       # 具体名字在后
+        if info.get("材料") == m: ...
+    ```
+
+    而 `dungeon_data.json` 的 boss 材料里，有几条名字**本身就含「高维数据」**：
+
+        高维数据：拟造核心  -> 应去 恶名狩猎·「征服者」
+        高维数据：拳坠如陨  -> 应去 恶名狩猎·恶名·装甲哈提
+
+    实测都被路由到「专业挑战室」—— **去刷错的副本，材料不掉、电量白花**。
+
+    **具体名字优先于泛匹配。**
+    """
+
+    def test_boss_materials_route_correctly(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_gap as G
+        # 路由函数叫 where_to_farm(mat, role="", attr="")
+        fn = getattr(G, "where_to_farm", None)
+        self.assertIsNotNone(fn, "找不到 where_to_farm()")
+        for mat, want_prefix in (("高维数据：拟造核心", "恶名狩猎"),
+                                 ("高维数据：拳坠如陨", "恶名狩猎")):
+            got = (fn(mat) or {}).get("副本", "")
+            self.assertTrue(got.startswith(want_prefix),
+                            f"{mat} 路由到了「{got}」，应该去恶名狩猎")
+
+
+class TestElemDamageVariants(unittest.TestCase):
+    """主词条要认得「X属性伤害加成」这种写法（RT-15）。
+
+    ## 原来
+
+    `vocab.STATS` 有「以太伤害」「物理伤害」，**没有「以太属性伤害」**。
+    于是：
+
+        原文：以太属性伤害加成
+        `"以太属性伤害加成".startswith("以太伤害")` == False
+        -> 提取出空串 -> `verdict()` 返回 **unknown**
+
+    而 unknown **既不会被跳过**（`if _mvd == "bad"`）**也不会归零** ——
+    于是「主词条完全无效、但副词条好」的盘被当可用盘换上。
+    **这正是「主词条错 > 副词条好」要防的那个场景。**
+    """
+
+    def test_elem_terms_all_in_vocab(self):
+        """`disc_main.elem_terms()` 产出的每一个写法，vocab 都必须认。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import vocab, disc_main
+        known = set(vocab.STATS) | set(vocab.STATS_MAIN_EXTRA)
+        missing = set()
+        for e in ("以太", "电", "冰", "火", "物理", "风",
+                  "流明", "玄墨", "烈霜", "凛刃"):
+            for t in disc_main.elem_terms(e):
+                if t not in known:
+                    missing.add(t)
+        self.assertEqual(missing, set(),
+                         f"这些写法 vocab 认不出，会被判成 unknown：{sorted(missing)}")
+
+    def test_elem_damage_on_wrong_element_is_bad(self):
+        """装错属性的主词条必须判 bad，不能是 unknown。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import vocab
+        from core.disc_main import verdict
+        terms = list(vocab.STATS) + list(vocab.STATS_MAIN_EXTRA)
+        for main, elem, want in (("以太属性伤害加成", "电", "bad"),
+                                 ("电属性伤害加成", "电", "good"),
+                                 ("物理属性伤害加成", "电", "bad")):
+            self.assertTrue(any(main.startswith(k) for k in terms),
+                            f"vocab 认不出 {main}")
+            got, _ = verdict(main, 5, {}, elem)
+            self.assertEqual(got, want,
+                             f"{main} 对 {elem} 属性角色应判 {want}，实际 {got}")
