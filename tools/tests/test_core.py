@@ -3954,3 +3954,58 @@ class TestFarmLogSchema(unittest.TestCase):
                        for a in n.names]
             self.assertIn("farm_log", imports,
                           f"{name} 没 import core.farm_log")
+
+
+class TestScreenshotDirIsCreated(unittest.TestCase):
+    r"""截图目录要存在、路径要绝对（RT-09）。
+
+    ## 原来
+
+    ```python
+    Image.fromarray(vs.crop(...)[:, :, ::-1]).save(
+        r"od_test\shots\dis_filtered_ok.png")     # <- 相对路径
+    ```
+
+    而全仓没有任何代码创建 `od_test/shots`（`core/__init__.py` 只建
+    `state` 和 `od_test`）。`Image.save` 到不存在的目录 ->
+    `FileNotFoundError`，**而且发生在 `--run` 闸门之前** ——
+    文档推荐的「先看计划」在干净机器上直接崩。
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "run_dismantle.py").read_text(encoding="utf-8")
+
+    def test_no_relative_shot_paths(self):
+        r"""不能出现 `r"od_test\shots\..."` 这种相对路径字面量。"""
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Constant) and isinstance(node.value, str):
+                self.assertNotIn("od_test\\\\shots\\", node.value,
+                                 f"还有相对路径字面量：{node.value!r}")
+
+    def test_core_creates_shots_dir(self):
+        """`import core` 之后 `od_test/shots` 必须存在。"""
+        import sys
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        sys.path.insert(0, str(root / "tools"))
+        import core  # noqa: F401  —— 触发 _ensure_runtime_dirs()
+        self.assertTrue((root / "od_test" / "shots").is_dir(),
+                        "import core 之后 od_test/shots 还是没有")
+
+    def test_shot_helper_swallows_errors(self):
+        """截图失败不能中断主流程 —— 截图是辅助，不是目的。"""
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        fn = next((n for n in _ast.walk(tree)
+                   if isinstance(n, _ast.FunctionDef) and n.name == "_shot"), None)
+        self.assertIsNotNone(fn, "没有 _shot() 助手")
+        has_try = any(isinstance(n, _ast.Try) for n in _ast.walk(fn))
+        self.assertTrue(has_try, "_shot() 里没有 try —— 截图失败会中断流程")
+
+    def test_plan_mode_discloses_filter_touch(self):
+        """计划模式动了筛选状态，要说出来（RT-09 后半）。"""
+        self.assertIn("筛选状态被改过", self._src())

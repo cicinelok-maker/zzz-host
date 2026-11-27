@@ -95,7 +95,11 @@ def _ensure_runtime_dirs() -> None:
     try:
         from pathlib import Path as _P
         _root = _P(__file__).resolve().parent.parent.parent
-        for _d in ("state", "od_test"):
+        # **`od_test/shots` 也要建**（RT-09）。
+        # 原来只建 `state` 和 `od_test`，而 `run_dismantle` 往
+        # `od_test/shots/` 存截图 —— 干净机器上目录不存在，
+        # `Image.save` 直接 FileNotFoundError，且发生在 --run 闸门之前。
+        for _d in ("state", "od_test", "od_test/shots"):
             (_root / _d).mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
