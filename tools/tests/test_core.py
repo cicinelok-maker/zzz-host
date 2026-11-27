@@ -1376,25 +1376,30 @@ class TestGrindGapDetection(unittest.TestCase):
 
 
 class TestDailyFarmLog(unittest.TestCase):
-    """`zzz_daily --run` 要记得今天刷过没（BUG-091）。
+    """`zzz_daily --run` 要记得今天刷过没（BUG-091 + RT-08）。
 
-    ## 原来完全不记
+    ## 完全没记（BUG-091）
 
     `zzz_daily --run` 一天跑两次就刷两次本 —— **第二天的电量被提前烧掉**。
-    而这是「每日养成」工具，每天的额度应该只花一次。
 
-    修法：`state/farm_log.json` 记 `{date, count, last, last_dungeon}`，
-    刷本前看今天的 count；已有就跳过（`--again` 可强制）。
+    ## 记了，但 schema 和 zzz_gap 打架（RT-08）
+
+    原来 `zzz_daily` 按 dict 读写、`zzz_gap` 按 list 读写，交叉跑就会
+    互相 AttributeError。现在统一走 `core.farm_log`。
     """
 
     def setUp(self):
         import zzz_daily as zd
+        from core import farm_log as FL
         self.zd = zd
-        self.f = zd._farm_log_path()
+        self.FL = FL
+        self._orig = FL.LOG
+        self.f = FL.LOG
         self.bak = self.f.read_text(encoding="utf-8") if self.f.exists() else None
         self.f.unlink(missing_ok=True)
 
     def tearDown(self):
+        self.FL.LOG = self._orig
         if self.bak is not None:
             self.f.write_text(self.bak, encoding="utf-8")
         else:
@@ -1414,23 +1419,30 @@ class TestDailyFarmLog(unittest.TestCase):
         import json
         self.zd._farm_record("测A", 1)
         d = json.loads(self.f.read_text(encoding="utf-8"))
-        d["date"] = "2000-01-01"
+        for r in d.get("records") or []:
+            r["date"] = "2000-01-01"
         self.f.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
         self.assertEqual(self.zd._farm_count_today(), 0)
 
-    def test_record_survives_bad_file(self):
-        """坏 JSON 不能让记账崩掉，也不能误判成「刷过了」。"""
+    def test_bad_file_is_not_zero(self):
+        """坏 JSON 要报 -1（不知道），**不能静默当 0**（RT-08）。"""
         self.f.write_text("{半截", encoding="utf-8")
-        self.assertEqual(self.zd._farm_count_today(), 0)
+        self.assertEqual(self.zd._farm_count_today(), -1,
+                         "坏文件返回了 0 —— 会静默当成「今天没刷过」")
+
+    def test_record_survives_bad_file(self):
+        """坏文件时记账要备份 + 重来，不能崩、也不能覆盖掉历史。"""
+        self.f.write_text("{半截", encoding="utf-8")
         self.zd._farm_record("测A", 1)          # 不抛异常
         self.assertEqual(self.zd._farm_count_today(), 1)
+        self.assertTrue(self.f.with_name(self.f.name + ".corrupt").exists(),
+                        "坏文件没被备份 —— 历史就这么没了")
 
     def test_again_flag_exists(self):
         import inspect
         import zzz_daily
         self.assertIn("--again", inspect.getsource(zzz_daily.main),
                       "没有 --again —— 电量回满了想再刷就没法强制")
-
 
 class TestReadStatusHonesty(unittest.TestCase):
     """`read_status` 读失败必须说出来（BUG-085）。
@@ -3826,3 +3838,119 @@ class TestPlanOnlyTouchesNothing(unittest.TestCase):
     def test_plan_only_message_says_untouched(self):
         """提示要说清「没改配置」—— 否则用户不知道该不该放心。"""
         self.assertIn("没有改 OneDragon 的计划配置", self._src())
+
+
+class TestFarmLogSchema(unittest.TestCase):
+    """`farm_log.json` 只有**一套 schema**，读侧兼容三种历史形态（RT-08）。
+
+    ## 原来两个工具各写一套
+
+    ```
+    zzz_daily  按 dict 读写：{"date","count","last",...}
+    zzz_gap    按 list 读写：[{"time","材料","副本",...}, ...]
+    ```
+
+    交叉跑就出问题：
+
+    · 先 `zzz_gap --run`（写 list）再 `zzz_daily --run`
+      -> `_farm_count_today()` 对 list 调 `.get` -> AttributeError 被吞
+      -> 返回 0 -> **以为今天没刷过，又刷一遍**（多花 60~200 电）
+    · 反过来 -> `logs.append` 对 dict -> AttributeError，
+      而且**崩在刷完之后**（电已经花了）
+
+    ## 现在
+
+    `core/farm_log.py` 是唯一入口。写统一成
+    `{"_schema":2,"records":[...]}`，**读侧兼容三种历史形态**。
+    认不出来就**明确报错**，返回 -1（不是 0）——
+    「读不了」和「没刷过」是两件事。
+    """
+
+    def _with_log(self, payload=None):
+        import json as _j
+        import pathlib
+        import sys
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import farm_log as FL
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "farm_log.json"
+        if payload is not None:
+            tmp.write_text(payload if isinstance(payload, str)
+                           else _j.dumps(payload, ensure_ascii=False),
+                           encoding="utf-8")
+        return FL, tmp
+
+    def _today(self):
+        import time
+        return time.strftime("%Y-%m-%d")
+
+    def test_new_schema(self):
+        FL, tmp = self._with_log({"_schema": 2, "records": [
+            {"date": self._today(), "dungeon": "x", "times": 1, "ok": True}]})
+        orig = FL.LOG
+        try:
+            FL.LOG = tmp
+            self.assertEqual(FL.count_today(), 1)
+        finally:
+            FL.LOG = orig
+
+    def test_bare_list(self):
+        """zzz_gap 以前写的裸 list。"""
+        FL, tmp = self._with_log([{"date": self._today(), "副本": "x"}])
+        orig = FL.LOG
+        try:
+            FL.LOG = tmp
+            self.assertEqual(FL.count_today(), 1)
+        finally:
+            FL.LOG = orig
+
+    def test_legacy_dict(self):
+        """zzz_daily 以前写的 {"date","count"} —— 要按 count 展开。"""
+        FL, tmp = self._with_log({"date": self._today(), "count": 3})
+        orig = FL.LOG
+        try:
+            FL.LOG = tmp
+            self.assertEqual(FL.count_today(), 3)
+        finally:
+            FL.LOG = orig
+
+    def test_unreadable_returns_minus_one(self):
+        """认不出的格式要报 -1，不能静默返回 0。"""
+        FL, tmp = self._with_log("hello")
+        orig = FL.LOG
+        try:
+            FL.LOG = tmp
+            n, why = FL.count_today_safe()
+            self.assertEqual(n, -1, "认不出却返回了非 -1 —— 会静默当「没刷过」")
+            self.assertTrue(why, "没给出原因")
+        finally:
+            FL.LOG = orig
+
+    def test_append_uses_new_schema(self):
+        import json as _j
+        import pathlib
+        FL, tmp = self._with_log()
+        orig = FL.LOG
+        try:
+            FL.LOG = tmp
+            FL.append(dungeon="测试", times=2, ok=True, source="test")
+            d = _j.loads(pathlib.Path(tmp).read_text(encoding="utf-8"))
+            self.assertIsInstance(d, dict, f"写出来不是带 _schema 的对象：{type(d)}")
+            self.assertEqual(d.get("_schema"), 2)
+            self.assertEqual(len(d.get("records") or []), 1)
+        finally:
+            FL.LOG = orig
+
+    def test_both_tools_use_shared_module(self):
+        """两个工具都必须走 `core.farm_log`，不能自己拼 schema。"""
+        import ast as _ast
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for name in ("zzz_daily.py", "zzz_gap.py"):
+            src = (root / name).read_text(encoding="utf-8")
+            tree = _ast.parse(src)
+            imports = [a.name for n in _ast.walk(tree)
+                       if isinstance(n, _ast.ImportFrom) and n.module
+                       for a in n.names]
+            self.assertIn("farm_log", imports,
+                          f"{name} 没 import core.farm_log")

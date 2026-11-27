@@ -134,34 +134,30 @@ def judge(label: str, out: str) -> tuple[int, list[str]]:
     return total, notes
 
 
-def _farm_log_path():
-    return BASE / "state" / "farm_log.json"
-
-
 def _farm_count_today() -> int:
-    """今天已经刷过几次本。读不到返回 0。"""
-    try:
-        d = json.loads(_farm_log_path().read_text(encoding="utf-8"))
-        if d.get("date") == time.strftime("%Y-%m-%d"):
-            return int(d.get("count") or 0)
-    except Exception:
-        pass
-    return 0
+    """今天已经刷过几次本。
+
+    ## **读不了返回 -1，不是 0**（RT-08）
+
+    原来是 `try: ... except: pass; return 0` —— 而
+    「文件读不了」和「今天还没刷」在调用方看来一样，
+    于是额度闸门静默失效，**同一天重复刷本**（多花 60~200 电）。
+
+    现在 `-1` = 不知道。调用方要么当成「可能刷过」保守处理，要么报出来。
+    """
+    from core import farm_log as _fl
+    n, why = _fl.count_today_safe()
+    if why:
+        print(f"  ⚠ {why}")
+        print(f"     **不知道今天刷过没** —— 额度闸门按「可能刷过」处理")
+    return n
 
 
 def _farm_record(dungeon: str, times: int) -> None:
-    """记一次刷本。**失败不影响主流程**（记账不该让流程崩）。"""
+    """记一次刷本。用**共享模块**写，schema 只有一个来源。"""
     try:
-        from core import atomic as _aw
-        today = time.strftime("%Y-%m-%d")
-        n = _farm_count_today() + 1
-        _aw.write_json(_farm_log_path(), {
-            "date": today,
-            "count": n,
-            "last": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "last_dungeon": dungeon,
-            "last_times": times,
-        })
+        from core import farm_log as _fl
+        _fl.append(dungeon=dungeon, times=times, ok=True, source="zzz_daily")
     except Exception as _e:
         print(f"  （记刷本日志失败：{_e}）")
 

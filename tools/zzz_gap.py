@@ -408,13 +408,15 @@ def do_farm(rows: list[dict], max_elec: int = 240, run_it: bool = False) -> int:
         return 0
 
     # ---------- 真刷 ----------
-    log_path = BASE / "state" / "farm_log.json"
-    logs = []
-    if log_path.exists():
-        try:
-            logs = json.loads(log_path.read_text(encoding="utf-8"))
-        except Exception:
-            logs = []
+    # **走共享模块读**（RT-08）—— schema 只有一个来源。
+    # 原来这里按 list 读，而 zzz_daily 按 dict 写，交叉跑就互相炸。
+    from core import farm_log as _fl
+    _n_today, _why = _fl.count_today_safe()
+    if _why:
+        print(f"  ⚠ {_why}")
+        print(f"     **不知道今天刷过没** —— 自己看着办（可能重复刷）")
+    elif _n_today > 0:
+        print(f"  今天已经刷过 {_n_today} 次")
 
     ok_n = 0
     for t in todo:
@@ -436,23 +438,14 @@ def do_farm(rows: list[dict], max_elec: int = 240, run_it: bool = False) -> int:
             print(f"    {line}")
         if r.returncode == 0:
             ok_n += 1
-            logs.append({
-                "time": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-                "材料": t["材料"], "副本": d, "次数": runs, "成功": True,
-            })
+            _fl.append(dungeon=d, times=runs, ok=True, source="zzz_gap")
         else:
             print(f"    ✘ 返回 {r.returncode}")
-            logs.append({
-                "time": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-                "材料": t["材料"], "副本": d, "次数": runs, "成功": False,
-                "code": r.returncode,
-            })
+            _fl.append(dungeon=d, times=runs, ok=False, source="zzz_gap")
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(logs[-200:], ensure_ascii=False, indent=2),
-                        encoding="utf-8")
+    # 每条已经在循环里通过 _fl.append 原子写过了，这里不用再写整份
     print()
-    print(f"  完成 {ok_n}/{len(todo)} 项，记账写入 {log_path}")
+    print(f"  完成 {ok_n}/{len(todo)} 项，记账写入 {_fl.LOG.name}")
     return 0 if ok_n == len(todo) else 1
 
 
