@@ -554,14 +554,25 @@ class Machine:
             # 装备页盘位：优先找「等级xx/xx」标签（图标在标签上方约 60px）；
             # 空盘位没有标签，最后退回环形固定坐标
             from .slots import slot_xy
-            FIXED = {1: (1253, 339), 2: (1150, 560), 3: (1252, 782),
-                     4: (1570, 783), 5: (1675, 561), 6: (1571, 339)}
+            # **兜底只有一处：`slots.RING_FALLBACK`**（BUG-054）。
+            #
+            # 原来这里自己抄了一份 `FIXED`，而且和 `slots.RING_FALLBACK` **不一致**：
+            #
+            #     machine.FIXED   1:(1253,339)  5:(1675,561)
+            #     slots.RING      1:(1231,309)  5:(1663,534)     ← 差 27~30 px
+            #
+            # 更糟的是那段的兜底链：
+            #
+            #     xy = slot_xy(...)                 # 它内部**已经兜底**了，永不返回 None
+            #     if xy is None:                    # 所以这整段**永远不执行**
+            #         labels = [... 所有「等级」标签 ...]
+            #         xy = labels[0] ...            # 而且不管你要几号位，永远拿第一个
+            #
+            # 也就是说：这段是死代码，但**一旦有人改了 slot_xy 让它可能返回 None**，
+            # 就会激活一条「点错位号 + 坐标漂移」的路。
+            #
+            # 现在删掉，兜底统一走 `slots.RING_FALLBACK`（那是截图量出来的）。
             xy = slot_xy(self.vs, a.n or 1)
-            if xy is None:
-                labels = [i for i in self.vs.items((900, 300, 1850, 950))
-                          if "等级" in i["text"]]
-                xy = ((labels[0]["cx"], labels[0]["cy"] - 62)
-                      if labels else FIXED.get(a.n or 1))
             if not xy:
                 return False
             self.inp.click(xy[0], xy[1], wait=a.wait)

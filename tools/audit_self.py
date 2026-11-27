@@ -103,6 +103,55 @@ if BAD:
 else:
     print("  ✔ 没发现写死的中心常量")
 
+
+print()
+print("区域常量：定义了但没人用的（BUG-062）")
+print("-" * 70)
+# **不删，但要可见**。
+#
+# 实测有 7 个 R_* 常量定义了却零引用：
+#     R_BOTTOM_LEFT  R_HINT  R_HUNT_TITLE  R_LVROW
+#     R_REC_PANEL    R_SETS  R_TABS
+#
+# 它们是「截图里量出来的坐标」，删掉就丢数据了；但留着又是**陷阱** ——
+# 谁照着它写新代码，用的可能是早就漂移的坐标。
+#
+# 所以：留数据，但每次跑自检都列出来，让「没人用」这件事看得见。
+import ast as _ast
+_defined = {}
+for _f in sorted((BASE / "tools").glob("*.py")) + \
+        sorted((BASE / "tools" / "core").glob("*.py")):
+    if _f.name.startswith(("audit_", "selftest_", "_")):
+        continue
+    try:
+        _t = _ast.parse(_f.read_text(encoding="utf-8"))
+    except SyntaxError:
+        continue
+    for _node in _ast.walk(_t):
+        if isinstance(_node, _ast.Assign):
+            for _tg in _node.targets:
+                if isinstance(_tg, _ast.Name) and re.match(r"^R_[A-Z_]+$", _tg.id):
+                    _defined.setdefault(_tg.id, _f.name)
+
+_unused = []
+for _nm, _first in sorted(_defined.items()):
+    _cnt = 0
+    for _f in sorted((BASE / "tools").glob("*.py")) + \
+            sorted((BASE / "tools" / "core").glob("*.py")):
+        if _f.name.startswith(("audit_", "selftest_", "_")):
+            continue
+        _cnt += _f.read_text(encoding="utf-8", errors="replace").count(_nm)
+    if _cnt <= 1:
+        _unused.append(f"{_nm}（{_first}）")
+if _unused:
+    print(f"  ℹ {len(_unused)} 个区域常量零引用（只是提示，不算失败）：")
+    for _u in _unused:
+        print(f"      {_u}")
+    print("    它们多半是「截图量出来的坐标」，删了会丢数据 ——")
+    print("    但要用之前先确认它没漂移。")
+else:
+    print("  ✔ 每个区域常量都有人用")
+
 # **有问题就非 0**（BUG-043）：原来脚本结尾什么都不返回，恒 exit 0，
 # 而 audit_ship 只认退出码 —— 这一项结构上不可能变红。
 if BAD:
