@@ -360,8 +360,12 @@ def main() -> int:
     if getattr(args, "from_targets", False):
         tj = BASE / "targets.json"
         if not tj.exists():
-            print(f"✘ 没有 {tj.name}")
-            print("   建一个：{\"note\": \"说明\", \"agents\": [\"佩洛伊斯\"]}")
+            # **`targets.json` 现在不进发布包也不进 git**（E26）——
+            # 它是你自己的角色列表。干净克隆上就得到这里。
+            print(f"✘ 还没有 {tj.name}")
+            print(f"   它是你自己的角色列表（不发版、不提交）。建一个：")
+            print(f"     copy targets.example.json targets.json")
+            print(f'   然后改 agents：[\"你的角色名\"]')
             return 2
         try:
             d = json.loads(tj.read_text(encoding="utf-8"))

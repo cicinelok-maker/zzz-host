@@ -70,6 +70,10 @@ IGN_FILES = [
     "*.bak", "*.bak-*", "*.png", "*.jpg", "*.jsonl",
     # 个人配置 / 账号数据
     "feishu_conf.json", "paths.json",
+    # **用户的角色列表**（E26）：这一条原来只有 zip 排除、发布通道没排除 ——
+    # 同一份文件三个通道三种态度（publish 上传 / zip 排除 / gitignore 不管）。
+    # 统一成「都不带」。模板是 targets.example.json，那个要发。
+    "targets.json",
     "roster.json", "roster.demo.json", "roster.imported.json",
     "roster.json.bak-*",
     "tools/feishu.py", "tools/feishu_img.py",

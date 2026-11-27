@@ -93,3 +93,6 @@ tools/capture_fp_we.py
 
 # 旧引擎的看板入口：依赖 zzz_host.py（1068 行旧版），已被 zzz_who 取代
 status.py
+
+# **用户的角色列表**（E26）—— 这是 PII，别提交。模板见 targets.example.json
+targets.json

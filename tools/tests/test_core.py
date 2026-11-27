@@ -6343,3 +6343,72 @@ class TestDocsCountIsHonest(unittest.TestCase):
             head = "\n".join(p.read_text(encoding="utf-8").splitlines()[:8])
             self.assertIn("历史快照", head,
                           f"{name} 没标「历史快照」—— 里面的旧数字会被当成当前值")
+
+
+class TestTargetsJsonChannelsAgree(unittest.TestCase):
+    """`targets.json` 三条通道必须**一个态度**（E26）。
+
+    ## 原来三个方向
+
+        publish_github   **上传**（不在 IGN_FILES，在发布集里）
+        release.yml      **排除**（zip -x 里有）
+        .gitignore       **不忽略**（会被提交）
+
+    而 `targets.json` 装的是**用户的角色列表**（PII）。
+
+    更绕的是：`publish_github` 里有一句注释
+    「targets.json 是故意发布的空模板」—— 也就是说
+    **两个通道对「它到底是什么」的理解都不一样**。
+
+    现在统一成「发模板、不发真身」：
+    · `targets.json`      —— 三处都排除
+    · `targets.example.json` —— 三处都发
+    """
+
+    def _root(self):
+        import pathlib
+        return pathlib.Path(__file__).resolve().parent.parent.parent
+
+    def test_publish_excludes_it(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from publish_github import IGN_FILES
+        self.assertIn("targets.json", IGN_FILES,
+                      "publish_github 还会上传 targets.json")
+
+    def test_zip_excludes_it(self):
+        import pathlib
+        root = self._root()
+        p = root / ".github" / "workflows" / "release.yml"
+        if not p.exists():
+            self.skipTest("release.yml 不在当前集合里")
+        txt = p.read_text(encoding="utf-8")
+        self.assertIn("'targets.json'", txt,
+                      "zip -x 里没有 targets.json")
+
+    def test_gitignore_excludes_it(self):
+        import pathlib
+        root = self._root()
+        p = root / ".gitignore"
+        if not p.exists():
+            self.skipTest(".gitignore 不在当前集合里")
+        lines = [l.strip() for l in p.read_text(encoding="utf-8").splitlines()]
+        self.assertIn("targets.json", lines,
+                      ".gitignore 没有排除 targets.json")
+
+    def test_template_is_shipped(self):
+        """模板要在，而且要进发布集 —— 否则新用户没有起点。"""
+        import sys
+        import pathlib
+        root = self._root()
+        self.assertTrue((root / "targets.example.json").exists(),
+                        "没有 targets.example.json 模板")
+        sys.path.insert(0, str(root / "tools"))
+        from publish_github import collect
+        names = [str(f).replace("\\", "/") for f in collect(root)]
+        self.assertTrue(any(n.endswith("targets.example.json") for n in names),
+                        f"模板没进发布集：{[n for n in names if 'targets' in n]}")
+        self.assertFalse(any(n == "targets.json" or n.endswith("/targets.json")
+                             for n in names),
+                         "真实 targets.json 还在发布集里")
