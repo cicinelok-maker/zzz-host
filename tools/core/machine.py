@@ -676,7 +676,27 @@ class Machine:
         from core import anchors as _A
         return _A.at(self.vs, target, tries=3, need=max(2, tries))
     def go_to(self, target: str) -> bool:
-        """从当前状态走到目标状态，自动规划并执行。"""
+        """从当前状态走到目标状态，自动规划并执行。
+
+        ## 目标没有锚点就**立刻**失败（RT-04）
+
+        有 9 个状态名出现在 `TRANSITIONS` 里，但 `anchors.ANCHORS` 里
+        **没有任何一条会产出它** —— 叫「幽灵状态」。干净克隆上
+        `state/fingerprints.json` 是 gitignore 的，`describe()` 永远返回不了这些名字。
+
+        原来 `go_to` 会照常规划、执行、重试 `max_rounds` 轮，最后
+        返回 False，上层看到的是「到不了界面」—— **看起来像导航失败，
+        实际是目标状态压根不存在**。
+
+        现在：目标不在 ANCHORS 里就直接说清楚，不浪费几轮点击。
+        """
+        from . import anchors as _A
+        _names = {a.name for a in _A.ANCHORS} | {"世界"}
+        if target not in _names:
+            print(f"  ✘ 「{target}」不是一个可识别的状态 —— 永远到不了")
+            print(f"     这不是导航失败，是**没有这个状态的锚点**。")
+            print(f"     能识别的：{sorted(_names)}")
+            return False
         for rnd in range(self.max_rounds):
             cur = self.state()
             if cur == "未知":

@@ -3498,3 +3498,89 @@ class TestMissingPythonDoesNotCrash(unittest.TestCase):
                           f"提示里没告诉用户怎么办：{out[:80]!r}")
         finally:
             zzz_daily.PY = orig
+
+
+class TestNoNewGhostStates(unittest.TestCase):
+    """`TRANSITIONS` 的目标必须是 `ANCHORS` 能产出的状态（RT-04）。
+
+    ## 什么是幽灵状态
+
+    状态机里写着「从这里可以到『驱动盘拆解页』」，但 `anchors.ANCHORS`
+    里**没有任何一条**会返回这个名字。干净克隆上
+    `state/fingerprints.json` 被 gitignore，`describe()` 永远认不出它。
+
+    于是 `if not m.go_to("驱动盘拆解页")` **恒真**，
+    拆解/弃置链路在干净安装上必然失败 —— 而作者本机因为有指纹文件「能跑」。
+
+    ## 现在还剩 9 个
+
+    2026-11-27 实测。**没有凭空补锚点** —— 补错了会点到别的页面，
+    那正是这个项目一直在修的那类「静默做错事」。
+
+    补的时候需要开游戏，在那些页面上抓一次 OCR，把**常驻**文字填进
+    `anchors.py`，然后把名字从这里删掉。
+    """
+
+    #: 已知没有锚点的状态。**只许减少，不许增加。**
+    KNOWN_GHOSTS = {
+        "代理人培训", "智能弃置面板", "音擎回收", "音擎强化面板",
+        "音擎推荐面板", "音擎筛选面板", "音擎详情",
+        "驱动盘拆解页", "驱动盘筛选面板",
+    }
+
+    def _diff(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors, machine
+        names = {a.name for a in anchors.ANCHORS} | {"世界"}
+        dsts = {t.dst for t in machine.TRANSITIONS if t.dst != "*"}
+        srcs = {t.src for t in machine.TRANSITIONS if t.src != "*"}
+        return names, dsts, srcs
+
+    def test_no_new_ghost_targets(self):
+        names, dsts, _ = self._diff()
+        ghosts = dsts - names
+        new = ghosts - self.KNOWN_GHOSTS
+        self.assertEqual(new, set(),
+                         f"新出现了没有锚点的目标状态：{sorted(new)}\n"
+                         f"    TRANSITIONS 里写了它，但 ANCHORS 产不出这个名字 ——\n"
+                         f"    运行时 go_to 会永远失败。要么补锚点，要么别写这条转移。")
+
+    def test_ghost_list_is_honest(self):
+        """白名单里不能塞「其实已经有锚点」的 —— 那会让这道闸空转。"""
+        names, dsts, srcs = self._diff()
+        stale = {g for g in self.KNOWN_GHOSTS if g in names}
+        self.assertEqual(stale, set(),
+                         f"这些已经有锚点了，从 KNOWN_GHOSTS 里删掉：{sorted(stale)}")
+
+    def test_go_to_rejects_unknown_state(self):
+        """`go_to` 对没有锚点的目标要**立刻**失败并说清楚（RT-04）。"""
+        import io
+        import contextlib
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Machine
+
+        class _Vs:
+            occluded = False
+            def text(self, r): return ""
+            def items(self, r): return []
+            def frame(self, force=False): pass
+        class _Inp:
+            def key(self, *a, **k): pass
+            def click(self, *a, **k): pass
+        class _Ui:
+            vs = _Vs()
+            inp = _Inp()
+
+        m = Machine(_Ui(), verbose=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            r = m.go_to("驱动盘拆解页")
+        self.assertFalse(r)
+        out = buf.getvalue()
+        self.assertIn("不是一个可识别的状态", out,
+                      "没告诉用户「这不是导航失败，是没有锚点」")
+        self.assertIn("能识别的", out, "没列出可识别的状态")
