@@ -48,6 +48,10 @@ class Action:
     arg: str = ""
     xy: tuple[int, int] | None = None
     n: int = 1
+    #: 这个动作失败了要不要中断整条转移链（F1）。
+    #: 默认 True —— 大多数动作是「必须成功」的；
+    #: 少数「点一下试试」的可以标 False。
+    required: bool = True
     wait: float = 0.5
     region: Region | None = None
 
@@ -486,7 +490,9 @@ class Machine:
         if k == "click_xy":
             if not a.xy:
                 return False
-            self.inp.click(a.xy[0], a.xy[1], wait=a.wait)
+            # `n` 同样原来被忽略（F2）：连点 n 次，每次之间等 wait
+            for _ in range(max(1, a.n)):
+                self.inp.click(a.xy[0], a.xy[1], wait=a.wait)
         elif k == "click_text":
             if a.region is None:
                 # **不能静默 False** —— 实测这个坑查了很久：
@@ -500,7 +506,8 @@ class Machine:
             hit = self.vs.find(a.arg, a.region)
             if not hit:
                 return False
-            self.inp.click(hit["cx"], hit["cy"], wait=a.wait)
+            for _ in range(max(1, a.n)):
+                self.inp.click(hit["cx"], hit["cy"], wait=a.wait)
         elif k == "press":
             if a.n > 1:
                 self.inp.pad_taps(a.arg, a.n, wait=a.wait)
@@ -511,7 +518,10 @@ class Machine:
         elif k == "mouse_mode":
             self.inp.mouse_mode(wait=a.wait)
         elif k == "key":
-            self.inp.key(a.arg, wait=a.wait)
+            # **`n` 原来被静默忽略**（F2）—— 写 `Action("key", "f", n=3)`
+            # 和 `n=1` 效果一样，而且没有任何提示。
+            for _ in range(max(1, a.n)):
+                self.inp.key(a.arg, wait=a.wait)
         elif k == "esc_to_world":
             """一路退到大世界。
 
@@ -604,8 +614,19 @@ class Machine:
             print(f"  → {tr.src}→{tr.dst}  ({tr.note})")
         for a in tr.actions:
             ok = self._do(a)
-            if not ok and self.verbose:
-                print(f"      动作失败：{a.kind} {a.arg} {a.xy}")
+            if not ok:
+                if self.verbose:
+                    print(f"      动作失败：{a.kind} {a.arg} {a.xy}")
+                # **失败了就中断**（F1）。
+                #
+                # 原来 `ok` 只用来打一行日志，然后**继续执行后面的动作**。
+                # 于是「点开面板」失败之后，还会接着在错误界面上点确认 ——
+                # 后果不可预测：可能点到别的东西，也可能把状态搞乱。
+                #
+                # 动作之间是有顺序依赖的（先点开、再选、再确认）。
+                # 前一步没成，后一步的前提就不成立，**继续做只是把错误放大**。
+                if a.required:
+                    return False
         # 验证：先看指定文字，再确认状态真的变成了目标状态。
         # 只看文字不够——比如技能详情页和代理人列表页都有「代理人攻略」，
         # 光查文字会误判成已经到位。

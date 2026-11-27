@@ -6613,3 +6613,144 @@ class TestWeeklyHasNoLimits(unittest.TestCase):
         self.assertNotIn(".LIMITS", code,
                          "还有 `_wk.LIMITS` —— 会 AttributeError 被吞掉")
         self.assertIn("FREE_RUNS", code, "没用 FREE_RUNS")
+
+
+class TestTransitionAbortsOnFailure(unittest.TestCase):
+    """`_do` 失败必须中断后续动作（F1）。
+
+    ## 原来
+
+    ```python
+    for a in tr.actions:
+        ok = self._do(a)
+        if not ok and self.verbose:
+            print(f"      动作失败：{a.kind} {a.arg} {a.xy}")
+    ```
+
+    `ok` 只用来打一行日志，然后**继续执行后面的动作**。
+
+    动作为之间是有顺序依赖的（先点开、再选、再确认）。
+    前一步没成，后一步的前提就不成立 —— 继续做只是**把错误放大**：
+    在「没点开的面板」上接着点确认，可能点到完全不同的东西。
+
+    ## 现在
+
+    `Action.required`（默认 True）—— 失败了就 `return False`。
+    少数「点一下试试」的动作可以标 `required=False`。
+    """
+
+    def _machine(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Machine
+
+        class FakeVs:
+            win = {"hwnd": 1}
+            occluded = False
+            def text(self, r): return ""
+            def items(self, r): return []
+            def frame(self, force=False): pass
+            def wait_still(self, **k): pass
+            def wait_for(self, *a, **k): return True
+            def find(self, *a, **k): return None
+            def _frame_key(self): return 1
+            def has(self, *a): return False
+
+        class FakeInp:
+            def __init__(self): self.calls = []
+            def __getattr__(self, name):
+                def f(*a, **k): self.calls.append((name, a))
+                return f
+
+        class FakeUi:
+            def __init__(self):
+                self.vs, self.inp = FakeVs(), FakeInp()
+
+        ui = FakeUi()
+        m = Machine(ui)
+        m.verbose = False
+        return m, ui
+
+    def test_required_action_aborts(self):
+        from core.machine import Action, Transition
+        m, ui = self._machine()
+        tr = Transition(src="A", dst="*", actions=[
+            Action("click_text", "不存在", region=(0, 0, 10, 10)),
+            Action("key", "f")])
+        ok = m.run(tr)
+        self.assertFalse(ok, "失败的动作没让 run() 返回 False")
+        self.assertFalse(any(c[0] == "key" for c in ui.inp.calls),
+                         "前一个动作失败了，后一个还是执行了 —— 会在错界面上乱点")
+
+    def test_optional_action_continues(self):
+        from core.machine import Action, Transition
+        m, ui = self._machine()
+        tr = Transition(src="A", dst="*", actions=[
+            Action("click_text", "不存在", region=(0, 0, 10, 10), required=False),
+            Action("key", "f")])
+        m.run(tr)
+        self.assertTrue(any(c[0] == "key" for c in ui.inp.calls),
+                        "required=False 的动作失败后应该继续")
+
+
+class TestActionNHonored(unittest.TestCase):
+    """`Action.n` 不能被静默忽略（F2）。
+
+    ## 原来
+
+    `_do` 里只有 `press` 和 `wheel` 用 `a.n`：
+
+        press   -> pad_taps(arg, n)
+        wheel   -> wheel(-n)
+        key     -> key(arg)          ← n 被忽略
+        click_xy-> click(x, y)       ← n 被忽略
+        click_text -> click(...)     ← n 被忽略
+
+    写 `Action("key", "f", n=3)` 和 `n=1` **效果完全一样，而且没有任何提示** ——
+    转移表看起来是「按三次」，实际只按一次。
+    """
+
+    def test_key_honors_n(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Machine, Action, Transition
+
+        class FakeVs:
+            win = {"hwnd": 1}
+            occluded = False
+            def text(self, r): return ""
+            def items(self, r): return []
+            def frame(self, force=False): pass
+            def wait_still(self, **k): pass
+            def wait_for(self, *a, **k): return True
+            def find(self, *a, **k): return None
+            def _frame_key(self): return 1
+            def has(self, *a): return False
+
+        class FakeInp:
+            def __init__(self): self.calls = []
+            def __getattr__(self, name):
+                def f(*a, **k): self.calls.append((name, a))
+                return f
+
+        class FakeUi:
+            def __init__(self):
+                self.vs, self.inp = FakeVs(), FakeInp()
+
+        ui = FakeUi()
+        m = Machine(ui)
+        m.verbose = False
+        m.run(Transition(src="A", dst="*", actions=[Action("key", "f", n=3)]))
+        got = sum(1 for c in ui.inp.calls if c[0] == "key")
+        self.assertEqual(got, 3, f"n=3 只按了 {got} 次 —— n 还是被忽略")
+
+    def test_action_has_required_field(self):
+        import sys
+        import pathlib
+        import dataclasses
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Action
+        names = {f.name for f in dataclasses.fields(Action)}
+        self.assertIn("required", names, "Action 没有 required 字段")
