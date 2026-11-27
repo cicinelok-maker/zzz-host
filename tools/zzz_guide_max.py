@@ -121,8 +121,20 @@ def drag_one(ui, y: int, retries: int = 3) -> bool:
         inp.drag(tx, y, DRAG_TO, y, wait=1.0, hold=0.25, steps=30)
         vs.frame(force=True)
         tx2, _, _ = thumb_x(vs, y)
-        if abs(tx2 - tx) > 8:
+
+        # **必须是「往右动了」**，不是「动了」（E33）。
+        #
+        # 原来是 `if abs(tx2 - tx) > 8: return True` —— 方向反了也算成功。
+        # 拖动失败时拇指常常会**弹回**一点，`abs()` 把那个也当成成功，
+        # 于是工具以为「已拉满」，实际技能等级没动，后面的判断全建立在假前提上。
+        #
+        # 现在：向右动超过 8px 才算；否则打印方向，让下一次重试看得见。
+        if tx2 > tx + 8:
             return True
+        if tx2 >= DRAG_TO - 15:
+            return True                      # 已经到达最右（窄幅也算成）
+        print(f"      y={y} 拖了但没往右走：{tx} -> {tx2}"
+              f"（{'+' if tx2 >= tx else ''}{tx2 - tx}px）")
     return False
 
 

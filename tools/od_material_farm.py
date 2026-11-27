@@ -80,16 +80,34 @@ def from_gaps() -> list[tuple[str, str, int]]:
             plans.append(("实战模拟室", "代理人技能", 2))
 
     # 核心技缺口
-    cs = BASE / "state" / "core_status.json"
-    if cs.exists():
-        data = json.loads(cs.read_text(encoding="utf-8"))
+    #
+    # **按角色读**（E34）。原来读的是全局 `state/core_status.json` ——
+    # 而 `zzz_core.py` 写的是 `state/core_status_<角色>.json`。
+    # 全局那个文件**从来没被创建过**，所以这段代码**一直没生效**：
+    # 核心技没满的角色也不会被排进刷本计划。
+    #
+    # （`zzz_farm_plan.py:131` 早就改成按角色读了，这里漏了。）
+    _found_core = False
+    for cs in sorted((BASE / "state").glob("core_status_*.json")):
+        try:
+            data = json.loads(cs.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
         for key, v in data.items():
             if not isinstance(v, dict):
                 continue
             costs = v.get("costs") or []
-            if len(costs) >= 2 and costs[1][0] < costs[1][1]:
-                plans.append(("专业挑战室", "深蚀回路", 2))
-                break
+            try:
+                if len(costs) >= 2 and costs[1][0] < costs[1][1]:
+                    plans.append(("专业挑战室", "深蚀回路", 2))
+                    _found_core = True
+                    break
+            except (TypeError, IndexError):
+                continue
+        if _found_core:
+            break
     return plans
 
 

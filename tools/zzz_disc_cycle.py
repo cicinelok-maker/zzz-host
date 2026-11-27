@@ -69,6 +69,19 @@ JUNK_MAX = _TH["junk"]
 
 
 def mesh(vs) -> int:
+    """数**当前屏幕上可见的**「等级」标签行数。
+
+    ## **这不是库总数**（E36）
+
+    它只是「这一屏里有几行」，受窗口大小、列表滚动位置影响。
+    原来它被当成「库总数」用于**拆解比例闸门**（`n / total <= max_ratio`）——
+    而两次测量可能读的是**完全不同的两屏**，比例毫无意义。
+
+    更糟的是：列表滚到一半时 `total` 只有十几，而 `n` 恰好也十几，
+    比例算出 100% —— 该拆的拆不了；反过来也可能放着不该拆的过去。
+
+    **只能用于显示。** 要总数请用 `top_count(vs)`（顶部 `N / 300`）。
+    """
     return len([it for it in vs.items((60, 120, 1100, 980))
                 if it["text"].startswith("等级")])
 
@@ -219,8 +232,19 @@ def dismantle_all_abandoned(ui: Ui, m: Machine, expect: int | None = None,
             max_ratio = 0.5
 
     # **先读库总数**（此时还没套「已弃置」筛选）
-    total = mesh(vs)
-    print(f"  库总数 {total} 张（比例上限 {max_ratio:.0%}）")
+    #
+    # **必须用顶部那个 `N / 300`，不能用屏幕上可见的行数**（E36）。
+    # `mesh()` 数的是「这一屏有几行」，随滚动位置变 ——
+    # 拿它当分母算比例，等于拿两屏不同的行数相除。
+    total = top_count(vs)
+    if total <= 0:
+        print("  ✘ 读不到库总数（顶部的 N / 300）—— 不敢拆")
+        print("     这是安全闸门的分母，读不到就不能保证「拆的比例」合规。")
+        print("     先手动确认一下游戏在拆解页、顶部计数可见。")
+        return False
+    _visible = mesh(vs)
+    print(f"  库总数 {total} 张（比例上限 {max_ratio:.0%}）"
+          f"　当前屏可见 {_visible} 行")
 
     # 算一下当前已弃置有多少
     inp.click(XY_FUNNEL[0], XY_FUNNEL[1], wait=2.4)
@@ -232,7 +256,12 @@ def dismantle_all_abandoned(ui: Ui, m: Machine, expect: int | None = None,
     if ab:
         inp.click(ab["cx"], ab["cy"], wait=2.0)
         vs.frame(force=True)
-    n = mesh(vs)
+    # 同样：已弃置的**总数**用顶部计数，不是可见行数（E36）
+    n = top_count(vs)
+    if n < 0:
+        print("  ✘ 读不到已弃置的数量（顶部计数）—— 不敢拆")
+        inp.key("esc", wait=1.8)
+        return False
     inp.key("esc", wait=1.8)
     vs.frame(force=True)
     print(f"  已弃置 {n} 张")

@@ -5699,3 +5699,132 @@ class TestInputOriginRefresh(unittest.TestCase):
         self.assertIn("ClientToScreen", seg, "没用 ClientToScreen")
         self.assertNotIn("GetWindowRect", seg,
                          "用了 GetWindowRect —— 会偏 (边框宽, 标题栏高)")
+
+
+class TestDragDirectionMatters(unittest.TestCase):
+    """拖动「成功了」必须是**往右动了**，不是「动了」（E33）。
+
+    ## 原来
+
+    ```python
+    tx2, _, _ = thumb_x(vs, y)
+    if abs(tx2 - tx) > 8:
+        return True
+    ```
+
+    `abs()` 不判方向。拖动失败时拇指常常会**弹回**一点，
+    那个也算成功 —— 于是工具以为「已拉满」，实际技能等级没动，
+    后面的判断全建立在假前提上。
+    """
+
+    def test_no_abs_check(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_guide_max.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            if not (isinstance(node, _ast.FunctionDef) and node.name == "drag_one"):
+                continue
+            body = _ast.unparse(node)
+            self.assertNotIn("abs(tx2 - tx)", body,
+                             "还在用 `abs()` 判拖动成功 —— 方向反了也算成功")
+            self.assertIn("tx2 > tx + 8", body,
+                          "没有「往右动 8px 以上」的判断")
+            return
+        self.fail("找不到 drag_one")
+
+
+class TestCoreStatusPerAgent(unittest.TestCase):
+    """核心技缺口要读 `core_status_<角色>.json`，不是全局那个（E34）。
+
+    ## 原来
+
+    ```python
+    cs = BASE / "state" / "core_status.json"      # <- 全局
+    ```
+
+    而 `zzz_core.py` 写的是 `state/core_status_<角色>.json`。
+    **全局那个文件从来没被创建过** —— 所以这段代码**一直没生效**：
+    核心技没满的角色也不会被排进刷本计划。
+
+    （`zzz_farm_plan.py` 早就按角色读了，这里漏了。）
+    """
+
+    def test_detects_per_agent_gap(self):
+        import sys
+        import json
+        import pathlib
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import od_material_farm as OMF
+
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "state").mkdir()
+        orig = OMF.BASE
+        try:
+            OMF.BASE = tmp
+            # 核心技 B 没升满 -> 应该排「专业挑战室」
+            (tmp / "state" / "core_status_测试角色.json").write_text(
+                json.dumps({"B": {"costs": [[0, 2], [1, 3]]}},
+                           ensure_ascii=False), encoding="utf-8")
+            plans = OMF.from_gaps()
+            self.assertTrue(any(p[0] == "专业挑战室" for p in plans),
+                            f"没查出核心技缺口：{plans}")
+
+            # 升满了 -> 不该排
+            (tmp / "state" / "core_status_测试角色.json").write_text(
+                json.dumps({"B": {"costs": [[2, 2], [3, 3]]}},
+                           ensure_ascii=False), encoding="utf-8")
+            plans2 = OMF.from_gaps()
+            self.assertFalse(any(p[0] == "专业挑战室" for p in plans2),
+                             f"满了还排：{plans2}")
+        finally:
+            OMF.BASE = orig
+
+
+class TestDismantleGateUsesRealTotal(unittest.TestCase):
+    """拆解比例闸门的分母必须是**库总数**，不是屏幕可见行数（E36）。
+
+    ## 原来
+
+    ```python
+    def mesh(vs) -> int:
+        return len([it for it in vs.items((60, 120, 1100, 980))
+                    if it["text"].startswith("等级")])
+    ...
+    total = mesh(vs)      # <- 拿去当分母
+    ```
+
+    `mesh()` 数的是「这一屏里有几行」，随窗口大小和**滚动位置**变。
+    两次测量可能读的是完全不同的两屏，比例毫无意义 ——
+    而这是个**不可逆**操作的闸门。
+
+    旁边 `top_count(vs)` 早就读对了顶部 `N / 300`，却没用上。
+    """
+
+    def test_gate_uses_top_count(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_disc_cycle.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            if not (isinstance(node, _ast.FunctionDef)
+                    and node.name == "dismantle_all_abandoned"):
+                continue
+            bad = []
+            for n in _ast.walk(node):
+                if not (isinstance(n, _ast.Assign)
+                        and isinstance(n.targets[0], _ast.Name)
+                        and n.targets[0].id in ("total", "n")):
+                    continue
+                val = _ast.unparse(n.value)
+                if "mesh(" in val:
+                    bad.append(f"L{n.lineno}: {n.targets[0].id} = {val}")
+            self.assertEqual(bad, [],
+                             f"闸门还在用 mesh() 当计数：{bad}")
+            self.assertIn("top_count", _ast.unparse(node),
+                          "闸门没用 top_count")
+            return
+        self.fail("找不到 dismantle_all_abandoned")
