@@ -7017,3 +7017,105 @@ class TestCheckConfigVerifiesModels(unittest.TestCase):
         self.assertGreater(j, i,
                            "缺模型的分支里没有 return 非零 —— "
                            "用户会以为环境是好的")
+
+
+class TestChipDungeonHasNoFakeSuffix(unittest.TestCase):
+    """芯片副本名不能拼一个**不存在**的「（X测试）」后缀（E23）。
+
+    ## 审计说的 vs 实际
+
+    审计 E23 说「OneDragon 用 `升温测试`/`电流测试`/`共鸣测试`，
+    zzz-host 用属性名，无映射」。
+
+    查下来：**本版 OneDragon 全仓没有这三个字符串。**
+    真正的机制是：
+
+        mission_type_name = "代理人技能"     （固定）
+        mission_name      = **角色名**        （不是芯片属性）
+
+    所以 `zzz_gap` 原来拼的 `实战模拟室·代理人技能（电击测试）` 里，
+    那个后缀是**臆造的** —— 没有对应的副本。
+
+    它本身在 `farm_cmd` 里无害（子串匹配 `代理人技能` 就能命中），
+    但会让人以为「有属性专用副本」。
+
+    ## 这条测什么
+
+    芯片副本名必须是**干净**的 `实战模拟室·代理人技能`，
+    而且 `farm_cmd` 对「带后缀」和「不带后缀」都要路由到同一个 `--training`。
+    """
+
+    def test_chip_dungeon_is_clean(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_gap as G
+        d = G.where_to_farm("特化以太芯片", role="强攻", attr="以太")
+        self.assertIsNotNone(d, "芯片材料应该有路由")
+        name = d.get("副本", "")
+        self.assertEqual(name, "实战模拟室·代理人技能",
+                         f"芯片副本名带了多余后缀：{name!r}")
+
+    def test_farm_cmd_ignores_suffix(self):
+        """带不带后缀都要路由到 `--training 代理人技能`。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        a = farm_cmd("实战模拟室·代理人技能", 2)
+        b = farm_cmd("实战模拟室·代理人技能（电击测试）", 2)
+        self.assertIn("--training", a)
+        self.assertEqual(
+            [x for x in a if x not in ("--run",)], [x for x in b if x not in ("--run",)],
+            "带后缀和不带后缀路由结果不同")
+        self.assertIn("代理人技能", a)
+
+
+class TestCleanupUsesToolsJson(unittest.TestCase):
+    """`cleanup_tools` 的保留清单必须合并 `tools.json`（E27）。
+
+    ## 原来
+
+    `CANON` 是**手工维护**的。工具越加越多，清单没跟上 ——
+    预演说「移走 36 个」，而那些**全是在用的工具**。
+
+    更糟的是它看起来很正常：每一行都有名字、都像那么回事。
+    真加 `--apply` 就是 36 个工具被搬进 `_legacy/`。
+
+    ## 现在
+
+    以 `tools.json`（`gen_manifest.py` 从实际文件生成）为准 ——
+    **只要 `tools.json` 里列了的，就一律保留**。实测 36 -> 18。
+    """
+
+    def test_merges_tools_json(self):
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "cleanup_tools.py").read_text(encoding="utf-8"))
+        self.assertIn("tools.json", code, "没读 tools.json")
+        self.assertIn("_canon_effective", code, "没有生效清单函数")
+        self.assertIn('d.get("tools")', code, "没取 tools 字段")
+
+    def test_handles_list_shape(self):
+        """`tools.json` 的 `tools` 是**字典列表**，不是映射（我第一版就栽在这）。"""
+        import json
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent.parent.parent / "tools.json"
+        if not p.exists():
+            self.skipTest("tools.json 不在当前集合里")
+        d = json.loads(p.read_text(encoding="utf-8"))
+        items = d.get("tools")
+        self.assertIsInstance(items, (list, dict))
+        if isinstance(items, list):
+            self.assertTrue(items, "tools 列表是空的？")
+            self.assertIsInstance(items[0], dict)
+            self.assertIn("name", items[0],
+                          "tools 列表里的每项应该有 name 字段")
+
+    def test_has_move_limit(self):
+        """数量反常要拒绝执行，不能一口气搬走几十个。"""
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "cleanup_tools.py").read_text(encoding="utf-8"))
+        self.assertIn("_LIMIT", code, "没有数量护栏")
+        self.assertIn("return 1", code, "超限时没有 return 非零")

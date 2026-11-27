@@ -88,6 +88,60 @@ CANON = {
     "zzz_cost.py": "养成成本表",
     "cleanup_tools.py": "本文件：工具清理",
 }
+# ============================================================ 生效清单
+def _canon_effective() -> dict:
+    """**`CANON` 的手工清单 + `tools.json` 里所有在用的工具**（E27）。
+
+    ## 原来
+
+    `CANON` 是**手工维护**的。工具越加越多，清单没跟上 ——
+    预演说「移走 36 个」，而那些**全是在用的工具**。
+
+    更糟的是它看起来很正常：每一行都有名字、都像那么回事。
+    真加 `--run` 就是 36 个工具被搬进 `_legacy/`。
+
+    ## 现在
+
+    以 **`tools.json`**（`gen_manifest.py` 从实际文件生成的）为准 ——
+    **只要 `tools.json` 里列了的，就一律保留**。`CANON` 只作为补充说明。
+
+    这样清单永远不会过期，因为它不是手写的。
+    """
+    out = dict(CANON)
+    tj = TOOLS.parent / "tools.json"
+    if not tj.exists():
+        return out
+    try:
+        import json as _json
+        d = _json.loads(tj.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+    # **`tools` 是一个「字典列表」**，每项形如
+    # `{"name": "check_config", "cmd": "python tools/check_config.py", ...}`。
+    # 不是「名字 -> 配置」的映射 —— 我第一版按映射写，迭代出来的是整个 dict。
+    items = d.get("tools") if isinstance(d, dict) else None
+    if not isinstance(items, (list, dict)):
+        return out
+    names = []
+    if isinstance(items, dict):
+        names = list(items.keys())
+    else:
+        for it in items:
+            if isinstance(it, dict):
+                nm = it.get("name") or ""
+                cmd = it.get("cmd") or ""
+                # 优先用 cmd 里的文件名（最准），否则用 name
+                if cmd:
+                    tail = cmd.rsplit("/", 1)[-1].strip()
+                    if tail.endswith(".py"):
+                        nm = tail[:-3]
+                if nm:
+                    names.append(str(nm))
+    for name in names:
+        key = name if name.endswith(".py") else name + ".py"
+        out.setdefault(key, "（来自 tools.json — 在用）")
+    return out
+
 
 
 def main() -> int:
@@ -105,7 +159,7 @@ def main() -> int:
 
     keep, move, guarded = [], [], []
     for name in sorted(existing):
-        if name in CANON:
+        if name in _canon_effective():
             keep.append(name)
             continue
         # **硬保护**（BUG-109）：这些永远不移动，哪怕不在 CANON 里。
@@ -128,6 +182,25 @@ def main() -> int:
     print(f"总计 {len(existing)} 个文件")
     print(f"  保留 {len(keep)} 个")
     print(f"  移走 {len(move)} 个")
+
+    # **数量反常就拒绝执行**（E27）。
+    #
+    # `CANON` 是手工清单，会过期。修之前它想移走 **36 个在用工具**，
+    # 而输出看起来很正常：每一行都有名字、都像那么回事。
+    #
+    # 现在生效清单合并了 `tools.json`（从实际文件生成），降到 18。
+    # 但「18」仍然不少 —— 所以再加一道：**一次要移超过 20 个就停下**，
+    # 让人先看看清单对不对。
+    _LIMIT = 20
+    if args.apply and len(move) > _LIMIT:
+        print()
+        print(f"  ✘ 一次要移走 {len(move)} 个 —— 超过 {_LIMIT}，拒绝执行")
+        print(f"     这多半说明 CANON 清单过期了，或者 tools.json 没重新生成。")
+        print(f"     先跑：python tools/gen_manifest.py")
+        print(f"     再确认下面这些真的不该在 tools/ 里：")
+        for _m in move[:20]:
+            print(f"       {_m}")
+        return 1
     if guarded:
         print(f"  硬保护 {len(guarded)} 个（不在 CANON 里但绝不能动）")
         for n, why in guarded[:20]:
