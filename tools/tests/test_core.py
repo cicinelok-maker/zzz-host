@@ -4690,7 +4690,9 @@ class TestSubstringAssertionRatchet(unittest.TestCase):
                 continue
             sv = set()
             for n in _ast.walk(fn):
-                if isinstance(n, _ast.Assign) and "_code(" in _ast.unparse(n.value):
+                # **精确匹配 `_code(`，不能匹配 `_ps1_code(` 这种**（我自己踩过）。
+                if (isinstance(n, _ast.Assign)
+                        and _ast.unparse(n.value).startswith("_code(")):
                     for x in n.targets:
                         if isinstance(x, _ast.Name):
                             sv.add(x.id)
@@ -5081,3 +5083,78 @@ class TestModuleImportsAreReal(unittest.TestCase):
             if _imports_atomic(tree.body) and not hasattr(mod, "_aw"):
                 bad.append(f"{modname}: 模块级导入了 atomic，但 import 后没有 `_aw`")
         self.assertEqual(bad, [], "\n  ".join(bad))
+
+
+class TestAdminPs1Command(unittest.TestCase):
+    """`admin.ps1 -Command "python x.py"` 不能 100% 失败（E9）。
+
+    ## 原来
+
+    ```powershell
+    & $Python -u $Command.Split(' ')
+    ```
+
+    `-Command "python tools/zzz_who.py"` 时切出来是
+    `["python", "tools/zzz_who.py"]`，拼成
+
+        & <python.exe> -u python tools/zzz_who.py
+
+    Python 去找一个叫 `python` 的**脚本文件** —— 必然失败。
+    而且 `.Split(' ')` 会把带空格的路径也切坏。
+
+    实测（修前）：`python tools/zzz_who.py --help` -> exit 2；
+    `tools/zzz_who.py --help` -> exit 0。**用户按文档写的那种就是坏的那种。**
+    """
+
+    def _ps1(self):
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent.parent.parent / "admin.ps1"
+        if not p.exists():
+            return None
+        return p.read_text(encoding="utf-8")
+
+    def _ps1_code(self):
+        """admin.ps1 **去掉注释行**的内容（注释里会引用旧代码）。"""
+        txt = self._ps1()
+        if txt is None:
+            return None
+        return "\n".join(l for l in txt.splitlines()
+                          if not l.lstrip().startswith("#"))
+
+    def test_no_naive_split(self):
+        code = self._ps1_code()
+        if code is None:
+            self.skipTest("admin.ps1 不在当前集合里")
+        self.assertNotIn("$Command.Split(' ')", code,
+                         "还在用 `.Split(' ')` 拼命令 —— 会把路径切坏")
+
+    def test_strips_python_prefix(self):
+        txt = self._ps1()
+        if txt is None:
+            self.skipTest("admin.ps1 不在当前集合里")
+        self.assertIn("python|python3|py", txt,
+                      "没处理用户习惯性写的 `python ` 前缀")
+
+    def test_uses_call_operator(self):
+        """必须带 `&` —— 裸字符串 + `-u` 在 PowerShell 里不可解析。"""
+        txt = self._ps1()
+        if txt is None:
+            self.skipTest("admin.ps1 不在当前集合里")
+        # 找**真正那一行**（以 Invoke-Expression 开头，不是注释里提到的）
+        real = [l for l in txt.splitlines()
+                if l.strip().startswith("Invoke-Expression")]
+        self.assertTrue(real, "找不到真正执行的那行 Invoke-Expression")
+        self.assertIn("& '", real[0],
+                      f"Invoke-Expression 里没有 `&` 调用符：{real[0].strip()[:60]}")
+
+    def test_propagates_exit_code(self):
+        txt = self._ps1()
+        if txt is None:
+            self.skipTest("admin.ps1 不在当前集合里")
+        real = [l for l in txt.splitlines()
+                if l.strip().startswith("Invoke-Expression")]
+        self.assertTrue(real, "找不到真正执行的那行")
+        i = txt.find(real[0])
+        tail = txt[i:i + 500]
+        self.assertIn("exit $rc", tail,
+                      "没有把退出码带出来 —— 提权后丢退出码")

@@ -1,4 +1,4 @@
-﻿# 以管理员权限重开终端 —— 本项目动游戏前的必需步骤
+# 以管理员权限重开终端 —— 本项目动游戏前的必需步骤
 #
 # 为什么必须：没有管理员权限时，Windows 的 UIPI
 # （User Interface Privilege Isolation）会静默丢弃所有按键/点击注入。
@@ -102,10 +102,37 @@ Write-Host ""
 # 有 -Command 就跑完退出
 if ($Command) {
     if (-not $Python) { Write-Host "✘ 没有 python" -ForegroundColor Red; exit 2 }
-    Write-Host "▶ $Command" -ForegroundColor Cyan
+
+    # **`-Command "python tools/xxx.py"` 原来 100% 失败**（E9）。
+    #
+    # 原来写的是 `& $Python -u $Command.Split(' ')`：
+    # `$Command` = `"python tools/zzz_who.py"` 时切出来是
+    # `["python", "tools/zzz_who.py"]`，拼成
+    #
+    #     & <python.exe> -u python tools/zzz_who.py
+    #
+    # Python 于是去找一个叫 `python` 的**脚本文件** —— 必然失败。
+    # 而且 `.Split(' ')` 会把带空格的路径也切坏。
+    #
+    # 现在：去掉用户习惯性写的 `python ` 前缀，其余整段当参数，
+    # 用 Invoke-Expression 保留引号语义，并把退出码带出来。
+    $cmd = $Command.Trim()
+    $cmd = $cmd -replace '^(python|python3|py)(\.exe)?\s+', ''
+    if (-not $cmd) {
+        Write-Host "✘ -Command 里除了 python 没有别的参数" -ForegroundColor Red
+        exit 2
+    }
+    Write-Host "▶ $Python -u $cmd" -ForegroundColor Cyan
     Write-Host ("-" * 62)
-    & $Python -u $Command.Split(' ')
-    exit $LASTEXITCODE
+    # **必须带 `&` 调用符**（E9 的坑之一）。
+    #
+    # 裸字符串 `'<path>' -u tools/x.py` 在 PowerShell 里**不可解析**
+    # （实测报「意外的标记 -u」）。加上 `&` 才是「调用这个可执行文件」。
+    Invoke-Expression "& '$Python' -u $cmd"
+    $rc = $LASTEXITCODE
+    Write-Host ("-" * 62)
+    Write-Host "退出码：$rc"
+    exit $rc
 }
 
 Write-Host "常用命令：" -ForegroundColor Cyan
