@@ -42,6 +42,73 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 
+
+# ============================================================================
+# 取「只剩代码」的源码（RT-02）
+# ============================================================================
+#
+# ## 为什么需要这个
+#
+# 测试里到处是 `src = _code(x)` + `assertIn("某个词", src)`。
+# 而 `getsource` 把**注释和 docstring 也带回来** ——
+# 于是在 `main()` 里加一行注释 `# 下游需要 "blue_total"`，
+# 那些断言就全部通过，**而真正的代码可以已经删掉了**。
+#
+# RT 做了变异测试：删掉 `_payload` 里真实的 `slots`/`blue_total` 两键，
+# 只在 `main()` 里加一行注释含这两个词 -> 7/7 通过，192 用例零新增失败。
+#
+# ## 这个 helper 做什么
+#
+# · **注释**：用 tokenize 找到 COMMENT token，把它之后的同一行文字砍掉
+# · **docstring**：用 AST 找到模块/类/函数的第一个裸字符串表达式，整段置空
+#
+# 剩下的就是**真正的代码**。字符串字面量保持原样（不做 unparse，
+# 避免引号被规范化导致断言失效）。
+import ast as _ast
+import io as _io
+import tokenize as _tokenize
+
+
+def _code(src_or_obj) -> str:
+    """源码**去掉注释和 docstring**，只留代码。
+
+    参数可以是一段源码字符串，也可以是一个模块/函数（内部会 getsource）。
+    """
+    import inspect as _insp
+    src = (src_or_obj if isinstance(src_or_obj, str)
+           else _insp.getsource(src_or_obj))
+    lines = src.splitlines()
+
+    # ① 砍注释：找到每个 COMMENT token 的列号，把它及之后截掉
+    try:
+        for tok in _tokenize.generate_tokens(_io.StringIO(src).readline):
+            if tok.type == _tokenize.COMMENT:
+                row, col = tok.start
+                if 1 <= row <= len(lines):
+                    lines[row - 1] = lines[row - 1][:col]
+    except Exception:
+        pass
+
+    # ② 砍 docstring：模块/类/函数的第一个裸字符串表达式
+    try:
+        _t = _ast.parse("\n".join(lines))
+        drop = set()
+        for node in _ast.walk(_t):
+            if not isinstance(node, (_ast.Module, _ast.FunctionDef,
+                                     _ast.AsyncFunctionDef, _ast.ClassDef)):
+                continue
+            body = node.body or []
+            b = body[0] if body else None
+            if (isinstance(b, _ast.Expr) and isinstance(b.value, _ast.Constant)
+                    and isinstance(b.value.value, str)):
+                drop.update(range(b.lineno, (b.end_lineno or b.lineno) + 1))
+        if drop:
+            lines = [("" if i + 1 in drop else l) for i, l in enumerate(lines)]
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
 class TestDiscStoploss(unittest.TestCase):
     """止损线：一块盘什么时候不值得继续升。"""
 
@@ -789,7 +856,7 @@ class TestOcclusionHonesty(unittest.TestCase):
         """Vision 必须有 occluded 属性 —— 否则 describe 拿不到它。"""
         import inspect
         from core.vision import Vision
-        src = inspect.getsource(Vision.__init__)
+        src = _code(Vision.__init__)
         self.assertIn("self.occluded", src, "Vision.__init__ 没初始化 occluded")
 
 
@@ -898,7 +965,7 @@ class TestStatusSchema(unittest.TestCase):
         ## 原来这条**可以被一行注释绕过**（RT-02）
 
         ```python
-        src = inspect.getsource(zzz_status.main)
+        src = _code(zzz_status.main)
         for k in REQUIRED_STATUS_KEYS:
             self.assertIn(f'"{k}"', src)      # <- 纯文本
         ```
@@ -1067,7 +1134,7 @@ class TestSnapshotValidity(unittest.TestCase):
     def test_zzz_status_writes_valid_flag(self):
         import inspect
         import zzz_status
-        src = inspect.getsource(zzz_status.main)
+        src = _code(zzz_status.main)
         self.assertIn('"_valid"', src, "zzz_status 没写 _valid")
         self.assertIn('"_slots_read"', src, "zzz_status 没写 _slots_read")
 
@@ -1117,7 +1184,7 @@ class TestCostLevelPriority(unittest.TestCase):
         """读不到等级要返回 -1（未知），不能当 1 级 —— 那是最贵的估算。"""
         import inspect
         import zzz_cost as zc
-        src = inspect.getsource(zc.read_levels)
+        src = _code(zc.read_levels)
         self.assertIn("-1", src, "read_levels 里没有「未知 = -1」的处理")
         # 侧证：任何一个不在数据里的角色名不该出现在结果里
         self.assertNotIn("__不存在的角色__", zc.read_levels())
@@ -1158,7 +1225,7 @@ class TestMcpConfirm(unittest.TestCase):
     def test_daily_run_gate_uses_truthy(self):
         import inspect
         import zzz_mcp
-        src = inspect.getsource(zzz_mcp.call_tool)
+        src = _code(zzz_mcp.call_tool)
         self.assertIn("_truthy(args.get(\"confirm\"))", src,
                       "call_tool 里的 confirm 闸没用 _truthy")
 
@@ -1491,7 +1558,7 @@ class TestReadStatusHonesty(unittest.TestCase):
         """源码里 `run(...)` 的返回必须被解包成两个名字，不能只接一个。"""
         import inspect
         import zzz_disc_daily as zd
-        src = inspect.getsource(zd.read_status)
+        src = _code(zd.read_status)
         self.assertIn("ok, out = run(", src,
                       "read_status 没接住 run 的退出码")
         self.assertIn("if not ok:", src,
@@ -1845,7 +1912,7 @@ class TestBatchTargets(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_daily
-        src = inspect.getsource(zzz_daily.main)
+        src = _code(zzz_daily.main)
         self.assertIn("读不了 targets.json", src,
                       "没有针对坏 targets.json 的提示")
         self.assertIn("return 2", src, "坏 JSON 应返回 2")
@@ -1967,7 +2034,7 @@ class TestDefaultAgentIsConfigurable(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_equip
-        src = inspect.getsource(zzz_equip.main)
+        src = _code(zzz_equip.main)
         i_chk = src.find("必须指定 --agent")
         i_vis = src.find("Vision(), Input()")
         self.assertGreater(i_chk, -1, "zzz_equip 没有「必须指定 --agent」的检查")
@@ -1996,7 +2063,7 @@ class TestResolutionCheck(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_launch
-        src = inspect.getsource(zzz_launch.main)
+        src = _code(zzz_launch.main)
         self.assertIn("1920", src, "zzz_launch --check 没检查 1920")
         self.assertIn("1080", src, "zzz_launch --check 没检查 1080")
         # 不对时要返回非 0
@@ -2011,7 +2078,7 @@ class TestResolutionCheck(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import check_config
-        src = inspect.getsource(check_config.main)
+        src = _code(check_config.main)
         self.assertIn("1920", src, "check_config 不看分辨率")
         self.assertIn("游戏窗口", src, "check_config 不报窗口状态")
 
@@ -2037,7 +2104,7 @@ class TestAdminIsFatal(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import check_config
-        src = inspect.getsource(check_config.main)
+        src = _code(check_config.main)
         i = src.find("管理员权限：没有")
         self.assertGreater(i, -1, "没有「管理员权限：没有」的提示")
         tail = src[i:i + 700]
@@ -2064,7 +2131,7 @@ class TestAdminIsFatal(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         from core import ui
-        src = inspect.getsource(ui.Ui.start)
+        src = _code(ui.Ui.start)
         self.assertIn("is_admin()", src, "ui.start 没查管理员")
         self.assertIn("SystemExit", src, "ui.start 只打印没拒绝")
 
@@ -2128,15 +2195,45 @@ class TestScanWhitelist(unittest.TestCase):
         self.assertEqual(dropped, [])
 
     def test_list_agents_has_whitelist(self):
-        import inspect
+        """`list_agents` 要把认不出的名字**从名单去掉**，不能塞假角色。
+
+        ## RT-02 点名的就是这个测试
+
+        它原来是：
+
+        ```python
+        src = inspect.getsource(pick_agent.list_agents)
+        self.assertIn("角色库", src)
+        self.assertIn("认不出的名字", src)
+        ```
+
+        而「角色库」三个字**只在 docstring 和注释里**（真代码用的是 `_known`/`_dropped`）。
+        把真实白名单整段删掉、只留一行含这两个词的注释 -> 它照样绿。
+
+        ## 现在查真实逻辑（AST）
+
+        `list_agents` 里必须存在：
+        · 一个 `_known` 集合（角色库的键）
+        · 一个 `_dropped` 列表（认不出的）
+        · 对 `_fixed` 的赋值（过滤后的结果覆盖 out）
+        """
+        import ast as _ast
         import sys
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import pick_agent
-        src = inspect.getsource(pick_agent.list_agents)
-        self.assertIn("角色库", src, "list_agents 里没有白名单校验")
-        self.assertIn("认不出的名字", src, "没有「认不出」的警告")
-
+        tree = _ast.parse(_code(pick_agent.list_agents))
+        names = {n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)}
+        self.assertIn("_known", names, "没有角色库的键集合 `_known`")
+        self.assertIn("_dropped", names, "没有「认不出的」列表 `_dropped`")
+        self.assertIn("_fixed", names, "没有过滤后的 `_fixed`")
+        # 必须有「从名单去掉」这个收敛动作
+        has_assign_out = any(
+            isinstance(n, _ast.Assign)
+            and any(isinstance(t, _ast.Name) and t.id == "out" for t in n.targets)
+            for n in _ast.walk(tree))
+        self.assertTrue(has_assign_out,
+                        "没看到 `out = _fixed` —— 过滤结果没覆盖名单")
 
 class TestStableStateCheck(unittest.TestCase):
     """「过渡画面不能当真」只有**一份**实现（`core.anchors.at`）。
@@ -2177,8 +2274,8 @@ class TestStableStateCheck(unittest.TestCase):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         from core.machine import Machine
         from core import recovery
-        src_m = inspect.getsource(Machine._at)
-        src_r = inspect.getsource(recovery.reset_to_world)
+        src_m = _code(Machine._at)
+        src_r = _code(recovery.reset_to_world)
         self.assertTrue("anchors.at" in src_m or "_A.at" in src_m,
                         "machine._at 没有转发到 anchors.at")
         self.assertIn("anchors.at", src_r,
@@ -2368,7 +2465,7 @@ class TestSilentFailureGuards(unittest.TestCase):
         self.assertEqual(_scan("escape"), 0,
                          "_scan 对未知名字居然返回了非 0")
         # ② key() 把这个 0 变成错误（读源码，不真的按）
-        src = inspect.getsource(Input.key)
+        src = _code(Input.key)
         self.assertIn("未知的键名", src,
                       "key() 里没有「未知的键名」的错误")
         self.assertIn("raise ValueError", src,
@@ -2531,7 +2628,7 @@ class TestFailureDiagnosis(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         from core import vision
-        src = inspect.getsource(vision)
+        src = _code(vision)
         self.assertIn("OCR 模块加载失败", src,
                       "OCR 模型加载失败时没有提示")
         i = src.find("init_model()")
@@ -2577,7 +2674,7 @@ class TestExitCodeNumbering(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_launch as z
-        src = inspect.getsource(z.enter_game)
+        src = _code(z.enter_game)
         i = src.find("等进入游戏超时")
         self.assertGreater(i, -1, "找不到超时那段的提示")
         tail = src[i:i + 600]
@@ -2765,7 +2862,7 @@ class TestBatteryAndPatrolParsing(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import od_material_farm as omf
-        src = inspect.getsource(omf)
+        src = _code(omf)
         i = src.find("patrol_name = args.patrol_type or args.patrol")
         self.assertGreater(i, -1, "找不到 patrol_name 的计算")
         tail = src[i:i + 500]
@@ -2927,7 +3024,7 @@ class TestTuneMultiplierAccounting(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_tune
-        src = inspect.getsource(zzz_tune.do_tune)
+        src = _code(zzz_tune.do_tune)
         tree = _ast.parse(src)
         lens = {len(n.value.elts) for n in _ast.walk(tree)
                 if isinstance(n, _ast.Return) and isinstance(n.value, _ast.Tuple)}
@@ -2940,7 +3037,7 @@ class TestTuneMultiplierAccounting(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_tune
-        src = inspect.getsource(zzz_tune)
+        src = _code(zzz_tune)
         self.assertIn("_rec = f\"×{_mult}\"", src,
                       "日志没有用实际倍率")
         i = src.find('log.log("调律"')
@@ -3043,7 +3140,7 @@ class TestTrainLimitIsReal(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_disc_train
-        src = inspect.getsource(zzz_disc_train)
+        src = _code(zzz_disc_train)
         tree = _ast.parse(src)
         found = False
         for node in _ast.walk(tree):
@@ -3062,7 +3159,7 @@ class TestTrainLimitIsReal(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_disc_daily
-        src = inspect.getsource(zzz_disc_daily)
+        src = _code(zzz_disc_daily)
         self.assertIn('"--limit", str(args.train_n)', src,
                       "zzz_disc_daily 没有把 --train-n 传下去")
 
@@ -3137,7 +3234,7 @@ class TestDestructiveFailureExitCode(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_disc_daily
-        src = inspect.getsource(zzz_disc_daily)
+        src = _code(zzz_disc_daily)
         self.assertIn('if "失败" in a', src,
                       "zzz_disc_daily 没有按 actions 里的「失败」判退出码")
 
@@ -3147,7 +3244,7 @@ class TestDestructiveFailureExitCode(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_daily
-        src = inspect.getsource(zzz_daily)
+        src = _code(zzz_daily)
         self.assertIn("_noprog", src, "zzz_daily 没有记录「没做成事」的次数")
         self.assertIn("return 1", src, "zzz_daily 没有失败出口")
 
@@ -3157,7 +3254,7 @@ class TestDestructiveFailureExitCode(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_grind
-        src = inspect.getsource(zzz_grind)
+        src = _code(zzz_grind)
         i = src.find("if final < args.target")
         self.assertGreater(i, -1, "找不到「没到目标」的判断")
         tail = src[i:i + 700]
@@ -3171,7 +3268,7 @@ class TestDestructiveFailureExitCode(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_daily
-        src = inspect.getsource(zzz_daily)
+        src = _code(zzz_daily)
         # 退出 1 的条件里必须带 args.run
         i = src.find('_noprog["steps"] == _noprog["tried"]')
         self.assertGreater(i, -1, "找不到「全部没做成」的判断")
@@ -3347,7 +3444,7 @@ class TestDiscMarkMatchesMain(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_disc_cycle as C
-        src = inspect.getsource(C.mark_disc_abandoned)
+        src = _code(C.mark_disc_abandoned)
         self.assertIn("_main_ok", src, "比对里没有主属性判断")
         self.assertIn('d.get("main")', src, "没有读 d 的主属性")
 
@@ -3357,7 +3454,7 @@ class TestDiscMarkMatchesMain(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_disc_cycle as C
-        src = inspect.getsource(C)
+        src = _code(C)
         self.assertIn("main_attr", src, "调用方没把主属性传下去")
         self.assertIn('junk.append((slot, d["set"], d["level"], ev["eff"], d.get("main"',
                       src, "junk 元组里没有主属性")
@@ -3369,7 +3466,7 @@ class TestDiscMarkMatchesMain(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_disc_cycle as C
-        src = inspect.getsource(C.mark_disc_abandoned)
+        src = _code(C.mark_disc_abandoned)
         self.assertIn("not want_main", src,
                       "want_main 为空时没有跳过主属性比对")
 
@@ -3382,7 +3479,7 @@ class TestTextAssertionRatchet(unittest.TestCase):
     我的测试里有大量这种写法：
 
     ```python
-    src = inspect.getsource(some_tool.main)
+    src = _code(some_tool.main)
     self.assertIn(f'"{k}"', src)          # <- 纯文本
     ```
 
@@ -3413,7 +3510,9 @@ class TestTextAssertionRatchet(unittest.TestCase):
     #: （`TestDiscMarkMatchesMain`、`TestDestructiveFailureExitCode`、
     #: `TestSkillPageNotStolen`、`TestNoNewGhostStates`），
     #: 同时把 `test_pattern_is_shared` 原来那 2 处文本断言改成了 AST。
-    BASELINE = 43
+    #: 2026-11-27 从 43 降到 11：34 处 `= inspect.getsource(` 换成了 `= _code(`
+    #: （`_code` 会剥掉注释和 docstring），文本断言从 41 处降到 7 处。
+    BASELINE = 11
 
     def test_getsource_count_does_not_grow(self):
         import pathlib
@@ -3425,7 +3524,7 @@ class TestTextAssertionRatchet(unittest.TestCase):
                  if not l.lstrip().startswith("#")]
         n = sum(l.count("inspect.getsource(") for l in lines)
         # 本测试自己的 docstring 里有这个词，扣掉
-        n -= src.count('`src = inspect.getsource(some_tool.main)`')
+        n -= src.count('`src = _code(some_tool.main)`')
         self.assertLessEqual(
             n, self.BASELINE,
             f"inspect.getsource 从 {self.BASELINE} 涨到 {n} —— "
@@ -3442,7 +3541,7 @@ class TestTextAssertionRatchet(unittest.TestCase):
         lines = [l for l in src.splitlines()
                  if not l.lstrip().startswith("#")]
         n = sum(l.count("inspect.getsource(") for l in lines)
-        n -= src.count('`src = inspect.getsource(some_tool.main)`')
+        n -= src.count('`src = _code(some_tool.main)`')
         self.assertGreaterEqual(
             n, self.BASELINE - 5,
             f"BASELINE={self.BASELINE} 但实际只有 {n} 处 —— "
@@ -4504,3 +4603,103 @@ class TestPublishKeepsHistory(unittest.TestCase):
         tail = src[i:i + 400]
         self.assertIn("return 8", tail,
                       "更新失败没有 return 非零 —— 会继续报「发布完成」")
+
+
+class TestCodeHelperStripsProse(unittest.TestCase):
+    """`_code()` 必须剥掉注释和 docstring（RT-02）。
+
+    ## 背景
+
+    测试里到处是 `src = <源码>` + `assertIn("某个词", src)`。
+    如果 `<源码>` 里带着注释和 docstring，那么
+
+        # 下游需要 "blue_total"
+
+    这一行就能让断言通过 —— **而真正的代码可以已经删掉了**。
+
+    RT 的变异测试：删掉 `_payload` 里真实的 `slots`/`blue_total`，
+    只在 `main()` 里加一行注释 -> 7/7 通过，192 用例零新增失败。
+
+    ## 这个测试钉住什么
+
+    · `_code()` 剥注释
+    · `_code()` 剥 docstring
+    · **但不碰真正的代码和字符串字面量**
+
+    以后谁把 `_code` 改回去（或者改成 `ast.unparse` 导致引号被规范化），
+    这里会红。
+    """
+
+    SAMPLE = (
+        'def f():\n'
+        '    """docstring 里写着 MAGIC_WORD"""\n'
+        '    x = "MAGIC_STRING"      # 注释里也写着 MAGIC_WORD\n'
+        '    return x\n'
+    )
+
+    def test_strips_comment(self):
+        out = _code(self.SAMPLE)
+        self.assertNotIn("注释里也写着", out, "注释没被剥掉")
+
+    def test_strips_docstring(self):
+        out = _code(self.SAMPLE)
+        self.assertNotIn("docstring 里写着", out, "docstring 没被剥掉")
+
+    def test_keeps_code_and_literals(self):
+        """真正的代码和**字符串字面量**要留着（否则断言会全部失效）。"""
+        out = _code(self.SAMPLE)
+        self.assertIn("return x", out, "代码没留下")
+        self.assertIn('"MAGIC_STRING"', out,
+                      "字符串字面量被改掉了（引号规范化会让所有断言失效）")
+
+    def test_module_level_still_works(self):
+        """传模块/函数对象也要能用（内部 getsource）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_status
+        out = _code(zzz_status.main)
+        self.assertIn("def main", out)
+        self.assertNotIn("# ", out, "还有注释残留")
+
+
+class TestSubstringAssertionRatchet(unittest.TestCase):
+    """拿源码做子串断言的处数只能降、不能涨。
+
+    现在这些断言都跑在 `_code()`（剥过注释和 docstring）上 ——
+    注释骗不过去了。但**字符串字面量**仍可能骗过，
+    所以还是设一道棘轮：2026-11-27 实测 36 处，只许降。
+    （其中 5 处是 `TestCodeHelperStripsProse` 自己测 `_code()` 用的。）
+    """
+
+    BASELINE = 36
+
+    def test_does_not_grow(self):
+        import ast as _ast
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent / "test_core.py"
+        tree = _ast.parse(p.read_text(encoding="utf-8"))
+        total = 0
+        for fn in _ast.walk(tree):
+            if not isinstance(fn, _ast.FunctionDef):
+                continue
+            sv = set()
+            for n in _ast.walk(fn):
+                if isinstance(n, _ast.Assign) and "_code(" in _ast.unparse(n.value):
+                    for x in n.targets:
+                        if isinstance(x, _ast.Name):
+                            sv.add(x.id)
+            for n in _ast.walk(fn):
+                if not isinstance(n, _ast.Call):
+                    continue
+                if getattr(n.func, "attr", None) not in ("assertIn", "assertNotIn"):
+                    continue
+                if len(n.args) < 2:
+                    continue
+                a = n.args[1]
+                if isinstance(a, _ast.Name) and a.id in sv:
+                    total += 1
+        self.assertLessEqual(
+            total, self.BASELINE,
+            f"源码子串断言从 {self.BASELINE} 涨到 {total} —— "
+            f"新写的请改用 AST，或者用 `_code()` 已经剥过的 `src`。")
