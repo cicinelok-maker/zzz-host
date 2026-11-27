@@ -28,7 +28,7 @@ DSH 的 MCP bundle 支持 `transport: stdio` —— 只要有个说 MCP 协议�
 
 ## 工具设计
 
-**不把 36 个 CLI 全暴露** —— 太多会淹没 agent。只暴露 8 个高层工具：
+**不把 36 个 CLI 全暴露** —— 太多会淹没 agent。只暴露 9 个高层工具：
 
 ```
 zzz_environment    环境自检（配置/OCR/角色）
@@ -39,6 +39,7 @@ zzz_plan           换装建议（结构化）
 zzz_daily_plan     今日计划（不动游戏）
 zzz_daily_run      跑一轮完整养成（有副作用，需 confirm）
 zzz_list_agents    列出支持的角色
+zzz_scan_roster   扫账号上实际有哪些角色（要游戏开着）
 ```
 
 ## 安全
@@ -58,6 +59,7 @@ BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
 from core.paths import one_dragon_python, one_dragon_env  # noqa: E402
+from core.game_cfg import DEFAULT_AGENT as _DEFAULT_AGENT  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "zzz-host"
@@ -98,7 +100,8 @@ TOOLS = [
         "读角色当前养成状态（结构化 JSON）：6 个位号的套装/等级/主词条/"
         "副词条/有效值 + 主词条判定 + 质量分 + 技能等级。",
         {"agent": {"type": "string",
-                   "description": "角色名，如 佩洛伊斯", "default": "佩洛伊斯"}},
+                   "description": "角色名，如 XXX（见 zzz_list_agents）",
+                   "default": _DEFAULT_AGENT}},
         ["agent"],
     ),
     _tool(
@@ -109,14 +112,14 @@ TOOLS = [
         "zzz_plan",
         "算 4+2 最优换装方案（结构化 JSON）。主词条不适合角色的盘会被排除。"
         "只出方案，不换装。",
-        {"agent": {"type": "string", "default": "佩洛伊斯"}},
+        {"agent": {"type": "string", "default": _DEFAULT_AGENT}},
         ["agent"],
     ),
     _tool(
         "zzz_daily_plan",
         "今天的养成计划（纯文本）：盘点 / 缺口 / 电量规划 / 动作建议。"
         "不动游戏数据，安全。",
-        {"agent": {"type": "string", "default": "佩洛伊斯"}},
+        {"agent": {"type": "string", "default": _DEFAULT_AGENT}},
         ["agent"],
     ),
     _tool(
@@ -124,7 +127,10 @@ TOOLS = [
         "跑一轮完整养成：刷本 + 提升 + 换装 + 回收，会消耗电量和材料。"
         "**必须传 confirm=true 才真跑**，否则只返回计划。",
         {
-            "agent": {"type": "string", "default": "佩洛伊斯"},
+            # **默认角色只有一个真相**（E16 同类）：`core.game_cfg.DEFAULT_AGENT`。
+            # 写死作者自己的角色名，朋友的机器上 MCP 客户端会带着一个
+            # 他账号上没有的名字调过来。
+            "agent": {"type": "string", "default": _DEFAULT_AGENT},
             "confirm": {"type": "boolean", "default": False,
                         "description": "true 才真执行，false 只出计划"},
             "skip": {"type": "string", "default": "",

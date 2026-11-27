@@ -6481,3 +6481,88 @@ class TestRoundCountRoundsUp(unittest.TestCase):
                       "zzz_farm_plan 没改成向上取整")
         self.assertNotIn("total_batt / max(1, args.battery):.0f", code,
                          "zzz_farm_plan 还在用 `:.0f` 算轮数")
+
+
+class TestMcpDocsMatchCode(unittest.TestCase):
+    """MCP 文档里的工具数必须和 `zzz_mcp.py` 实际注册的一致（E29）。
+
+    ## 原来
+
+    `zzz_mcp.py` 注册了 **9** 个 `_tool(...)`，而 `dsh-plugin/docs/DETAIL.md`
+    写着「**8** 个工具」，表里也只有 8 行 —— 漏了 `zzz_scan_roster`。
+
+    而 `zzz_scan_roster` 恰好是**最该被看到的那一个**：
+
+        zzz_list_agents   列的是**配置库**里的 64 个
+        zzz_scan_roster   扫的是**你账号上实际有的**
+
+    把库列表当成账号角色给用户看，是最常见的误会。
+
+    ## 另：en / zh 共用一份中文 DETAIL
+
+    现在补了 `DETAIL.en.md`，两份互链，而且这条测试**两边都查**。
+    """
+
+    def _registered(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_mcp.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        return sorted(
+            node.args[0].value for node in _ast.walk(tree)
+            if isinstance(node, _ast.Call)
+            and getattr(node.func, "id", None) == "_tool"
+            and node.args and isinstance(node.args[0], _ast.Constant))
+
+    def test_docs_list_every_tool(self):
+        import re
+        import pathlib
+        names = set(self._registered())
+        self.assertGreaterEqual(len(names), 5, "没解析到工具？")
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        for rel in ("dsh-plugin/docs/DETAIL.md", "dsh-plugin/docs/DETAIL.en.md"):
+            p = root / rel
+            if not p.exists():
+                self.fail(f"{rel} 不存在")
+            md = p.read_text(encoding="utf-8")
+            rows = set(re.findall(r"^\|\s*`(zzz_[a-z_]+)`", md, re.M))
+            missing = sorted(names - rows)
+            self.assertEqual(missing, [],
+                             f"{rel} 漏了这些工具：{missing}")
+
+    def test_docs_count_matches(self):
+        import re
+        import pathlib
+        actual = len(self._registered())
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        for rel in ("dsh-plugin/docs/DETAIL.md", "dsh-plugin/docs/DETAIL.en.md"):
+            p = root / rel
+            if not p.exists():
+                continue
+            md = p.read_text(encoding="utf-8")
+            m = re.search(r"(\d+)\s*个工具", md) or re.search(r"(\d+) tools", md)
+            self.assertIsNotNone(m, f"{rel} 里找不到工具数")
+            self.assertEqual(int(m.group(1)), actual,
+                             f"{rel} 写 {m.group(1)} 个，实际 {actual} 个")
+
+    def test_mcp_default_agent_is_not_hardcoded(self):
+        """MCP 工具定义里也不能写死默认角色（E16 同类）。"""
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_mcp.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Dict):
+                continue
+            for k, v in zip(node.keys, node.values):
+                if not (isinstance(k, _ast.Constant) and k.value == "default"):
+                    continue
+                if (isinstance(v, _ast.Constant)
+                        and isinstance(v.value, str) and v.value
+                        and v.value not in ("", "佩洛伊斯")):
+                    continue
+                self.assertNotEqual(
+                    getattr(v, "value", None), "佩洛伊斯",
+                    f"L{node.lineno} 写死了默认角色名")
