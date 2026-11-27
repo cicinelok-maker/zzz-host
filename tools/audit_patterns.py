@@ -22,6 +22,7 @@ from __future__ import annotations
 import pathlib
 
 import re
+import sys
 from pathlib import Path
 import enc  # noqa: E402,F401  —— 修控制台编码（BUG-111）
 
@@ -199,11 +200,38 @@ def main() -> int:
     for key, desc, _fn in RULES:
         total = sum(len(v) for v in results[key].values())
         print(f"  规则 {key}：{total:>3} 处　{desc}")
+    # **先确认扫描器自己活着**（RT-21）。
+    #
+    # `audit_patterns` 报「0 处」有两种可能：
+    #   ① 真的没问题
+    #   ② 规则坏了（比如 `return []`）
+    # 退出码分不出这两种 —— 上面那个 `if _issues: return 1` 两边都是 0。
+    #
+    # `selftest_audit` 就是干这个的（喂已知坏样本，看规则报不报）。
+    # 它失败 = 扫描器不可信 = 这里的「0 处」没有意义。
+    _selftest_ok = True
+    try:
+        import subprocess as _sp
+        _r = _sp.run([sys.executable, "-u", str(TOOLS / "selftest_audit.py")],
+                     cwd=str(BASE), capture_output=True, text=True,
+                     encoding="utf-8", errors="replace", timeout=180)
+        _selftest_ok = (_r.returncode == 0)
+        if not _selftest_ok:
+            print()
+            print("✘ 扫描器自测失败 —— 下面所有「0 处」都不可信")
+            for _l in (_r.stdout or "").strip().splitlines()[-4:]:
+                print(f"    {_l}")
+    except Exception as _e:
+        print(f"  ⚠ 跑不了 selftest_audit：{_e}")
+
     # **有问题就返回非 0**（BUG-043）。
     # 原来恒 return 0，而 audit_ship 只认退出码 —— 这一项结构上不可能变红。
     _issues = sum(len(v) for v in results.values()) if isinstance(results, dict) else sum(results)
     if _issues:
         print(f"\n✘ {_issues} 处问题")
+        return 1
+    if not _selftest_ok:
+        print("\n✘ 扫描器自测没过 —— 「0 处」不算通过")
         return 1
     return 0
 

@@ -110,5 +110,11 @@ print()
 print(f"通过 {ok}/{len(CASES)}")
 if fail:
     print("→ 扫描器本身有问题，报 0 处不可信")
+    # **扫描器坏了必须让门禁变红**（RT-21）。
+    #
+    # 原来这里只打印，退出码还是 0 —— 于是「规则死了」这件事
+    # 对 `audit_ship` 完全不可见，而 `audit_patterns` 报的「0 处 ✔」
+    # 可能是**假阴性**（规则 `return []` 也是 0 处）。
+    raise SystemExit(1)
 else:
     print("→ 扫描器可信：能抓到坏写法，也不会误报好写法")

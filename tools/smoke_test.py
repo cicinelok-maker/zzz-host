@@ -53,8 +53,24 @@ for tool, args, want, desc in SMOKE:
                        errors="replace", timeout=300)
     tail = [l for l in (r.stdout or "").splitlines() if not l.startswith("[")]
     last = tail[-1][:58] if tail else ""
-    if r.returncode == want or r.returncode == 2:   # 2 = 数据文件缺失（可接受）
-        print(f"  ✔ {tool:<26} exit={r.returncode}  {desc}")
+    # **exit 2 不能无条件算通过**（RT-19）。
+    #
+    # 原来 `if r.returncode == want or r.returncode == 2` —— 注释说
+    # 「2 = 数据文件缺失（可接受）」。但 **argparse 参数错误也返回 2**
+    # （「unrecognized arguments」/「the following arguments are required」），
+    # 而那恰恰是这个冒烟测试要抓的东西：参数不认。
+    #
+    # 现在：exit 2 先看 stderr —— 出现 argparse 的特征就算**失败**，
+    # 只有「确实像数据文件缺失」才放行。
+    _err_txt = (r.stderr or "")
+    _is_argerr = ("unrecognized arguments" in _err_txt
+                  or "the following arguments are required" in _err_txt
+                  or _err_txt.lstrip().startswith("usage:"))
+    _accept2 = (r.returncode == 2 and not _is_argerr
+                and want != 2)          # 本来就期望 2 的不受影响
+    if r.returncode == want or _accept2:
+        _tag = "" if r.returncode == want else "（数据文件缺失，可接受）"
+        print(f"  ✔ {tool:<26} exit={r.returncode}  {desc}{_tag}")
         ok += 1
     else:
         err = (r.stderr or "").strip().splitlines()
@@ -122,7 +138,15 @@ for tool in CLI:
         print(f"  ✗ {tool:<26} {(e[-1] if e else '')[:60]}")
         _BAD.append(tool)
 
-# **失败就非 0**（BUG-043）
-if _BAD:
-    print(f"\n✘ {len(_BAD)} 个工具 --help 失败：{_BAD}")
+# **失败就非 0**（BUG-043 + RT-19）
+#
+# 原来这里只看 `_BAD`（--help 失败）。而上面冒烟测试统计的 `fail`
+# **从来没被用于返回值** —— 一个工具完全跑不起来，门禁照样是绿的。
+# 而 `audit_ship` 又只看退出码 → 「八项」里的 smoke 恒绿。
+if _BAD or fail:
+    if _BAD:
+        print(f"\n✘ {len(_BAD)} 个工具 --help 失败：{_BAD}")
+    if fail:
+        print(f"\n✘ 冒烟测试失败 {fail} 个（通过 {ok} 个）")
     raise SystemExit(1)
+print(f"\n✔ 冒烟测试 {ok} 个全过")

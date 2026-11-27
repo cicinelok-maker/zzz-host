@@ -893,14 +893,52 @@ class TestStatusSchema(unittest.TestCase):
         self.assertIn("_ts", d)
 
     def test_zzz_status_payload_has_all_required(self):
-        """`zzz_status` 写出的 payload 必须包含全部 REQUIRED 键。"""
+        """`zzz_status` 写出的 payload 必须包含全部 REQUIRED 键。
+
+        ## 原来这条**可以被一行注释绕过**（RT-02）
+
+        ```python
+        src = inspect.getsource(zzz_status.main)
+        for k in REQUIRED_STATUS_KEYS:
+            self.assertIn(f'"{k}"', src)      # <- 纯文本
+        ```
+
+        把 `_payload` 里真实的 `"slots"` / `"blue_total"` 删掉，
+        只在 `main()` 里加一行注释 `# 下游需要 "blue_total" 和 "slots"`
+        —— 7/7 全过，全量用例零新增失败。
+
+        ## 现在改成查 **AST 里的字典键**
+
+        只看两种地方真正出现过的字符串常量：
+        · `dict` 字面量的 key
+        · `subscript` 赋值的目标（`d["slots"] = ...`）
+        · `f-string` 之外的 `Constant` 出现在 `_payload` 附近的赋值里
+
+        注释**不在 AST 里**，所以骗不过。
+        """
+        import ast as _ast
         import inspect
         import zzz_status
         from core.state import REQUIRED_STATUS_KEYS
-        src = inspect.getsource(zzz_status.main)
-        for k in REQUIRED_STATUS_KEYS:
-            self.assertIn(f'"{k}"', src,
-                          f"zzz_status 的 _payload 没写 {k}")
+
+        tree = _ast.parse(inspect.getsource(zzz_status.main))
+        keys = set()
+        for node in _ast.walk(tree):
+            # dict 字面量的键
+            if isinstance(node, _ast.Dict):
+                for k in node.keys:
+                    if isinstance(k, _ast.Constant) and isinstance(k.value, str):
+                        keys.add(k.value)
+            # d["x"] = ... 形式
+            elif isinstance(node, _ast.Subscript):
+                sl = node.slice
+                if isinstance(sl, _ast.Constant) and isinstance(sl.value, str):
+                    keys.add(sl.value)
+
+        missing = [k for k in REQUIRED_STATUS_KEYS if k not in keys]
+        self.assertEqual(missing, [],
+                         f"zzz_status 的 payload 真的没写这些键：{missing}\n"
+                         f"    实测 AST 里的键：{sorted(keys)}")
 
 
 class TestDataConsistency(unittest.TestCase):
@@ -3322,3 +3360,73 @@ class TestDiscMarkMatchesMain(unittest.TestCase):
         src = inspect.getsource(C.mark_disc_abandoned)
         self.assertIn("not want_main", src,
                       "want_main 为空时没有跳过主属性比对")
+
+
+class TestTextAssertionRatchet(unittest.TestCase):
+    """文本断言的数量只能降、不能涨（RT-02 的棘轮）。
+
+    ## 问题
+
+    我的测试里有大量这种写法：
+
+    ```python
+    src = inspect.getsource(some_tool.main)
+    self.assertIn(f'"{k}"', src)          # <- 纯文本
+    ```
+
+    **注释里写上那两个词就能骗过它。** RT 做了变异测试：
+    把真实字段删掉、加一行注释 -> 7/7 全过，192 个用例零新增失败。
+
+    这正是我自己在提交信息里记过 6 次的「自指陷阱」——
+    修了一半：改成了 AST 的地方确实改好了，但还有 30 多处没动。
+
+    ## 这条测试干什么
+
+    不假装已经全改完，而是**设一道棘轮**：
+    现在还有多少处，就锁在多少处；**再加新的就红**。
+
+    降下来随时可以，涨上去必须先把旧的改掉。
+    """
+
+    #: 2026-11-27 实测。只许降，不许涨。
+    #:
+    #: **这是个粗代理**：`inspect.getsource` 本身不是罪 —— 拿它喂 `ast.parse`
+    #: 是正确做法。有问题的是「拿它的返回值做 `assertIn` 文本匹配」。
+    #: 但精确区分要分析 AST，而那些 AST 断言本身也各不相同。
+    #:
+    #: 所以这里用**总数**当棘轮：每个新增的 `getsource` 都得想一想
+    #: 「我是要用它做文本匹配，还是喂 AST」。前者别写。
+    BASELINE = 41
+
+    def test_getsource_count_does_not_grow(self):
+        import pathlib
+        import re
+        p = pathlib.Path(__file__).resolve().parent / "test_core.py"
+        src = p.read_text(encoding="utf-8")
+        # 只数 `inspect.getsource(` 的真实调用（注释里的不算：先剥注释行）
+        lines = [l for l in src.splitlines()
+                 if not l.lstrip().startswith("#")]
+        n = sum(l.count("inspect.getsource(") for l in lines)
+        # 本测试自己的 docstring 里有这个词，扣掉
+        n -= src.count('`src = inspect.getsource(some_tool.main)`')
+        self.assertLessEqual(
+            n, self.BASELINE,
+            f"inspect.getsource 从 {self.BASELINE} 涨到 {n} —— "
+            f"文本断言会被注释绕过（RT-02）。\n"
+            f"    新写的断言请改用 AST（查真实调用 / 字典键 / 比较表达式），\n"
+            f"    或者直接调用函数断言返回值。\n"
+            f"    确实改好了一些？把 BASELINE 调小。")
+
+    def test_baseline_is_honest(self):
+        """BASELINE 不能比实际少太多 —— 否则这道棘轮就是假的。"""
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent / "test_core.py"
+        src = p.read_text(encoding="utf-8")
+        lines = [l for l in src.splitlines()
+                 if not l.lstrip().startswith("#")]
+        n = sum(l.count("inspect.getsource(") for l in lines)
+        n -= src.count('`src = inspect.getsource(some_tool.main)`')
+        self.assertGreaterEqual(
+            n, self.BASELINE - 5,
+            f"BASELINE={self.BASELINE} 但实际只有 {n} 处 —— "
+            f"调小它，别让棘轮空转")
