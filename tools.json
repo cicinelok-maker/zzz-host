@@ -480,6 +480,7 @@
    "json_output": false,
    "exit_codes": [
     0,
+    1,
     3,
     4
    ],

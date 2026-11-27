@@ -206,6 +206,46 @@ class UnknownAgent(KeyError):
             msg += f"。可用角色见 tools/disc_meta.json（共 {len(known())} 个）"
         super().__init__(msg)
 
+    def __str__(self) -> str:
+        # **`KeyError` 的 `__str__` 是 `repr(args[0])`**（E17）——
+        # 于是 `print(e)` 会多包一层引号，而且把 `\n` 打成**字面量**
+        # `\n` 两个字符。实测输出：
+        #
+        #     '角色「（没指定角色）\n  用法：python tools/<工具>.py <角色名>\n ...」
+        #
+        # 报错信息本来就是给人读的，不该走 repr。
+        return str(self.args[0]) if self.args else ""
+
+
+class AgentNotSpecified(UnknownAgent):
+    """**没指定角色** —— 不是「这个名字不在库里」（E17）。
+
+    原来这两种情况共用 `UnknownAgent`，而「没指定」时把整段帮助文本
+    当成**角色名**塞进了 `角色「{name}」不在角色库里`：
+
+        角色「（没指定角色）
+          用法：python tools/<工具>.py <角色名>
+          或者设一次默认值，之后就不用每次写：
+            set ZZZ_DEFAULT_AGENT=你的角色名
+          可用角色：python tools/zzz_who.py --menu」不在角色库里。可用角色见 ...
+
+    一句话被拆成「角色名」和「后缀」两半，中间还插了句「不在角色库里」——
+    读起来就是乱码。
+
+    单独立一个异常：消息自己就是完整的帮助，不再二次包装。
+    """
+
+    def __init__(self):
+        self.agent = ""
+        self.suggestions = []
+        KeyError.__init__(
+            self,
+            "没指定角色。\n"
+            "  用法：python tools/<工具>.py <角色名>\n"
+            "  或者设一次默认值，之后就不用每次写：\n"
+            "    set ZZZ_DEFAULT_AGENT=你的角色名\n"
+            "  可用角色：python tools/zzz_who.py --menu")
+
 
 def _edit_distance(a: str, b: str) -> int:
     """Levenshtein 距离（只用于短名字，不需要优化）。"""
@@ -264,12 +304,7 @@ def resolve_agent(name: str, allow_unknown: bool = False) -> str:
         # 现在「未指定」是一个正常会发生的场景：
         # `DEFAULT_AGENT` 默认是空（见 `core/game_cfg._default_agent`），
         # 目的是不让工具默默去操作作者自己的角色。
-        raise UnknownAgent(
-            "（没指定角色）\n"
-            "  用法：python tools/<工具>.py <角色名>\n"
-            "  或者设一次默认值，之后就不用每次写：\n"
-            "    set ZZZ_DEFAULT_AGENT=你的角色名\n"
-            "  可用角色：python tools/zzz_who.py --menu", [])
+        raise AgentNotSpecified()
     canon = canonical_agent(name)
     chars = meta().get("角色") or {}
     if canon in chars:

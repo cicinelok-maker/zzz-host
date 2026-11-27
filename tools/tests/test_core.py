@@ -5828,3 +5828,143 @@ class TestDismantleGateUsesRealTotal(unittest.TestCase):
                           "闸门没用 top_count")
             return
         self.fail("找不到 dismantle_all_abandoned")
+
+
+class TestHistoryDoesNotFabricate(unittest.TestCase):
+    """`--history` 不能把缺字段的记录当 0（E19）。
+
+    ## 实测输出（修前）
+
+        11-20T10:00    20.5   ██████████░░░░  蓝10
+        11-21T10:00     0.0   ░░░░░░░░░░░░░░  蓝0   ▼ -20.5
+        11-22T10:00    24.0   ████████████░░  蓝11  ▲ +24.0
+
+    中间那条只是**早期旧格式没写「质量分」**，却画成「跌到 0 又涨回来」。
+    用户看到的是一段假历史 —— 而 `or 0` 就是那个制造机。
+    """
+
+    def test_rows_without_score_are_skipped(self):
+        import sys
+        import pathlib
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_who as W
+
+        rows = [
+            {"ts": "2026-11-20T10:00:00", "质量分": 20.5, "蓝条": 10},
+            {"ts": "2026-11-21T10:00:00"},                      # 缺字段
+            {"ts": "2026-11-22T10:00:00", "质量分": 24.0, "蓝条": 11},
+        ]
+        orig = W._load_progress
+        W._load_progress = lambda a: rows
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                W.history("测试")
+            out = buf.getvalue()
+        finally:
+            W._load_progress = orig
+
+        self.assertIn("没有质量分，已跳过", out, "没提示跳过了几条")
+        self.assertNotIn("   0.0 ", out, "曲线里还有 0.0 的假谷底")
+        self.assertIn("涨了 3.5", out, "涨跌幅算错了（应该是 24.0-20.5）")
+
+
+class TestCoreUpgradeReturnsNonZero(unittest.TestCase):
+    """`zzz_core` 一次没升时必须返回非零（E35）。
+
+    ## 原来
+
+    ```python
+    if total == 0:
+        print("  （一次都没升成 —— ...）")
+    return 0
+    ```
+
+    打印完还是 0。调用方（`zzz_daily` 的断点/记账）看到 0 就记成
+    「核心技已完成」—— 实际一次都没升，**下一轮会跳过它**，
+    永久停在那个等级。
+    """
+
+    def test_zero_upgrade_returns_nonzero(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_core.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.If):
+                continue
+            body = _ast.unparse(node)
+            if "total == 0" not in _ast.unparse(node.test):
+                continue
+            self.assertIn("return 1", body,
+                          "`total == 0` 的分支里没有 `return 1`")
+            return
+        self.fail("找不到 `if total == 0` 分支")
+
+
+class TestAgentNotSpecifiedIsClean(unittest.TestCase):
+    """空角色名的报错不能把帮助文本塞进「角色名」里（E17）。
+
+    ## 原来
+
+    ```python
+    raise UnknownAgent(
+        "（没指定角色）\n  用法：...\n  可用角色：...", [])
+    ```
+
+    而 `UnknownAgent.__init__` 是 `msg = f"角色「{name}」不在角色库里"`。
+    实测输出：
+
+        '角色「（没指定角色）\n  用法：python tools/<工具>.py <角色名>\n ...
+         以及 set ZZZ_DEFAULT_AGENT=...」不在角色库里。可用角色见 tools/disc_meta.json'
+
+    整段帮助被当成**角色名**，外面还包了一层 `KeyError` 的 `repr` 引号，
+    `\n` 变成字面的两个字符。**一句话被拆成两半中间插了句「不在角色库里」。**
+    """
+
+    def test_empty_name_has_clean_message(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import resolve_agent, AgentNotSpecified
+
+        try:
+            resolve_agent("")
+        except AgentNotSpecified as e:
+            msg = str(e)
+            self.assertTrue(msg.startswith("没指定角色"),
+                            f"消息开头不对：{msg[:40]}")
+            self.assertNotIn("不在角色库里", msg,
+                             "「没指定」不该说成「不在库里」")
+            self.assertFalse(msg.startswith("'"),
+                             "消息被 repr 包了引号")
+            self.assertNotIn("\\n", msg, "换行被打成了字面量 `\\n`")
+        else:
+            self.fail("空名字没有抛 AgentNotSpecified")
+
+    def test_unknown_agent_str_is_clean(self):
+        """`UnknownAgent` 的 `__str__` 也不该带引号（它是 KeyError）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import resolve_agent, UnknownAgent
+
+        try:
+            resolve_agent("完全不存在的角色XYZ")
+        except UnknownAgent as e:
+            msg = str(e)
+            self.assertFalse(msg.startswith("'"), "消息被 repr 包了引号")
+            self.assertIn("不在角色库里", msg)
+        else:
+            self.fail("应该抛 UnknownAgent")
+
+    def test_backward_compatible(self):
+        """`AgentNotSpecified` 必须仍是 `UnknownAgent` 的子类 —— 老 caller 要能接住。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import UnknownAgent, AgentNotSpecified
+        self.assertTrue(issubclass(AgentNotSpecified, UnknownAgent))

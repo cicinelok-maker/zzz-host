@@ -394,12 +394,39 @@ def history(agent: str) -> int:
         return 0
 
     # ---- 曲线
-    first = rows[0].get("质量分") or 0
+    #
+    # **缺字段的行不能当 0**（E19）。
+    #
+    # 原来 `r.get("质量分") or 0` —— 一条没写「质量分」的记录会变成 0 分。
+    # 实测输出长这样：
+    #
+    #     11-20T10:00    20.5   ██████████░░░░  蓝10
+    #     11-21T10:00     0.0   ░░░░░░░░░░░░░░  蓝0   ▼ -20.5
+    #     11-22T10:00    24.0   ████████████░░  蓝11  ▲ +24.0
+    #
+    # 中间那条只是**早期旧格式没写质量分**，却画成「跌到 0 又涨回来」。
+    # 用户看到的是一段假历史。
+    #
+    # 现在：没有质量分的行直接跳过，并说明跳了几条。
+    _rows_ok = [r for r in rows
+                if isinstance(r.get("质量分"), (int, float))
+                and not isinstance(r.get("质量分"), bool)]
+    if len(_rows_ok) < len(rows):
+        print(f"  （{len(rows) - len(_rows_ok)} 条记录没有质量分，已跳过")
+        print(f"    —— 多半是旧格式写的，那几条画不出点来）")
+    if len(_rows_ok) < 2:
+        print()
+        print(f"  有效记录只有 {len(_rows_ok)} 条，画不出曲线。")
+        print(f"  再跑一轮：python tools/zzz_daily.py {agent} --run")
+        return 0
+    rows = _rows_ok
+
+    first = rows[0]["质量分"]
     print()
     prev = None
     for r in rows:
         ts = str(r.get("ts") or "")[5:16]
-        sc = r.get("质量分") or 0
+        sc = r["质量分"]
         blue = r.get("蓝条") or 0
         line = f"  {ts}   {sc:>5.1f}   {_bar(sc, GRAD)}  蓝{blue}"
         if prev is not None:
