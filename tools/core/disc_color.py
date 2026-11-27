@@ -102,10 +102,19 @@ def classify_color(rgb) -> str:
     return "unknown"
 
 
-def read_sub_colors(vs, items, region=(400, 100, 1100, 1000)):
+def read_sub_colors(vs, items):
     """从定制页/装备页读出每条副词条的颜色。
 
     返回 [{text, color, cx, cy}]，只含副属性区域的行。
+
+    ## 去掉了死形参 `region`（BUG-061）
+
+    原来签名是 `read_sub_colors(vs, items, region=(400, 100, 1100, 1000))`，
+    但函数体**从头到尾没用过它** —— 它是靠 `items` 里「副属性」这两个字
+    判断从哪里开始、到「套装效果」结束的。
+
+    留着这个参数会让人以为「传不同的 region 能改读取范围」，
+    实际传什么结果都一样。
     """
     out = []
     started = False
@@ -127,7 +136,7 @@ def read_sub_colors(vs, items, region=(400, 100, 1100, 1000)):
 def report(vs, region=(400, 100, 1100, 1000)) -> dict:
     """综合报告：蓝色条数 + 明细。"""
     items = vs.items(region)
-    rows = read_sub_colors(vs, items, region)
+    rows = read_sub_colors(vs, items)
     eff_names = [r["text"] for r in rows if r["color"] == "blue"]
     return {
         "蓝色条数": len(eff_names),

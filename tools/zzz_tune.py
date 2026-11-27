@@ -283,12 +283,30 @@ def do_tune(ui: Ui, times: int = 10) -> tuple[bool, str, int]:
 
     cands.sort(key=lambda x: -x[0])
     exact = [c for c in cands if c[0] == times]
-    mult, hit = exact[0] if exact else cands[0]
-    label = hit["text"]
-    if not exact:
-        print(f"  没有 ×{times} 的按钮，改用最大的「{label}」")
+    if exact:
+        mult, hit = exact[0]
+        print(f"  按钮：{hit['text']}")
     else:
-        print(f"  按钮：{label}")
+        # **绝不点比请求更大的倍率**（RT-11）。
+        #
+        # 原来这里是 `cands[0]`（最大的那个）—— 请求 ×01 而游戏只给 ×10 时
+        # 就点 ×10：**一次花掉 10 倍预算**。
+        # 定向 ×01 = 6 母盘，×10 = 60 —— `plan_tune` 算的「还能做几个位号」
+        # 直接作废，后面几个位号没母盘了。
+        #
+        # 而且那时只在日志里写一行「按实际的记」，钱照花。
+        #
+        # 现在：只在「**不大于**请求值」的候选里挑最大的。
+        # 请求 ×10、只给 ×06 -> 点 ×06（省着花，安全）；
+        # 请求 ×01、只给 ×10 -> **放弃**，一个都不点。
+        _safe = [c for c in cands if c[0] <= times]
+        if not _safe:
+            _have = "、".join("×%d" % c[0] for c in cands)
+            print(f"  ✘ 只有 {_have}，都比请求的 ×{times} 大 —— 不点（避免超预算）")
+            print(f"     母盘不够时游戏不给小倍率按钮。想用小倍率，先攒够母盘。")
+            return False, "", 0
+        mult, hit = _safe[0]
+        print(f"  没有 ×{times} 的按钮，改用不大于它的「{hit['text']}」")
 
     before = vs.text((1100, 20, 1900, 90))
     inp.click(hit["cx"], hit["cy"], wait=1.0)

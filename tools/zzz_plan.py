@@ -289,9 +289,21 @@ def main() -> int:
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     from core.state import stamp as _stamp
-    Path(args.out).write_text(json.dumps(_stamp(
-        {"agent": args.agent, "main_set": main_set, "sec_set": sec_set,
-         "main_count": main_count, "plan": plan}, ensure_ascii=False, indent=2)),
+    # **`ensure_ascii` / `indent` 是 `json.dumps` 的参数**（RT-01）。
+    #
+    # 原来这两个参数写在了 `_stamp(...)` 的括号里 ——
+    # 而 `stamp(data)` 只接受一个位置参数，于是：
+    #
+    #     TypeError: stamp() got an unexpected keyword argument 'ensure_ascii'
+    #
+    # **只要走到「计划已生成」就崩**（不加 --apply 也会写 plan.json），
+    # 所以 plan.json 永不落盘、--apply 永远不可达、
+    # zzz_mcp 的 zzz_plan 工具每次返回 isError。
+    _plan_doc = _stamp({"agent": args.agent, "main_set": main_set,
+                        "sec_set": sec_set, "main_count": main_count,
+                        "plan": plan})
+    Path(args.out).write_text(
+        json.dumps(_plan_doc, ensure_ascii=False, indent=2),
         encoding="utf-8")
     print(f"\n计划已写入 {args.out}")
 

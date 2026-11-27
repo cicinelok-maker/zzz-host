@@ -3201,3 +3201,54 @@ class TestProgressShapes(unittest.TestCase):
 
     def test_bad_json_returns_empty(self):
         self.assertEqual(self._load("BAD"), [])
+
+
+class TestRollsPctFilter(unittest.TestCase):
+    """`rolls_from_value` 的 `is_pct` 必须真的过滤（BUG-060）。
+
+    ## 原来那个形参一次都没用
+
+    ```python
+    def rolls_from_value(value: float, is_pct: bool) -> dict[str, int]:
+        out = {}
+        for name, base in SUB_BASE.items():      # <- is_pct 没出现
+    ```
+
+    于是平A和百分比混在一起猜。实测值 `9`：
+
+        生命值百分比 (3×3) ✅
+        异常精通   (9×1) ✅
+        穿透值     (9×1) ✅
+
+    三个都进候选，全靠名字兜 —— 而 OCR 名字本来就常读残。
+
+    **这块之前完全没有测试覆盖**：改了行为，200 个用例一个都没红。
+    """
+
+    def _f(self, v, pct):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.disc_stats import rolls_from_value
+        return rolls_from_value(v, pct)
+
+    def test_pct_excludes_flat_stats(self):
+        got = self._f(9, True)
+        self.assertIn("生命值百分比", got, f"百分比类里没有生命值百分比：{got}")
+        self.assertNotIn("异常精通", got, f"百分比类里混进了平A：{got}")
+        self.assertNotIn("穿透值", got, f"百分比类里混进了平A：{got}")
+
+    def test_flat_excludes_pct_stats(self):
+        got = self._f(9, False)
+        self.assertIn("异常精通", got, f"平A类里没有异常精通：{got}")
+        self.assertNotIn("生命值百分比", got, f"平A类里混进了百分比：{got}")
+
+    def test_falls_back_when_pool_empty(self):
+        """筛完一个不剩时要退回全表 —— 不能因为标错 pct 就完全匹配不上。"""
+        got = self._f(38, True)      # 38 只在平A表里（攻击力×1）
+        self.assertTrue(got, "筛空了却没退回全表 —— 这个值会解析成 0 次")
+
+    def test_known_values_still_resolve(self):
+        self.assertEqual(self._f(38, False).get("攻击力"), 1)
+        self.assertEqual(self._f(2.4, True).get("暴击率"), 0)
+        self.assertEqual(self._f(6, True).get("生命值百分比"), 1)

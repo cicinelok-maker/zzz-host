@@ -91,18 +91,50 @@ def parse_value(txt: str) -> tuple[float, bool] | None:
     return float(m.group(1)), bool(m.group(2))
 
 
+# 哪些是**百分比类**副词条（名字里不一定带「百分比」）。
+PCT_NAMES = {
+    "生命值百分比", "攻击力百分比", "防御力百分比",
+    "暴击率", "暴击伤害", "穿透率", "异常掌控", "能量自动回复",
+}
+
+
 def rolls_from_value(value: float, is_pct: bool) -> dict[str, int]:
-    """给定数值，返回 {可能的属性名: roll 次数}"""
-    out = {}
-    for name, base in SUB_BASE.items():
-        # BUG-013：真实上限是「1 次初始 + 5 次强化」= 基础值的 6 倍，
-        # 即 n ∈ {0..5}。原来 `range(0, 8)` 允许 n=6,7，
-        # 把 24%（= 2.4 × 10）解析成 rolls=7，单条被抬到 8 分。
-        for n in range(0, 6):
-            target = base * (1 + n)
-            if abs(value - target) < 0.06 * max(1.0, target * 0.02):
-                out[name] = n
-                break
+    """给定数值，返回 {可能的属性名: roll 次数}
+
+    ## `is_pct` 现在**真的用上了**（BUG-060）
+
+    原来这个形参在函数体里**一次都没出现** —— 于是平A和百分比混在一起猜：
+
+        值 9  ->  生命值百分比 (3x3)   + 异常精通 (9x1) + 穿透值 (9x1)
+
+    三个都进候选，最后靠名字兜。而 OCR 名字本来就常读残。
+
+    ## 两级兜底
+
+    1. 先按 `is_pct` 只在自己那半边表里找
+    2. **一个都没匹配上**就退回全表再找一次
+
+    第 2 步很关键：`is_pct` 是从 OCR 文字里「有没有 %」推出来的，
+    那个 % 本身就可能读丢。退回全表能救回这种，代价是偶尔多几个候选 ——
+    多几个候选只是慢一点，完全匹配不上会让这条词条**算 0 分**。
+    """
+    def _match(pool):
+        got = {}
+        for name, base in pool.items():
+            # BUG-013：真实上限是「1 次初始 + 5 次强化」= 基础值的 6 倍，
+            # 即 n 属于 {0..5}。原来 `range(0, 8)` 允许 n=6,7，
+            # 把 24%（= 2.4 x 10）解析成 rolls=7，单条被抬到 8 分。
+            for n in range(0, 6):
+                target = base * (1 + n)
+                if abs(value - target) < 0.06 * max(1.0, target * 0.02):
+                    got[name] = n
+                    break
+        return got
+
+    pool = {k: v for k, v in SUB_BASE.items() if (k in PCT_NAMES) == bool(is_pct)}
+    out = _match(pool or SUB_BASE)
+    if not out and pool:
+        out = _match(SUB_BASE)        # 两级兜底：这边没匹配上，去全表再找
     return out
 
 
