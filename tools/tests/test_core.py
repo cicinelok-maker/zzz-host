@@ -6756,3 +6756,162 @@ class TestActionNHonored(unittest.TestCase):
         self.assertIn("required", names, "Action 没有 required 字段")
 
 
+class TestFarmCmdIsParseable(unittest.TestCase):
+    """`farm_cmd()` 拼出来的命令必须**真的能被 argparse 接受**（P0-3）。
+
+    ## 原来
+
+    ```python
+    elif d.startswith("专业挑战室"):
+        cmd += ["--challenge"]        # <- 没有值
+    ```
+
+    拼出来是：
+
+        od_material_farm.py --challenge --times 2 --run
+
+    argparse 把 `--times` 当成了 `--challenge` 的参数吞掉 ——
+    `--times` 消失、挑战室名字变成 `--times`。
+
+    结果「高维数据 / 刻命残蜕」这类**专业挑战室的东西完全刷不了**，
+    而且**不报错**：用户看到命令跑完了，材料没涨。
+
+    ## 测试思路
+
+    不逐个断言「有没有值」，而是**拿真实 parser 解析一遍** ——
+    任何「少了值 / 把选项当值」的写法都会当场暴露。
+    """
+
+    def test_challenge_has_value(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        cmd = farm_cmd("专业挑战室·深蚀回路", 2)
+        self.assertIn("--challenge", cmd)
+        i = cmd.index("--challenge")
+        # `--challenge` 后面必须**还有东西**（不是末尾）
+        self.assertLess(i + 1, len(cmd),
+                        "`--challenge` 在命令行末尾，没有值")
+        nxt = cmd[i + 1]
+        self.assertFalse(nxt.startswith("-"),
+                         f"`--challenge` 后面跟的是选项 `{nxt}` —— 它会把选项吞掉")
+
+    def test_no_option_eats_another(self):
+        """任何选项后面都不能紧跟另一个选项（除了已知的开关）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        SWITCHES = {"--run", "--again", "--from-gaps", "--plan-only"}
+        cases = ["恶名狩猎·「征服者」", "专业挑战室·深蚀回路",
+                 "实战模拟室·基础材料", "区域巡防·怪兽二重奏"]
+        for d in cases:
+            cmd = farm_cmd(d, 3)
+            for i, tok in enumerate(cmd):
+                if not tok.startswith("--") or tok in SWITCHES:
+                    continue
+                self.assertLess(i + 1, len(cmd), f"{d}: {tok} 在末尾没值")
+                nxt = cmd[i + 1]
+                self.assertFalse(
+                    nxt.startswith("--"),
+                    f"{d}: {tok} 后面紧跟选项 {nxt} —— 会把选项吞掉")
+
+    def test_missing_name_is_loud(self):
+        """专业挑战室没写名字时要**当场报错**，不能拼个残缺命令。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        with self.assertRaises(ValueError):
+            farm_cmd("专业挑战室", 2)
+
+
+class TestStableCheckCanSucceed(unittest.TestCase):
+    """`_at` 的票数不能超过帧数（F3）。
+
+    ## 原来
+
+    ```python
+    return _A.at(self.vs, target, tries=3, need=max(2, tries))
+    ```
+
+    * `tries=2` -> 3 帧取 2  ✔（默认就是想要的）
+    * `tries=5` -> 3 帧取 **5** —— `hits` 最多 3，`need` 是 5，
+      **永远返回 False，而且没有任何提示**
+
+    调用方看到的是「到不了界面」，会去查游戏 —— 而问题在判法本身。
+
+    ## 现在
+
+    帧数 = `max(3, tries)`，`need = min(max(2, tries), 帧数)`。
+    """
+
+    def test_need_never_exceeds_frames(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Machine
+
+        captured = {}
+
+        class FakeVs:
+            win = {"hwnd": 1}
+            occluded = False
+            def text(self, r): return ""
+            def items(self, r): return []
+            def frame(self, force=False): pass
+            def _frame_key(self): return 1
+
+        import core.anchors as A
+        orig = A.at
+
+        def fake_at(vision, target, tries=3, need=2, **kw):
+            captured["tries"] = tries
+            captured["need"] = need
+            return True
+
+        A.at = fake_at
+        try:
+            m = Machine.__new__(Machine)
+            m.vs = FakeVs()
+            for t in (1, 2, 3, 5, 8):
+                captured.clear()
+                Machine._at(m, "世界", tries=t)
+                self.assertLessEqual(
+                    captured["need"], captured["tries"],
+                    f"tries={t} -> 帧 {captured['tries']} 票 {captured['need']}"
+                    f" —— 票数超过帧数，永远满足不了")
+        finally:
+            A.at = orig
+
+    def test_default_is_three_frames_two_votes(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.machine import Machine
+        import core.anchors as A
+
+        captured = {}
+
+        class FakeVs:
+            win = {"hwnd": 1}
+            occluded = False
+            def frame(self, force=False): pass
+            def _frame_key(self): return 1
+
+        orig = A.at
+
+        def fake_at(vision, target, tries=3, need=2, **kw):
+            captured.update(tries=tries, need=need)
+            return True
+
+        A.at = fake_at
+        try:
+            m = Machine.__new__(Machine)
+            m.vs = FakeVs()
+            Machine._at(m, "世界")
+            self.assertEqual((captured["tries"], captured["need"]), (3, 2),
+                             "默认应该是「三帧取两帧」")
+        finally:
+            A.at = orig

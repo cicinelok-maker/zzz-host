@@ -692,10 +692,28 @@ class Machine:
         """稳定确认（实现统一在 `core/anchors.at`）。
 
         「过渡画面不能当真」这条道理在这个项目里被发现过四次，
-        现在只留一份实现 —— 三帧取两帧（既挡过渡帧，也容忍 OCR 抖动）。
+        现在只留一份实现 —— **默认三帧取两帧**（既挡过渡帧，也容忍 OCR 抖动）。
+
+        `tries` 是「取几帧 + 要求几票」的合一参数：
+        `tries=2` -> 3 帧 2 票；`tries=5` -> 5 帧 5 票。
+        **帧数永远 >= tries**，所以不会出现「要的票数比帧还多」。
         """
         from core import anchors as _A
-        return _A.at(self.vs, target, tries=3, need=max(2, tries))
+        # **帧数要跟着 `tries` 走**（F3）。
+        #
+        # 原来写死 `tries=3, need=max(2, tries)` —— 于是：
+        #
+        #     _at(target, tries=2) -> 3 帧取 2  ✔（默认就是想要的）
+        #     _at(target, tries=5) -> 3 帧取 **5** —— 永远不可能满足
+        #
+        # `hits >= need` 里 `hits` 最多 3，而 `need` 是 5 ——
+        # **这个调用永远返回 False**，而且没有任何提示。
+        # 调用方看到的是「到不了界面」，会去查游戏。
+        #
+        # 现在：帧数 = max(3, tries)，need 不会超过帧数。
+        _frames = max(3, tries)
+        _need = min(max(2, tries), _frames)
+        return _A.at(self.vs, target, tries=_frames, need=_need)
     def go_to(self, target: str) -> bool:
         """从当前状态走到目标状态，自动规划并执行。
 

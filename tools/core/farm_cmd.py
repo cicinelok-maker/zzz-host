@@ -18,7 +18,7 @@
 实战模拟室·代理人技能   → --training 代理人技能
 实战模拟室·音擎改装    → --training 音擎改装
 实战模拟室·基础材料    → --training 基础材料
-专业挑战室            → --challenge
+专业挑战室·XXX        → --challenge XXX（**必须带名字**）
 其他（区域巡防）       → --patrol XXX
 ```
 """
@@ -48,7 +48,24 @@ def farm_cmd(dungeon: str, times: int, run: bool = True,
         name = d.split("·", 1)[1] if "·" in d else d
         cmd += ["--hunt", name]
     elif d.startswith("专业挑战室"):
-        cmd += ["--challenge"]
+        # **必须带挑战室名字**（P0-3）。
+        #
+        # 原来这里是 `cmd += ["--challenge"]` —— **没有值**。
+        # 拼出来的命令是：
+        #
+        #     od_material_farm.py --challenge --times 2 --run
+        #
+        # argparse 会把 `--times` 当成 `--challenge` 的参数吞掉，
+        # 于是 `--times` 消失、挑战室名字变成 `--times` ——
+        # 结果「高维数据 / 刻命残蜕」这类**专业挑战室的东西完全刷不了**。
+        #
+        # 而且它不报错，只是行为不对：用户看到命令跑完了，材料没涨。
+        name = d.split("·", 1)[1] if "·" in d else ""
+        if not name:
+            raise ValueError(
+                f"专业挑战室缺少具体名字：{d!r}\n"
+                f"  应该写成「专业挑战室·深蚀回路」这样")
+        cmd += ["--challenge", name]
     else:
         hit = next((k for k in TRAININGS if k in d), "")
         if hit:
