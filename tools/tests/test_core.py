@@ -4863,3 +4863,107 @@ class TestInputModeRestored(unittest.TestCase):
         self.assertIn("_atexit.register(self.stop)", src,
                       "start() 没把 stop 挂到 atexit")
         self.assertIn("SIGINT", src, "没接管 Ctrl+C")
+
+
+class TestNoDuplicateColorReport(unittest.TestCase):
+    """`zzz_status` 不能把彩色报告读两遍（E14）。
+
+    ## 原来
+
+    ```python
+    try:
+        from core import disc_color as _dc
+        blue = _dc.report(vs)["蓝色条数"]
+    except Exception:
+        blue = 0
+    # ...紧接着又一段一模一样的...
+    try:
+        from core import disc_color as _dc
+        _rep = _dc.report(vs)
+        blue = _rep["蓝色条数"]
+    except Exception:
+        blue = 0
+    ```
+
+    两段做同一件事，`report()` 被调两次 —— **双倍 OCR**
+    （每次要扫整块副词条区）。
+    """
+
+    def test_report_called_once(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_status.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        calls = [n.lineno for n in _ast.walk(tree)
+                 if isinstance(n, _ast.Call)
+                 and getattr(n.func, "attr", None) == "report"]
+        self.assertEqual(len(calls), 1,
+                         f"`report()` 被调了 {len(calls)} 次（L{calls}）—— 双倍 OCR")
+
+
+class TestInventoryCorruptFile(unittest.TestCase):
+    """`inventory` 坏文件不能静默当空再整份覆盖（E7）。
+
+    ## 原来
+
+    ```python
+    try:
+        d = json.loads(STORE.read_text(...))
+    except Exception:
+        return {"_ts": "", "items": {}}     # 半截 JSON = 「没有库存」
+    ```
+
+    然后 `_save()` 把整份文件覆盖掉 —— **历史就这么没了**，而且没有任何输出。
+
+    现在：读不了先备份成 `.corrupt`，报出来，再按空继续。
+    """
+
+    def test_bad_file_is_backed_up(self):
+        import sys
+        import pathlib
+        import tempfile
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import inventory as IV
+
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "inventory.json"
+        orig = IV.STORE
+        try:
+            IV.STORE = tmp
+            tmp.write_text("{半截", encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                d = IV._load()
+            self.assertIsInstance(d, dict)
+            self.assertEqual(d.get("items"), {})
+            self.assertTrue(
+                (tmp.parent / (tmp.name + ".corrupt")).exists(),
+                "坏文件没被备份 —— 下次 _save() 会把它整个覆盖掉")
+            self.assertIn("读不了", buf.getvalue(), "没报出原因")
+        finally:
+            IV.STORE = orig
+
+    def test_missing_file_is_quiet(self):
+        """文件不存在是正常情况，不该报警。"""
+        import sys
+        import pathlib
+        import tempfile
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import inventory as IV
+
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "nope.json"
+        orig = IV.STORE
+        try:
+            IV.STORE = tmp
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                d = IV._load()
+            self.assertEqual(d.get("items"), {})
+            self.assertEqual(buf.getvalue().strip(), "",
+                             "文件不存在时不该打印任何东西")
+        finally:
+            IV.STORE = orig

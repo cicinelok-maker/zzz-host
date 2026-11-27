@@ -38,11 +38,39 @@ STORE = BASE / "state" / "inventory.json"
 
 
 def _load() -> dict:
+    """读库存。
+
+    ## **坏文件不能静默当空**（E7）
+
+    原来是 `except Exception: return {"_ts": "", "items": {}}` ——
+    半截 JSON 被当成「没有库存」，**然后 `_save()` 会把整份文件覆盖掉**，
+    历史就这么没了。
+
+    现在：读不了先**备份成 `.corrupt`**，再报出来，然后按空继续。
+    备份是关键 —— 至少让人能手工抢救。
+    """
     if not STORE.exists():
         return {"_ts": "", "items": {}}
+    txt = STORE.read_text(encoding="utf-8", errors="replace")
+    if not txt.strip():
+        return {"_ts": "", "items": {}}
     try:
-        d = json.loads(STORE.read_text(encoding="utf-8"))
-    except Exception:
+        d = json.loads(txt)
+    except Exception as e:
+        bak = STORE.with_name(STORE.name + ".corrupt")
+        moved = False
+        try:
+            STORE.replace(bak)
+            moved = True
+        except Exception:
+            pass
+        print(f"  ⚠ {STORE.name} 读不了（{e}）")
+        if moved:
+            print(f"     已备份成 {bak.name}（{len(txt)} 字节），本次按空库存继续")
+            print(f"     抢救办法：手工修好后改名回 {STORE.name}")
+        return {"_ts": "", "items": {}}
+    if not isinstance(d, dict):
+        print(f"  ⚠ {STORE.name} 的内容是 {type(d).__name__}，不是对象 —— 按空库存继续")
         return {"_ts": "", "items": {}}
     if "items" not in d:
         d = {"_ts": d.pop("_ts", ""), "items": d}

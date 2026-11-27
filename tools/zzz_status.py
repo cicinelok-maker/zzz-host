@@ -191,12 +191,8 @@ def main() -> int:
         d0 = read_disc(vs)
         e0 = ev_disc(d0, good, half)
         eff = e0["eff"]
-        try:
-            from core import disc_color as _dc
-            blue = _dc.report(vs)["蓝色条数"]
-        except Exception:
-            blue = 0
-        # 游戏用颜色标出有效副词条，这里数蓝条——和用户肉眼数的一致
+        # **只调一次**（E14）：原来这里有两段一模一样的块，
+        # 同一份彩色报告被读了两遍 —— 双倍 OCR（每次要扫整块副词条区）。
         try:
             from core import disc_color as _dc
             _rep = _dc.report(vs)
