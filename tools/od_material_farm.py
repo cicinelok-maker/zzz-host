@@ -319,7 +319,20 @@ def main() -> int:
             if _cat in ("恶名狩猎", "哨站后勤"):
                 _wk.record(_cat)
                 _u = _wk.used(_cat)
-                print(f"  记一次 {_cat}：本周 {_u}/{_wk.LIMITS.get(_cat, '?')}")
+                # **`week.LIMITS` 不存在**（E28）—— 模块只导出 `FREE_RUNS`。
+                # 原来这行 `_wk.LIMITS.get(...)` 抛 AttributeError，
+                # 被下面的 `except Exception` 吞掉 —— **记账那行从来没打印过**，
+                # 而上面的 `_wk.record(_cat)` 已经执行了。
+                # 结果：本周刷了几次完全看不到，看起来像「没记账」。
+                _free = _wk.FREE_RUNS.get(_cat, 0)
+                if _free <= 0:
+                    # 这类没有免费额度（比如哨站后勤）—— 说「额度内」是错的
+                    print(f"  记一次 {_cat}：本周第 {_u} 次（这类没有免费额度）")
+                elif _u <= _free:
+                    print(f"  记一次 {_cat}：本周第 {_u}/{_free} 次（免费额度内）")
+                else:
+                    print(f"  记一次 {_cat}：本周第 {_u} 次"
+                          f"（免费 {_free} 次已用完，本次起花电量）")
     except Exception as _e:
         print(f"  （记周本次数失败：{_e}）")
     # **刷成功后记账**（E31）：闸门的依据就是这个文件。

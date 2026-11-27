@@ -6566,3 +6566,50 @@ class TestMcpDocsMatchCode(unittest.TestCase):
                 self.assertNotEqual(
                     getattr(v, "value", None), "佩洛伊斯",
                     f"L{node.lineno} 写死了默认角色名")
+
+
+class TestWeeklyHasNoLimits(unittest.TestCase):
+    """`core.weekly` 没有 `LIMITS`（E28）—— 用了就会静默失败。
+
+    ## 原来
+
+    ```python
+    from core import weekly as _wk
+    ...
+    _wk.record(_cat)
+    print(f"  记一次 {_cat}：本周 {_u}/{_wk.LIMITS.get(_cat, '?')}")
+    except Exception:
+        pass
+    ```
+
+    而 `core/weekly.py` 只导出 `FREE_RUNS` / `BATTERY_AFTER_FREE` /
+    `used` / `free_left` / `cost_for_next` / `can_run` / `record` / `status`
+    —— **没有 `LIMITS`**。
+
+    `AttributeError` 被 `except Exception` 吞掉，于是：
+
+    · `_wk.record(_cat)` **已经执行了**（记账成功）
+    · 那行「记一次…」**从来没打印过**（用户以为没记账）
+
+    **记账成功但看不见** —— 比不记账还糟。
+    """
+
+    def test_weekly_exports(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import weekly as W
+        self.assertFalse(hasattr(W, "LIMITS"),
+                         "weekly 现在有 LIMITS 了？那这条测试要更新")
+        for name in ("FREE_RUNS", "used", "record", "can_run",
+                     "cost_for_next", "free_left", "status"):
+            self.assertTrue(hasattr(W, name), f"weekly 缺 {name}")
+
+    def test_no_attribute_error_swallowed(self):
+        """源码里不能再出现 `_wk.LIMITS`。"""
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "od_material_farm.py").read_text(encoding="utf-8"))
+        self.assertNotIn(".LIMITS", code,
+                         "还有 `_wk.LIMITS` —— 会 AttributeError 被吞掉")
+        self.assertIn("FREE_RUNS", code, "没用 FREE_RUNS")
