@@ -489,9 +489,17 @@ def main() -> int:
             print("   ⚠ 刷本可能没真跑（没看到「挑战完成」）")
         actions.append("刷本" if ok else "刷本失败")
 
-    print(f"   训练潜力最高的 {args.train_n} 块…")
+    # **`--train-n` 以前只改文案，不改行为**（BUG-057）。
+    #
+    # 原来这里打印「训练潜力最高的 N 块」，但下面那条命令**一个块数都没传**，
+    # 于是 N 改多少都是训练全部位号。参数在说谎。
+    #
+    # 现在真的传 `--limit`。措辞也改准：`--limit` 是按**位号顺序**数 N 块，
+    # 不是「按潜力排前 N」—— 那需要评分，这里没有。
+    print(f"   训练最多 {args.train_n} 块…")
     ok, out = run("zzz_disc_train.py",
-                  [args.agent, "--train", "--max-steps", "6"], 3600)
+                  [args.agent, "--train", "--max-steps", "6",
+                   "--limit", str(args.train_n)], 3600)
     actions.append("训练" if ok else "训练失败")
 
     print(f"   换装决策…")

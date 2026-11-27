@@ -2967,3 +2967,95 @@ class TestDiscDedupFingerprint(unittest.TestCase):
         self.assertNotEqual(new_fp(a), new_fp(b), "主属性不同却被当成重复")
         self.assertNotEqual(new_fp(a), new_fp(c), "位号不同却被当成重复")
         self.assertEqual(new_fp(a), new_fp(d), "完全一样的没被去重")
+
+
+class TestTrainLimitIsReal(unittest.TestCase):
+    """`--train-n` 必须真的限制块数，不能只改文案（BUG-057）。
+
+    ## 原来
+
+    ```python
+    print(f"   训练潜力最高的 {args.train_n} 块…")
+    ok, out = run("zzz_disc_train.py",
+                  [args.agent, "--train", "--max-steps", "6"], 3600)
+    ```
+
+    打印说「训练 N 块」，下面那条命令**一个块数都没传** ——
+    N 改多少都是训练全部位号。而 `zzz_disc_train` 当时也**没有**块数参数。
+
+    用户以为 `--train-n 1` 能省镀剂，实际一块没省。
+    """
+
+    def test_disc_train_has_limit_arg(self):
+        import ast as _ast
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_train
+        src = inspect.getsource(zzz_disc_train)
+        tree = _ast.parse(src)
+        found = False
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call):
+                continue
+            if getattr(node.func, "attr", None) != "add_argument":
+                continue
+            for a in node.args:
+                if isinstance(a, _ast.Constant) and a.value == "--limit":
+                    found = True
+        self.assertTrue(found, "zzz_disc_train 没有 --limit 参数")
+
+    def test_disc_daily_passes_limit(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_daily
+        src = inspect.getsource(zzz_disc_daily)
+        self.assertIn('"--limit", str(args.train_n)', src,
+                      "zzz_disc_daily 没有把 --train-n 传下去")
+
+    def test_no_false_potential_claim(self):
+        """措辞不能再说「训练潜力最高的 N 块」—— --limit 是按位号顺序数的。
+
+        ## 只查**真正的 print 调用**，不查源码文本
+
+        第一版写的是 `assertNotIn("训练潜力最高的", 整个源码)` ——
+        而我修这个 bug 时**在注释里引用了这句话**来解释问题，
+        测试就把注释当成了「还没改」。
+
+        （自指陷阱第 6 次。前五次：zzz_cost 的 range、outcome rules 的注释、
+          START_HERE 里解释 od_farm 的说明、DEFAULT_AGENT 的 docstring、
+          zzz_resource 的 required=True。）
+
+        **注释是给人看的；测试应该查代码做了什么。**
+        """
+        import ast as _ast
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_daily
+
+        tree = _ast.parse(inspect.getsource(zzz_disc_daily))
+        bad = []
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call):
+                continue
+            if getattr(node.func, "id", None) != "print":
+                continue
+            for a in node.args:
+                # f-string 里的字面量片段
+                if isinstance(a, _ast.JoinedStr):
+                    for v in a.values:
+                        if isinstance(v, _ast.Constant) and isinstance(v.value, str):
+                            if "训练潜力最高" in v.value:
+                                bad.append((node.lineno, v.value))
+                elif isinstance(a, _ast.Constant) and isinstance(a.value, str):
+                    if "训练潜力最高" in a.value:
+                        bad.append((node.lineno, a.value))
+        self.assertEqual(bad, [],
+                         f"这些 print 还在说「潜力最高」：{bad}")
+        # 新措辞确实在（说明改动生效了，不是删了了事）
+        self.assertIn("训练最多", inspect.getsource(zzz_disc_daily))

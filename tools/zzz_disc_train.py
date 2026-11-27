@@ -173,6 +173,8 @@ def main() -> int:
     ap.add_argument("--no-stop-loss", action="store_true",
                     help="关掉止损，一路升到满级")
     ap.add_argument("--slots", default="", help="只处理这些位号，如 2,3,4")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="最多处理几块盘（0 = 不限制）。按位号顺序，不是按潜力排")
     ap.add_argument("--max-steps", type=int, default=6, help="每个位号最多升几次")
     args = ap.parse_args()
 
@@ -198,7 +200,18 @@ def main() -> int:
     targets = [int(x) for x in args.slots.split(",") if x.strip()] or list(range(1, 7))
     report = []
 
+    # **真的限制块数**（BUG-057）。
+    #
+    # 原来 `zzz_disc_daily --train-n N` 只改了一句提示文案，
+    # 实际调用是 `zzz_disc_train.py --train --max-steps 6` ——
+    # **一个块数参数都没传**，所以 N 改多少都是训练全部位号。
+    #
+    # 现在有了 `--limit`：数到 N 块就停（跳过「进不去/读不到」的）。
+    _done = 0
     for slot in targets:
+        if args.limit and _done >= args.limit:
+            print(f"  已达上限 {args.limit} 块，停止")
+            break
         vs.frame(force=True)
         # 打开定制页读当前盘
         from zzz_equip import open_custom
@@ -254,6 +267,7 @@ def main() -> int:
         # 真升级
         # 记下**初始**副词条条数（升级后 3 条的会变成 4 条，不能那时再数）
         _INIT_SUBS[slot] = len(d["subs_raw"])
+        _done += 1          # 这一块真的要训练了，计入 --limit
         steps = 0
         while d["level"] < d["cap"] and steps < args.max_steps:
             ok, out = upgrade_disc(slot, args.agent)
