@@ -60,13 +60,34 @@ def _warn_unknown(agent: str) -> None:
     print()
 
 def status_of(agent: str) -> dict | None:
-    """读 status 文件。没有返回 None。"""
+    """读 status 文件。**没有**返回 None；**读不了**也会报出来（E21）。
+
+    ## 原来两种「不知道」混成一种
+
+    ```python
+    if not p.exists():
+        return None                       # 没盘点过
+    try:
+        return json.loads(...)
+    except Exception:
+        return None                       # 文件坏了 —— 和上面一样
+    ```
+
+    下游于是把「文件损坏」也显示成「未盘点」：
+    用户以为「还没跑过盘点」，实际是**跑过了但文件坏了**。
+    重跑一次就能好，而提示根本没指向那个动作。
+
+    现在：读不了会打印文件名 + 原因 + 该跑哪条命令。
+    """
     p = STATE / f"status_{agent}.json"
     if not p.exists():
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        print(f"  ⚠ {p.name} **读不了**（{type(e).__name__}: {e}）")
+        print(f"     这不是「没盘点」，是这个文件坏了。")
+        print(f"     重跑一次就好：python tools/zzz_status.py {agent} --json")
         return None
 
 
@@ -74,7 +95,9 @@ def progress_of(agent: str) -> dict:
     """返回 {total, blue, slots, 已盘点, 缺口}。"""
     st = status_of(agent)
     if not st:
-        return {"盘点": False, "total": 0.0, "blue": 0,
+        # **区分「没盘点」和「文件坏了」**（E21）：状态文件在但读不出来 = 坏了
+        _broken = (STATE / f"status_{agent}.json").exists()
+        return {"盘点": False, "读不了": _broken, "total": 0.0, "blue": 0,
                 "bad_main": [], "empty": [], "weak": []}
     slots = st.get("slots") or []
     unread = set(st.get("unread") or [])

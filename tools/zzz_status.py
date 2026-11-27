@@ -319,6 +319,26 @@ def main() -> int:
                     "unread": list(unread),     # 读取失败的位号
                     "slots": result, "skills": sk,
                     "char_level": char_lv}
+        # **写前自检**（E13）：契约在写的时候就对一遍，不等读端事后发现。
+        #
+        # 原来 `REQUIRED_STATUS_KEYS` 只在 `check_status_schema`（读端）里用。
+        # 写端漏字段的话，用户要等到下次读才看到「未盘点」——
+        # 而那个提示完全不指向真正的原因。
+        try:
+            from core.state import validate_status as _validate
+            _why = _validate(_payload)
+        except Exception as _e:
+            print(f"  （写前自检跳过：{_e}）")
+            _why = []
+        if _why:
+            print()
+            print(f"  ✘ 内部错误：这份快照不合格，不写出去")
+            for _w in _why:
+                print(f"     · {_w}")
+            print(f"     这是 zzz_status 自己的 bug（不是你的操作问题），")
+            print(f"     请把这段贴给维护者。")
+            return 8
+
         _data = _stamp(_payload)
         # **原子写**（BUG-064）：写到一半被杀会留下半截 JSON，
         # 而读取方会把坏 JSON 当成「空状态」，数据凭空消失。

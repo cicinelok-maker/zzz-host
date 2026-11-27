@@ -53,6 +53,40 @@ def _hint(agent: str, what: str) -> None:
 REQUIRED_STATUS_KEYS = ("total", "slots", "blue_total")
 
 
+def validate_status(d: dict) -> list[str]:
+    """**写前自检** —— 返回问题列表，空列表 = 合格（E13）。
+
+    ## 为什么写端也要查
+
+    `check_status_schema` 只在**读**的时候用。而「写端只写 5 个字段、
+    读端读 8 个」这种事，**读端只能事后发现**：
+    文件已经写坏了，用户要等到下次读才发现，而且看到的是
+    「未盘点」这种误导性的提示。
+
+    写之前查一遍，问题当场暴露在产生它的地方。
+
+    除了必填键，还查几条「形状」：
+    · `slots` 必须是 list（不是 dict/None）
+    · `total` 必须是数字
+    · `_slots_read` 要是 int（如果给了）
+    """
+    why: list[str] = []
+    miss = [k for k in REQUIRED_STATUS_KEYS if k not in d]
+    if miss:
+        why.append(f"缺字段 {miss}")
+    if "slots" in d and not isinstance(d.get("slots"), list):
+        why.append(f"slots 是 {type(d.get('slots')).__name__}，应该是 list")
+    if "total" in d:
+        t = d.get("total")
+        if not isinstance(t, (int, float)) or isinstance(t, bool):
+            why.append(f"total 是 {type(t).__name__}（{t!r}），应该是数字")
+    if "_slots_read" in d:
+        r = d.get("_slots_read")
+        if not isinstance(r, int) or isinstance(r, bool):
+            why.append(f"_slots_read 是 {type(r).__name__}，应该是 int")
+    return why
+
+
 def check_status_schema(agent: str, d: dict, path=None) -> list[str]:
     """检查状态文件是否满足契约，返回缺失字段列表。
 

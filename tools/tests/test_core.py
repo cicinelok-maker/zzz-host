@@ -5968,3 +5968,124 @@ class TestAgentNotSpecifiedIsClean(unittest.TestCase):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         from core.agent_cfg import UnknownAgent, AgentNotSpecified
         self.assertTrue(issubclass(AgentNotSpecified, UnknownAgent))
+
+
+class TestWriteSideValidatesSchema(unittest.TestCase):
+    """写快照前要自检 schema，不能只靠读端事后发现（E13）。
+
+    ## 原来
+
+    `REQUIRED_STATUS_KEYS = ("total", "slots", "blue_total")` 只在
+    `check_status_schema`（**读端**）里用。写端 `zzz_status` 直接
+    `_atomic.write_json(out, _stamp(_payload))` —— **什么都不查**。
+
+    写端漏字段的话，用户要等到下次读才看到「未盘点」——
+    而那个提示完全不指向真正的原因（R5：「校验只在读端、只在运行期」）。
+    """
+
+    def test_validate_status_rejects_bad(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.state import validate_status
+
+        self.assertEqual(validate_status(
+            {"total": 12.0, "slots": [], "blue_total": 3}), [])
+        self.assertTrue(validate_status({"total": 12.0}),
+                        "缺字段没报")
+        self.assertTrue(validate_status(
+            {"total": 12.0, "slots": {}, "blue_total": 3}),
+            "slots 是 dict 没报")
+        self.assertTrue(validate_status(
+            {"total": "12", "slots": [], "blue_total": 3}),
+            "total 是字符串没报")
+        self.assertTrue(validate_status(
+            {"total": 1.0, "slots": [], "blue_total": 0, "_slots_read": "3"}),
+            "_slots_read 是字符串没报")
+
+    def test_status_calls_validate_before_write(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_status.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        # 导入的是 `validate_status as _validate`，所以看**导入**更准。
+        imported = False
+        for n in _ast.walk(tree):
+            if not isinstance(n, _ast.ImportFrom):
+                continue
+            for a in n.names:
+                if a.name == "validate_status":
+                    imported = True
+                    alias = a.asname or a.name
+        self.assertTrue(imported, "zzz_status 没导入 validate_status")
+        # 而且必须**真的调用**（导入时用了别名 `_validate`）
+        import re as _re
+        self.assertTrue(
+            _re.search(r"\b(_validate|validate_status)\s*\(", src),
+            "导入了却没调用")
+        # 校验失败要 return 8
+        i = src.find("validate_status")
+        tail = src[i:i + 800]
+        self.assertIn("return 8", tail, "校验失败没有 return 8")
+
+
+class TestUnreadableIsNotUnscanned(unittest.TestCase):
+    """「读不了」不能显示成「没盘点」（E21）。
+
+    ## 原来
+
+    ```python
+    if not p.exists():
+        return None          # 没盘点过
+    try:
+        return json.loads(...)
+    except Exception:
+        return None          # 文件坏了 —— 和上面一样
+    ```
+
+    下游于是把「文件损坏」也显示成「未盘点」：
+    用户以为「还没跑过盘点」，实际是**跑过了但文件坏了**。
+    重跑一次就能好，而提示根本没指向那个动作。
+    """
+
+    def test_missing_vs_broken(self):
+        import sys
+        import pathlib
+        import tempfile
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_who as W
+
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        orig = W.STATE
+        try:
+            W.STATE = tmp
+            # ① 不存在：安静
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                r1 = W.status_of("甲")
+            self.assertIsNone(r1)
+            self.assertEqual(buf.getvalue().strip(), "",
+                             "文件不存在时不该打印东西")
+            self.assertFalse(W.progress_of("甲").get("读不了"),
+                             "没盘点被标成「读不了」")
+
+            # ② 坏了：要报
+            (tmp / "status_乙.json").write_text("{半截", encoding="utf-8")
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                r2 = W.status_of("乙")
+            self.assertIsNone(r2)
+            out = buf2.getvalue()
+            self.assertIn("读不了", out, "坏文件没报出来")
+            self.assertIn("不是", out, "没说清「这不是没盘点」")
+            self.assertIn("zzz_status.py", out, "没给出修复命令")
+            # progress_of 的标记也要对（但会再打印一次，吞掉）
+            buf3 = io.StringIO()
+            with contextlib.redirect_stdout(buf3):
+                p2 = W.progress_of("乙")
+            self.assertTrue(p2.get("读不了"), "坏了却标成「没读过」")
+        finally:
+            W.STATE = orig
