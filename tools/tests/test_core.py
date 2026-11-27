@@ -4671,13 +4671,14 @@ class TestCodeHelperStripsProse(unittest.TestCase):
 class TestSubstringAssertionRatchet(unittest.TestCase):
     """拿源码做子串断言的处数只能降、不能涨。
 
-    现在这些断言都跑在 `_code()`（剥过注释和 docstring）上 ——
-    注释骗不过去了。但**字符串字面量**仍可能骗过，
-    所以还是设一道棘轮：2026-11-27 实测 36 处，只许降。
-    （其中 5 处是 `TestCodeHelperStripsProse` 自己测 `_code()` 用的。）
+    **只数「拿未剥过的 read_text 结果做子串断言」的地方** ——
+    那才是「注释/字符串能骗过」的高危类。
+    `_code()` 出来的文本已经剥过注释和 docstring，不算在内。
     """
 
-    BASELINE = 36
+    #: 2026-11-27 实测 16 处。这是**高危类**（未剥注释的源码做子串断言），
+    #: 只许降。新写的请用 `_code(...)` 或者直接查 AST。
+    BASELINE = 16
 
     def test_does_not_grow(self):
         import ast as _ast
@@ -4688,11 +4689,18 @@ class TestSubstringAssertionRatchet(unittest.TestCase):
         for fn in _ast.walk(tree):
             if not isinstance(fn, _ast.FunctionDef):
                 continue
+            # **只盯「没剥过的源码」** —— 那才是真危险的。
+            #
+            # `_code(...)` 出来的文本已经去掉注释和 docstring，
+            # 拿它做子串断言不会「被注释骗过」，风险低得多。
+            # 早期这个棘轮把两者一起数，结果我每加一个 _code 断言它就涨，
+            # 只好不断调高 BASELINE —— **棘轮就没意义了**。
             sv = set()
             for n in _ast.walk(fn):
-                # **精确匹配 `_code(`，不能匹配 `_ps1_code(` 这种**（我自己踩过）。
-                if (isinstance(n, _ast.Assign)
-                        and _ast.unparse(n.value).startswith("_code(")):
+                if not isinstance(n, _ast.Assign):
+                    continue
+                val = _ast.unparse(n.value)
+                if "read_text(" in val and "_code(" not in val:
                     for x in n.targets:
                         if isinstance(x, _ast.Name):
                             sv.add(x.id)
@@ -6412,3 +6420,64 @@ class TestTargetsJsonChannelsAgree(unittest.TestCase):
         self.assertFalse(any(n == "targets.json" or n.endswith("/targets.json")
                              for n in names),
                          "真实 targets.json 还在发布集里")
+
+
+class TestRoundCountRoundsUp(unittest.TestCase):
+    """轮数必须**向上取整**，不能用 `:.0f`（E1）。
+
+    ## 实测（修前）
+
+        120 电: 120/240 = 0.5 -> 显示「0 轮」   ← 用户以为电量用不出去
+        600 电: 600/240 = 2.5 -> 显示「2 轮」   ← 少估一轮，实际跑不完
+        360 电: 360/240 = 1.5 -> 显示「2 轮」   ← 偶然对
+        241 电: 241/240 = 1.004 -> 显示「1 轮」 ← 少估一轮
+
+    `:.0f` 是**银行家舍入**（.5 取偶），不是四舍五入。
+    `zzz_gap.py` 早就用了 `(x + 239) // 240`，另外两处没有。
+    """
+
+    def test_formula(self):
+        def rounds(tot, per=240):
+            return (tot + per - 1) // per if tot > 0 else 0
+        for tot, want in ((0, 0), (1, 1), (120, 1), (239, 1), (240, 1),
+                          (241, 2), (360, 2), (600, 3), (700, 3)):
+            self.assertEqual(rounds(tot), want,
+                             f"{tot} 电应该 {want} 轮")
+
+    def test_no_banker_rounding_in_round_counts(self):
+        """含「轮」的行里不能再用 `:.0f`（分钟数那种不在此列）。"""
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for f in sorted(root.glob("*.py")):
+            if f.name.startswith("test"):
+                continue
+            for n, line in enumerate(
+                    f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                s = line.strip()
+                if s.startswith("#"):
+                    continue          # 注释里提到 `.0f` 是解释为什么不能用
+                if "轮" in s and ".0f" in s and "分钟" not in s:
+                    bad.append(f"{f.name}:{n}  {s[:60]}")
+        self.assertEqual(bad, [],
+                         f"这些地方还在用银行家舍入算轮数：{bad}")
+
+    def test_cost_uses_ceil(self):
+        import pathlib
+        # **用 `_code()` 剥掉注释** —— 修这两个函数时写的注释里
+        # 就引用了旧写法（解释为什么不能那么写），直接搜文本会抓到自己。
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_cost.py").read_text(encoding="utf-8"))
+        self.assertIn("(tot + 239) // 240", code,
+                      "zzz_cost 没改成向上取整")
+        self.assertNotIn("tot / 240:.0f", code,
+                         "zzz_cost 还在用 `:.0f` 算轮数")
+
+    def test_farm_plan_uses_ceil(self):
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_farm_plan.py").read_text(encoding="utf-8"))
+        self.assertIn("(total_batt + _per_round - 1) // _per_round", code,
+                      "zzz_farm_plan 没改成向上取整")
+        self.assertNotIn("total_batt / max(1, args.battery):.0f", code,
+                         "zzz_farm_plan 还在用 `:.0f` 算轮数")

@@ -547,7 +547,10 @@ def main() -> int:
         total_batt += r["电量"]
     print("-" * 56)
     print(f"{'合计':<14} {'':>5} {'':>18} {'':>4} {total_batt:>5}")
-    print(f"\n按 {args.battery} 电/轮算，需要 {total_batt / max(1, args.battery):.0f} 轮满电")
+    # **同样要向上取整**（E1）：`.0f` 的银行家舍入会把 0.5 轮报成 0 轮。
+    _per_round = max(1, args.battery)
+    _rounds = (total_batt + _per_round - 1) // _per_round if total_batt > 0 else 0
+    print(f"\n按 {args.battery} 电/轮算，需要 {_rounds} 轮满电")
     print(f"约 {total_batt / max(1, args.battery) * 24:.0f} 小时（6分钟回1电）")
 
     # 电量预算内能刷多少刷多少（允许只刷一部分，不必凑满一整项）
