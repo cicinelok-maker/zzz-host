@@ -180,9 +180,11 @@ def main() -> int:
     p.add_argument("--timeout", type=int, default=240, help="最多等多少分钟")
     args = ap.parse_args()
 
-    vs, inp = Vision(), Input()
+    vs, inp = Vision(steal_focus=False), Input()
     ui = Ui(vs, inp)
-    ui.start()
+    # **只读：不抢前台、不要求管理员**（D7）。
+    # 这个工具只是读游戏画面/出计划，从不注入按键。
+    ui.start(readonly=True)
 
     # 没给子命令 -> 默认 check（体检）
     if not getattr(args, "cmd", None):

@@ -56,7 +56,7 @@ _pool = ThreadPoolExecutor(max_workers=4)
 
 
 class Vision:
-    def __init__(self, ocr=None, cache_ms: int = 120):
+    def __init__(self, ocr=None, cache_ms: int = 120, steal_focus: bool = True):
         self.win = live.find_window()
         if not self.win:
             # **游戏没开是「最常见、最可预期」的情况，不该变成未捕获异常。**
@@ -76,6 +76,12 @@ class Vision:
                   file=sys.stderr)
             raise SystemExit(5)
         self.ocr = ocr or self._make_ocr()
+        # **要不要抢前台**（D7）。
+        # 只读工具（盘点/出计划）传 False —— 用户可能正在看别的窗口，
+        # 我们只是读游戏画面，不该把它顶到前面。
+        # 但「是不是在前台」仍然要查：不在前台时读到的是**遮挡物的像素**，
+        # 拿那个做判断比报错危险得多。
+        self.steal_focus = steal_focus
         # **实例唯一序号**（E12）。
         #
         # `describe()` 的缓存键原来是 `(id(self), frame_key)` ——
@@ -202,13 +208,24 @@ class Vision:
         静默读别人的画面比报错危险得多。
         """
         try:
-            if live.foreground(self.win):
+            # 只读模式只查不抢
+            _ok = (live.foreground(self.win) if self.steal_focus
+                   else live.is_foreground(self.win))
+            if _ok:
                 if self.occluded:
-                    print("  ⚠ 游戏窗口之前被遮挡过，已抢回前台")
+                    print("  ⚠ 游戏窗口之前被遮挡过，已回到前台")
                 self.occluded = False
                 return
-        except Exception:
-            return          # 查不了就别拦，别把正常流程弄挂
+        except Exception as _e:
+            # **fail-closed**：查不了就当「被遮挡」（D7）。
+            #
+            # 原来这里是 `except Exception: return` —— 查失败时 `occluded`
+            # 保持原值（可能是 False），于是**遮挡保护整体失效**：
+            # 上层以为画面是真的，实际可能在读别人的像素。
+            if not self.occluded:
+                print(f"  ⚠ 查不到游戏窗口是否在前台（{_e}）—— 按「被遮挡」处理")
+            self.occluded = True
+            return
         if not self.occluded:
             print("  ⚠ 游戏窗口不在前台 —— **现在读到的可能是别的程序的画面**")
             print("     请把绝区零窗口切到最前。工具会在下一帧自动重试。")

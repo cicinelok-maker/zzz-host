@@ -20,7 +20,7 @@ class Ui:
         self.inp = inp or Input()
 
     # ---------- 生命周期 ----------
-    def start(self) -> None:
+    def start(self, readonly: bool = False) -> None:
         """准备工作：权限闸 + 前台 + 键鼠态
 
         **权限闸放这里**：所有会动游戏的工具都经过 Ui.start()。
@@ -28,6 +28,16 @@ class Ui:
         而 `SendInput` 的返回值在 UIPI 拦截下是看不出来的（返回 1）。
         """
         from .input import InputBlocked, is_admin
+
+        # **只读不需要管理员，也不抢前台**（D7）。
+        #
+        # 原来盘点/出计划这些「只是看一眼」的工具也要过权限闸、还要把游戏
+        # 顶到前台 —— 用户正在看别的窗口时会被硬抢走焦点。
+        # 而它们根本不注入按键，权限闸对它们没有意义。
+        if readonly:
+            self._stopped = False
+            return
+
         if not is_admin():
             # 打印干净的消息 + SystemExit(2)，不抛裸异常 ——
             # 那样新手看到 400 行堆栈，最后那段话被埋在最底下。

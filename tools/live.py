@@ -139,6 +139,19 @@ def grab(win) -> np.ndarray:
     return np.array(ImageGrab.grab(bbox=box, all_screens=True).convert("RGB"))[:, :, ::-1]
 
 
+def is_foreground(win) -> bool:
+    """**只查，不抢**（D7）。
+
+    只读工具（盘点/出计划/看材料）不该把游戏抢到前台 ——
+    用户可能正在看别的窗口。但「游戏是不是在前台」这件事还是要问，
+    否则读到的是遮挡物的像素。
+    """
+    try:
+        return user32.GetForegroundWindow() == win["hwnd"]
+    except Exception:
+        return False
+
+
 def foreground(win) -> bool:
     """把游戏抢到前台并**验证**，返回是否真的拿到了前台。"""
     for _ in range(3):

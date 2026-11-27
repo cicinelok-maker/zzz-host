@@ -227,9 +227,11 @@ def do_scan() -> int:
         print(f"✘ 加载失败：{e}")
         return 2
 
-    vs, inp = Vision(), Input()
+    vs, inp = Vision(steal_focus=False), Input()
     ui = Ui(vs, inp)
-    ui.start()
+    # **只读：不抢前台、不要求管理员**（D7）。
+    # 这个工具只是读游戏画面/出计划，从不注入按键。
+    ui.start(readonly=True)
     m = Machine(ui, verbose=False)
 
     # **耗时估计要照实写**（2026-11-27 实测 342 秒）。

@@ -5284,3 +5284,115 @@ class TestDiscGapNotMultipliedBySets(unittest.TestCase):
             got = _n_main + _n_sec + _rest
             self.assertEqual(got, want,
                              f"空{n_empty} 候选{n_sets} 应该总共 {want} 件，实际 {got}")
+
+
+class TestReadOnlyDoesNotStealFocus(unittest.TestCase):
+    """只读工具不该要求管理员、也不该抢前台（D7）。
+
+    ## 原来
+
+    `zzz_status` / `zzz_plan` / `zzz_resource` / `zzz_who` 全都是
+    `Vision(); Input(); ui.start()` —— 而 `ui.start()` 里有 `is_admin()` 闸门
+    和 `live.foreground()`（抢前台），`Vision` 每帧还会再抢一次。
+
+    用户正在看别的窗口，跑一次「看一眼」的盘点就被硬顶到前台；
+    而且没管理员就直接 exit 2 —— **它们根本不注入按键**。
+
+    ## 另：遮挡保护是 fail-open 的
+
+    `vision.py` 的 `except Exception: return` 让 `occluded` 保持原值（可能 False），
+    于是「查不到窗口状态」等于「假定没被遮挡」——
+    **上层以为画面是真的，实际可能在读别人的像素**。
+    """
+
+    # **只有真正不注入按键的才算只读**。
+    #
+    # 审计 D7 把 `zzz_status` / `zzz_plan` 也列成「只读路径」——
+    # 实测它们各有 3 处 `inp.click(...)`（打开驱动盘详情）。
+    # 给它们 `readonly=True` 会跳过权限闸，UIPI 静默丢点击，
+    # 用户白等到超时。**这条是审计判错了，`audit_patterns` 规则 E 抓出来的。**
+    READONLY = ("zzz_resource.py", "zzz_who.py")
+
+    INJECTING = ("zzz_status.py", "zzz_plan.py")
+
+    def test_readonly_tools_do_not_steal(self):
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for name in self.READONLY:
+            f = root / name
+            if not f.exists():
+                continue
+            txt = f.read_text(encoding="utf-8")
+            if "Vision()" in txt and "steal_focus=False" not in txt:
+                bad.append(f"{name}: Vision() 没传 steal_focus=False")
+            if "ui.start()" in txt and "readonly=True" not in txt:
+                bad.append(f"{name}: ui.start() 没传 readonly=True")
+        self.assertEqual(bad, [], "\n  ".join(bad))
+
+    def test_ui_start_accepts_readonly(self):
+        import sys
+        import pathlib
+        import inspect
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.ui import Ui
+        sig = inspect.signature(Ui.start)
+        self.assertIn("readonly", sig.parameters, "Ui.start 没有 readonly 参数")
+
+    def test_occlusion_fails_closed(self):
+        """查不到窗口状态时必须**假定被遮挡**，不能假定没事。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import live
+        from core import vision as V
+
+        vs = V.Vision.__new__(V.Vision)
+        vs.win = {"hwnd": 1}
+        vs.occluded = False
+        vs.steal_focus = True
+
+        def boom(_w):
+            raise RuntimeError("模拟失败")
+
+        orig = live.foreground
+        live.foreground = boom
+        try:
+            vs._ensure_foreground()
+            self.assertTrue(vs.occluded,
+                            "查不到前台状态却把 occluded 留成 False —— fail-open")
+        finally:
+            live.foreground = orig
+
+    def test_readonly_queries_without_stealing(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import live
+        from core import vision as V
+
+        vs = V.Vision.__new__(V.Vision)
+        vs.win = {"hwnd": 1}
+        vs.occluded = False
+        vs.steal_focus = False
+
+        calls = {"steal": 0, "query": 0}
+        of, oi = live.foreground, live.is_foreground
+
+        def fake_steal(w):
+            calls["steal"] += 1
+            return True
+
+        def fake_query(w):
+            calls["query"] += 1
+            return True
+
+        live.foreground = fake_steal
+        live.is_foreground = fake_query
+        try:
+            vs._ensure_foreground()
+        finally:
+            live.foreground = of
+            live.is_foreground = oi
+        self.assertEqual(calls["steal"], 0, "只读模式还是抢了前台")
+        self.assertEqual(calls["query"], 1, "只读模式没查询")

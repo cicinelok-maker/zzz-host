@@ -104,6 +104,9 @@ def main() -> int:
 
     ui = Ui(vs, inp)
     log = Journal(f"体检_{args.agent}")
+    # **不能当只读处理**：这个工具会 `inp.click(...)` 打开驱动盘详情，
+    # 所以要过权限闸（UIPI 会静默丢点击）也要抢前台。
+    # 审计 D7 把这里列成「只读路径」，实测有 3 处 `inp.click` —— 判错了。
     ui.start()
     m = Machine(ui, verbose=False)
     print(f"{args.agent}｜有效={sorted(good)} 次选={sorted(half)}")
