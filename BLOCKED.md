@@ -605,7 +605,7 @@ python tools/zzz_daily.py 佩洛伊斯 --run      # 2. 真跑一轮
 
 ---
 
-## 十三、`--help` 跑不了的工具（10 个，同一个病）
+## 十三、`--help` 跑不了的工具（7 个，同一个病）
 
 **病**：参数解析之前就干活 —— 连游戏 / 读运行时文件 / 跑全套检查。
 于是 `python tools/xxx.py --help` 要么超时、要么报「还没有数据」然后 exit 2。
@@ -622,16 +622,24 @@ python tools/zzz_daily.py 佩洛伊斯 --run      # 2. 真跑一轮
 | `audit_slim.py` | 同上 |
 | `audit_fresh.py` | 同上 |
 | `feishu_img.py` | 先初始化客户端 |
-| `zzz_guide_max.py` | 先连游戏 |
-| `zzz_guide_plan.py` | 先连游戏 |
-| `zzz_guide_stats.py` | 先连游戏 |
 | `explain_crit.py` ⚠ | 先读 `od_test/discs_v2.json` |
 | `show_discs_v2.py` ⚠ | 同上 |
 
-**已经修好的两个**：
+**已经修好的**：
 
 * `live.py`（F5）—— preflight 移到 argparse 之后
 * `gap_analysis.py`（E15）—— 加 `main()` + argparse + `__main__` 守卫
+* **`zzz_guide_max.py` / `zzz_guide_plan.py` / `zzz_guide_stats.py`** ——
+  这三个原来**根本没有 argparse**：传 `--help` 会被无视，然后
+  `Vision()` → `Input()` → `ui.start()` → **开始点游戏**。
+
+  2026-11-27 真机事故就是它们：残留的后台任务里有 `run_tests`，
+  它跑过一个「每个工具 `--help` 必须 exit 0」的测试，于是这三个被叫起来
+  **真的去操作账号**，而且它们自己的重试循环是
+  「打开养成指南 → 失败 → `reset_to_world()` 关掉 → 再来一遍」，
+  看起来就是「一直点开又关上」，**只有 Alt+F4 关掉游戏才停**。
+
+  现在它们第一行就 `parse_args()`，`--help` 在 300ms 内返回，一行都不执行。
 
 **改法**：把 `argparse` 提到最前面，`--help` 直接退出；所有初始化放在
 `args = ap.parse_args()` 之后。
@@ -644,3 +652,16 @@ python tools/zzz_daily.py 佩洛伊斯 --run      # 2. 真跑一轮
 > 而不是那个缺陷。
 
 所以这条记在这里，等有功夫按上面的改法逐个修。修完把这张表划掉。
+
+### 这条现在有测试守着
+
+`TestNoGameAccessBeforeArgs`：
+
+* 工具**有**碰游戏的调用（`Vision` / `Input` / `Ui` / `ZContext`），
+  就必须有 `parse_args()`，而且同一段代码里要在它们**之前**
+* 工具**没有** `parse_args()`，就不许有任何碰游戏的调用
+* `if __name__ == "__main__":` 块按「一段代码」算，同样要求 `parse_args()` 在前
+* `find_window()` **不算**碰游戏（纯查询，`check_config` 用它确认游戏开着）
+
+变异验证：把 `zzz_guide_max.py` 的 argparse 拿掉，测试立刻红，
+报「碰游戏但完全没有 argparse —— `--help` 会被无视然后去点游戏」。

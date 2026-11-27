@@ -175,6 +175,23 @@ def read_wengine(ui) -> dict:
 
 
 def main() -> int:
+    # **先解析参数，再碰任何东西**（安全闸）。
+    #
+    # 原来这个工具**没有 argparse** —— 命令行传 `--help` 会被完全无视，
+    # 然后它照常往下走：`Vision()` → `Input()` → `ui.start()` → 开始点游戏。
+    # 也就是说「我只是想看看帮助」会变成「它动我的号」。
+    #
+    # 更糟的是它自己的重试循环：打开养成指南 → 某步失败 →
+    # `reset_to_world()` 按 ESC 关掉 → 再来一遍。看起来就是
+    # 「一直点开又关上」，而且只有 Alt+F4 游戏才能停。
+    #
+    # 现在：`argparse` 放在**第一行**，`--help` 在这里就退出，
+    # 下面的 `Vision()/Input()/Ui()` 一行都不会执行。
+    import argparse as _argparse
+    _argparse.ArgumentParser(
+        description="读养成指南的属性&等级页（**会点游戏**，加 --help 只看说明，不会动）"
+    ).parse_args()
+
     import json
     from core import Vision, Input, Ui, anchors
     import zzz_guide

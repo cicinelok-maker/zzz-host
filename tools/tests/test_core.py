@@ -7373,3 +7373,147 @@ class TestWatchdogIsGone(unittest.TestCase):
         doc = (R.guard.__doc__ or "")
         self.assertIn("没有调用方", doc,
                       "guard 的 docstring 应该说清「目前没接上」")
+
+
+class TestNoGameAccessBeforeArgs(unittest.TestCase):
+    """**任何工具都不许在解析参数之前碰游戏**。
+
+    ## 为什么有这条
+
+    曾发生过一次真机事故：`zzz_guide_max.py` / `zzz_guide_plan.py` /
+    `zzz_guide_stats.py` **根本没有 argparse** —— 传 `--help` 会被无视，
+    然后照常往下走：`Vision()` → `Input()` → `ui.start()` → 开始点游戏。
+
+    也就是说「我只是想看看帮助」变成了「它动我的号」。
+
+    更糟的是它们自己的重试循环：打开养成指南 → 某步失败 →
+    `reset_to_world()` 按 ESC 关掉 → 再来一遍。看起来就是
+    「一直点开又关上」，**只有 Alt+F4 关掉游戏才能停**。
+
+    当时它是一堆没被收尾的后台任务的子进程，所以「任务停了它还在跑」。
+
+    ## 这条规矩
+
+    · 工具**有**碰游戏的调用，就必须有 `parse_args()`；
+      而且同一个函数里，`parse_args()` 要在它们**之前**
+    · 工具**没有** `parse_args()`，就不许有任何碰游戏的调用
+    · 碰游戏的调用不许出现在**模块级**（导入即执行）
+
+    ## 为什么按「函数」而不是按「行号」
+
+    `feishu_img.py` 里 `Vision()` 在 `shoot()` 中（L55 附近），
+    而 `parse_args()` 在 `main()` 中（L68）—— 行号上 Vision 在前，
+    但它是**被 main 调用**的，实际执行在 parse_args 之后。
+    按行号比会误判，按函数归属才对。
+    """
+
+    #: **真的会动到游戏的**：注入输入 / 抢焦点 / 起 OneDragon 上下文。
+    #:
+    #: `find_window()` **不算** —— 它是纯查询（枚举窗口、读矩形），
+    #: `check_config` 用它确认「游戏开着吗」，那是正当用途。
+    GAME = {"Vision", "Input", "Ui", "ZContext"}
+
+    def _scan(self, path):
+        src = path.read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+
+        # **模块级**（不在任何函数/类里）的碰游戏调用
+        #
+        # 注意：不能直接对顶层节点 `walk()` —— `def main()` 本身就是一个
+        # 顶层节点，walk 进去会把函数里的调用也算成「模块级」。
+        # （第一版就是这么错的，报了 6 个假阳性。）
+        module_level = []
+
+        def _walk_module(node):
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                                 _ast.ClassDef, _ast.Lambda)):
+                return          # 不进函数体
+            if isinstance(node, _ast.Call):
+                nm = _ast.unparse(node.func).split(".")[-1]
+                if nm in self.GAME:
+                    module_level.append((node.lineno, nm))
+            for ch in _ast.iter_child_nodes(node):
+                _walk_module(ch)
+
+        def _is_main_block(node) -> bool:
+            """`if __name__ == "__main__":` —— 只在直接运行时才执行。
+
+            它里面的代码**可以**碰游戏，但同样要满足
+            「`parse_args()` 在前」。所以单独当一段来查，而不是算模块级。
+            """
+            if not isinstance(node, _ast.If):
+                return False
+            t = _ast.unparse(node.test)
+            return "__main__" in t
+
+        main_block = []
+        for node in tree.body:
+            if _is_main_block(node):
+                game, pa = [], []
+                for sub in _ast.walk(node):
+                    if not isinstance(sub, _ast.Call):
+                        continue
+                    nm = _ast.unparse(sub.func).split(".")[-1]
+                    if nm in self.GAME:
+                        game.append((sub.lineno, nm))
+                    if getattr(sub.func, "attr", None) == "parse_args":
+                        pa.append(sub.lineno)
+                if game:
+                    main_block.append((min(pa) if pa else None, sorted(game)))
+                continue
+            _walk_module(node)
+
+        # 每个函数里：碰游戏的行号 + parse_args 的行号
+        per_fn = []
+        for node in _ast.walk(tree):
+            if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            game, pa = [], []
+            for sub in _ast.walk(node):
+                if not isinstance(sub, _ast.Call):
+                    continue
+                nm = _ast.unparse(sub.func).split(".")[-1]
+                if nm in self.GAME:
+                    game.append((sub.lineno, nm))
+                if getattr(sub.func, "attr", None) == "parse_args":
+                    pa.append(sub.lineno)
+            if game:
+                per_fn.append((node.name, sorted(game), min(pa) if pa else None))
+
+        any_pa = any(
+            isinstance(sub, _ast.Call)
+            and getattr(sub.func, "attr", None) == "parse_args"
+            for sub in _ast.walk(tree))
+        # `__main__` 块里的碰游戏调用，也算进 per_fn（按「函数」对待）
+        for pa, game in main_block:
+            per_fn.append(("__main__", game, pa))
+        return module_level, per_fn, any_pa
+
+    def test_no_tool_touches_game_before_args(self):
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        checked = 0
+        for f in sorted(root.glob("*.py")):
+            if f.name.startswith(("test", "run_tests")):
+                continue
+            try:
+                mod_level, per_fn, any_pa = self._scan(f)
+            except SyntaxError:
+                continue
+            checked += 1
+            if mod_level:
+                bad.append(f"{f.name}: 模块级就碰游戏 L{[l for l, _ in mod_level]}")
+            if per_fn and not any_pa:
+                bad.append(
+                    f"{f.name}: 碰游戏（{[n for n, _, _ in per_fn]}）"
+                    f"但**完全没有 argparse** —— `--help` 会被无视然后去点游戏")
+            for fname, game, pa in per_fn:
+                if pa is not None and game and pa > game[0][0]:
+                    bad.append(
+                        f"{f.name}:{fname} 里 parse_args(L{pa}) 在 "
+                        f"{game[0][1]}(L{game[0][0]}) **之后**")
+        self.assertGreater(checked, 20, f"只检查了 {checked} 个工具？")
+        self.assertEqual(bad, [],
+                         "这些工具在解析参数之前就可能碰游戏：\n  "
+                         + "\n  ".join(bad))
