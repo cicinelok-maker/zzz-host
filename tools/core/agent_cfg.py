@@ -211,8 +211,25 @@ def element_of(name: str) -> str:
     return ""
 
 
+def _local_names() -> set[str]:
+    """`state/characters.local.json` 里的角色名（F6）。
+
+    `--add-agent` 写的是这个文件，而 `known()` 原来**只看 `disc_meta.json`** ——
+    于是「加进去了但工具不认」，加完等于白加。
+
+    读不了就当空集（本地层是可选增强，不该把整个工具弄挂）。
+    """
+    try:
+        from core import characters as _chars
+        return set(_chars.names())
+    except Exception:
+        return set()
+
+
 def known() -> list[str]:
-    return sorted((meta().get("角色") or {}).keys())
+    """所有**认得**的角色名：`disc_meta.json` + 本地补充层。"""
+    base = set((meta().get("角色") or {}).keys())
+    return sorted(base | _local_names())
 
 
 def report(name: str | None = None) -> str:
@@ -355,6 +372,9 @@ def resolve_agent(name: str, allow_unknown: bool = False) -> str:
     canon = canonical_agent(name)
     chars = meta().get("角色") or {}
     if canon in chars:
+        return canon
+    # **本地层加的角色也要认**（F6）
+    if canon in _local_names():
         return canon
     # 归一化后还不在 → 模糊找
     sug = suggest(name)

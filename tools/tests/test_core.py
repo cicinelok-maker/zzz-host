@@ -6915,3 +6915,105 @@ class TestStableCheckCanSucceed(unittest.TestCase):
                              "默认应该是「三帧取两帧」")
         finally:
             A.at = orig
+
+
+class TestLocalAgentIsVisible(unittest.TestCase):
+    """`--add-agent` 加的角色必须被 `known()` / `resolve_agent()` 认（F6）。
+
+    ## 原来
+
+    · `--add-agent` 写的是 `state/characters.local.json`（`core/characters.py`）
+    · 而 `known()` 只看 `meta()["角色"]` = `disc_meta.json`
+
+    于是**加进去了但工具不认** —— 加完等于白加：
+
+        python tools/zzz_who.py --add-agent 某人 --role 强攻 --element 以太
+        ✔ 已写入 state/characters.local.json
+        python tools/zzz_status.py 某人
+        ✘ 角色「某人」不在角色库里
+
+    ## 现在
+
+    `known()` = `disc_meta.json` ∪ `characters.local.json`，
+    `resolve_agent()` 也认本地层。
+    """
+
+    def test_added_agent_is_known(self):
+        import sys
+        import pathlib
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import agent_cfg as A
+        from core import characters as C
+
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "characters.local.json"
+        orig = C.LOCAL
+        try:
+            C.LOCAL = tmp
+            self.assertNotIn("测试角色XZ", A.known(),
+                             "这个测试角色本来不该在库里")
+            C.add("测试角色XZ", {"定位": "强攻", "属性": "以太"})
+            self.assertIn("测试角色XZ", A.known(),
+                          "add() 之后 known() 还是看不到 —— --add-agent 白用")
+            self.assertEqual(A.resolve_agent("测试角色XZ"), "测试角色XZ",
+                             "resolve_agent 不认本地层的角色")
+        finally:
+            C.LOCAL = orig
+
+    def test_missing_local_file_is_quiet(self):
+        """没有 `characters.local.json` 是正常情况，不该炸。"""
+        import sys
+        import pathlib
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import agent_cfg as A
+        from core import characters as C
+
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "nope.json"
+        orig = C.LOCAL
+        try:
+            C.LOCAL = tmp
+            self.assertGreater(len(A.known()), 10, "known() 应该还有 disc_meta 的角色")
+        finally:
+            C.LOCAL = orig
+
+
+class TestCheckConfigVerifiesModels(unittest.TestCase):
+    """`check_config` 不能只测 OCR 能 import（E24）。
+
+    ## 原来
+
+        _code = "import one_dragon.base.matcher.ocr.onnx_ocr_matcher as m; print('ok')"
+
+    只证明**能 import**。而**源码包安装**（不是完整包）里
+    `assets/models/onnx_ocr` 是空的 —— import 照样成功。
+
+    然后工具在**第一次读画面**时才去下载 100MB+，或者直接崩在
+    ONNXRuntimeError 上。用户在前面看到「✔ 可用」就再也不会怀疑这一步。
+
+    ## 现在
+
+    额外查 `get_ocr_model_dir()` 那个目录里有没有 `det.onnx` / `rec.onnx`。
+    """
+
+    def test_checks_model_files(self):
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "check_config.py").read_text(encoding="utf-8"))
+        self.assertIn("get_ocr_model_dir", code,
+                      "check_config 没查模型目录")
+        self.assertIn("det.onnx", code, "没查 det.onnx")
+        self.assertIn("rec.onnx", code, "没查 rec.onnx")
+
+    def test_reports_missing_loudly(self):
+        """缺模型时要 return 非零，不能说「✔ 可用」然后继续。"""
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "check_config.py").read_text(encoding="utf-8"))
+        # **定位到那个 `elif` 分支**，不是 `_chk` 字符串里的同名片段
+        i = code.find('elif "MISSING:" in _out2')
+        self.assertGreater(i, -1, "找不到处理 MISSING 的分支")
+        j = code.find("return 1", i)
+        self.assertGreater(j, i,
+                           "缺模型的分支里没有 return 非零 —— "
+                           "用户会以为环境是好的")

@@ -62,6 +62,56 @@ def main() -> int:
                  encoding="utf-8", errors="replace", env=_env, timeout=120)
     if _r.returncode == 0:
         print("✔ OneDragon OCR 模块可用")
+
+        # **模型文件在不在**（E24）。
+        #
+        # 上面那句只证明「能 import」—— 而**源码包安装**（不是完整包）里
+        # `assets/models/onnx_ocr` 是空的或缺失，import 照样成功。
+        # 然后工具在**第一次读画面**时才去下载 100MB+，
+        # 或者直接崩在 ONNXRuntimeError 上。
+        #
+        # 用户在这里看到「✔ 可用」，就再也不会怀疑这一步了。
+        # **`OnnxOcrMatcher` 是懒加载的** —— 构造时只有一个 `_model` 占位，
+        # `det_model_dir` 那些要到 `init_model()` 之后才有。
+        # 所以不能靠构造对象来查路径，直接用模块级的 `get_ocr_model_dir()`。
+        _chk = (
+            "import os\n"
+            "import one_dragon.base.matcher.ocr.onnx_ocr_matcher as m\n"
+            "d = m.get_ocr_model_dir(m.DEFAULT_OCR_MODEL_NAME)\n"
+            "print('DIR:' + str(d))\n"
+            "if not os.path.isdir(d):\n"
+            "    print('MISSING:' + d)\n"
+            "else:\n"
+            "    fs = [f for f in os.listdir(d) if f.endswith('.onnx')]\n"
+            "    need = ['det.onnx', 'rec.onnx']\n"
+            "    miss = [n for n in need if n not in fs]\n"
+            "    print('MISSING:' + ','.join(miss) if miss else 'OK:' + ','.join(fs))\n"
+        )
+        _r2 = _sp.run([_py, "-c", _chk], capture_output=True, text=True,
+                      encoding="utf-8", errors="replace", env=_env, timeout=120)
+        _out2 = (_r2.stdout or "") + (_r2.stderr or "")
+        if "OK:" in _out2:
+            _fs = next((ln.split("OK:", 1)[1].strip()
+                        for ln in _out2.splitlines() if "OK:" in ln), "")
+            print(f"✔ OCR 模型文件齐全（{_fs}）")
+        elif "MISSING:" in _out2:
+            _miss = next((ln.split("MISSING:", 1)[1].strip()
+                          for ln in _out2.splitlines() if "MISSING:" in ln), "")
+            _dir = next((ln.split("DIR:", 1)[1].strip()
+                         for ln in _out2.splitlines() if "DIR:" in ln), "")
+            print("✘ OCR 模型文件**缺失**：")
+            for _m in _miss.split(","):
+                if _m.strip():
+                    print(f"     {_m.strip()}")
+            if _dir:
+                print(f"   模型目录：{_dir}")
+            print("   → 你装的可能是「源码包」不是「完整包」。")
+            print("     完整包带 assets/models/onnx_ocr（约 100MB+）。")
+            print("     缺了它，工具会在**第一次读画面**时才去下载，或者直接崩。")
+            return 1
+        else:
+            print("⚠ OCR 模型文件检查没跑成（不影响 import，但不确定模型齐不齐）")
+            print("   ", _out2.strip()[:160])
     else:
         print("✘ OneDragon OCR 模块加载失败：")
         print("   ", ("".join((_r.stdout or "", _r.stderr or "")))[:200])
