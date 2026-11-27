@@ -3699,3 +3699,60 @@ class TestSkillPageNotStolen(unittest.TestCase):
                     if isinstance(n, _ast.Name)
                     and n.id in ("SKILL_LEVEL_PAT", "_SKILL_LEVEL_PAT")]
             self.assertTrue(refs, f"{name}.py 里没有任何 SKILL_LEVEL_PAT 的引用")
+
+
+class TestFarmPlanBudgetIsReal(unittest.TestCase):
+    """`--run` 必须按**预算算出来的次数**刷，不是写死的 `min(次数, 3)`（RT-06）。
+
+    ## 原来
+
+    ```python
+    can = min(r["次数"], left // per_run)       # 预算算出来的
+    picked.append({**r, "本次次数": can})        # 存进去了
+    ...
+    ["--times", str(min(r["次数"], 3)), "--run"]  # <- 但拼命令时又用 min(次数,3)
+    ```
+
+    于是 `--battery 100` 打印「刷 1/6 次（100 电）」，实际发 `--times 3`（300 电）——
+    **最多按预算的 3 倍花掉**，而计划页和执行完全对不上。
+
+    ## 这个工具已归档
+
+    `zzz_farm_plan.py` 头部会打印「已归档，被 zzz_gap.py 取代」。
+    但 `core/farm_gap.py` 还在 `from zzz_farm_plan import PATROL_BY_SET` ——
+    它不是死文件，而且**照样能被手工跑起来**，所以这个 bug 是真会发生的。
+    """
+
+    def test_run_uses_computed_count(self):
+        import ast as _ast
+        import pathlib
+        # 用 AST 查：拼 --times 时用的必须是「本次次数」，不是 min(...,3)
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_farm_plan.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+
+        found = None
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.List):
+                continue
+            txt = _ast.unparse(node)
+            if "--times" in txt:
+                found = txt
+                break
+        self.assertIsNotNone(found, "找不到拼 --times 的地方")
+        self.assertNotIn("min(", found,
+                         f"--times 还在用 min(...) —— 预算被丢掉了：{found}")
+        # 拼的是哪个变量都行，只要它**来自「本次次数」**。
+        # 从列表里取出那个变量名，再往上找它的赋值。
+        import re as _re
+        m = _re.search(r"str\((\w+)\)", found)
+        self.assertIsNotNone(m, f"--times 里没有变量：{found}")
+        var = m.group(1)
+        self.assertIn(f'{var} = int(r.get("本次次数")', src.replace("'", '"'),
+                      f"{var} 不是从「本次次数」来的")
+
+    def test_budget_arithmetic(self):
+        """预算算术本身：100 电、每次 100 电 -> 最多 1 次。"""
+        battery, per_run, want = 100, 100, 3
+        can = min(want, battery // per_run)
+        self.assertEqual(can, 1, "预算算术不对")

@@ -556,16 +556,39 @@ def main() -> int:
         PY = one_dragon_python()
         env = dict(os.environ)
         env.update(one_dragon_env())
+        # **没有 OneDragon 的 python 就别硬跑**（RT-03 同一类）。
+        if not PY:
+            print("  ✘ 没找到 OneDragon 的 python —— 先跑 `python tools/check_config.py`")
+            return 2
+
+        _bad = 0
         for r in picked:
             if not r.get("cmd"):
                 continue
+            # **用预算算出来的「本次次数」，不是 `min(次数, 3)`**（RT-06）。
+            #
+            # 原来这里写死 `min(r["次数"], 3)` —— 上面刚算好的 `本次次数`
+            # **被丢掉了**。于是 `--battery 100` 打印「刷 1/6 次（100 电）」，
+            # 实际发的是 `--times 3`（300 电）—— **最多按预算的 3 倍花掉**，
+            # 而计划页和执行完全对不上。
+            _n = int(r.get("本次次数") or 0)
+            if _n <= 0:
+                print(f"  跳过 {r['材料']}：本次 0 次")
+                continue
             cmd = [PY, "-u", str(HERE / "od_material_farm.py")] + r["cmd"] + \
-                  ["--times", str(min(r["次数"], 3)), "--run"]
-            print(f"  刷 {r['材料']}：{' '.join(r['cmd'])}")
+                  ["--times", str(_n), "--run"]
+            print(f"  刷 {r['材料']} {_n} 次：{' '.join(r['cmd'])}")
             try:
-                subprocess.run(cmd, cwd=str(BASE), env=env, timeout=3600)
+                _r = subprocess.run(cmd, cwd=str(BASE), env=env, timeout=3600)
+                if _r.returncode != 0:
+                    _bad += 1
+                    print(f"    ⚠ 退出码 {_r.returncode}")
             except Exception as e:
+                _bad += 1
                 print(f"    失败：{e}")
+        if _bad:
+            print(f"\n  {_bad} 项刷本失败")
+            return 1
     return 0
 
 
