@@ -84,7 +84,7 @@ def check_status_schema(agent: str, d: dict, path=None) -> list[str]:
     return miss
 
 
-def load_status(agent: str = "") -> dict:
+def load_status(agent: str = "", strict: bool = False) -> dict:
     """读 state/status_{agent}.json。
 
     **角色名先归一化**（BUG-95）。
@@ -115,7 +115,23 @@ def load_status(agent: str = "") -> dict:
         print(f"「{agent}」的状态文件读不了：{e}")
         print(f"  文件：{p}")
         raise SystemExit(2)
-    check_status_schema(agent, d, p)
+    _why = check_status_schema(agent, d, p)
+
+    # **写路径要 `strict=True`，读到废数据直接拒**（D5）。
+    #
+    # 原来 `check_status_schema` 只 `print` 一行警告，然后**照样把数据返回**。
+    # 于是下游拿着「6 个位号只读到 1 个」的快照继续做决策：
+    #   · `zzz_cost`   当全新角色算 5480 电
+    #   · `zzz_who`    报「距毕业 28.0 / ✔ 没有明显缺口」
+    #   · `zzz_grind`  直接排 5 轮
+    #
+    # 只读展示（`zzz_who` / `zzz_cost`）可以容忍并提示；
+    # **要花电量/材料的路径不能** —— 那会把资源花在错的目标上。
+    if _why and strict:
+        print()
+        print(f"  ✘ 状态快照不可信，拒绝用它做决策（{_why}）")
+        print(f"     先重跑：python tools/zzz_status.py {agent} --json")
+        raise SystemExit(8)          # 8 = 读不到数据
     return d
 
 

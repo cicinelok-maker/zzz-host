@@ -5396,3 +5396,97 @@ class TestReadOnlyDoesNotStealFocus(unittest.TestCase):
             live.is_foreground = oi
         self.assertEqual(calls["steal"], 0, "只读模式还是抢了前台")
         self.assertEqual(calls["query"], 1, "只读模式没查询")
+
+
+class TestSnapshotValidityIsHonest(unittest.TestCase):
+    """快照「自证有效」+ 静默丢位号（D5）。
+
+    ## 两处
+
+    ① `zzz_status` 里套装名解析失败时只 `continue` ——
+       既不 append 到 result，也不进 unread。**位号凭空消失**：
+       6 个位号最后 result 里只有 5 个，而 unread 是空的。
+
+    ② `_valid = bool(result) and len(unread) < len(result)` ——
+       6 个位号只读到 1 个时，result 有 1 条、unread 0 条 -> 判定有效。
+       1/6 也算「有效」。
+
+    ## 下游 5 种态度
+
+    拿一份 `_valid=False, slots=[]` 的快照：
+
+        zzz_cost       当全新角色算 5480 电
+        zzz_who        报「距毕业 28.0 / ✔ 没有明显缺口」
+        zzz_grind      直接排 5 轮
+        zzz_disc_daily 拦截   ← 只有它
+        zzz_skill_target 诚实 ← 和它
+
+    ## 现在
+
+    · 读失败进 `unread`
+    · `_valid` 要求 **6 个位号全部读到且 unread 为空**
+    · `load_status(strict=True)` 遇到废数据 `SystemExit(8)`
+    · `zzz_daily --run` 检查 `ok` 和 `_valid`，不过就 `return 8`
+    """
+
+    def _status_src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "zzz_status.py").read_text(encoding="utf-8")
+
+    def test_failed_slot_goes_to_unread(self):
+        """读失败必须先记进 `unread` 再 continue。"""
+        import ast as _ast
+        tree = _ast.parse(self._status_src())
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.If):
+                continue
+            # `ast.unparse` 会把引号规范化成单引号 —— 两种都认
+            head = _ast.unparse(node.test).replace('"', "'")
+            if "d0" not in head or "set" not in head or "not" not in head:
+                continue
+            body = _ast.unparse(node)
+            self.assertIn("unread.append(slot)", body,
+                          "读失败的分支里没有 `unread.append(slot)` —— 位号会凭空消失")
+            return
+        self.fail('找不到 `if not d0["set"]` 那个分支')
+
+    def test_valid_requires_all_six(self):
+        """`_valid` 不能「有一个位号成功就算有效」。"""
+        src = self._status_src()
+        self.assertNotIn(
+            "_valid = bool(result) and len(unread) < len(result)", src,
+            "`_valid` 还是「1/6 也算有效」的写法")
+        self.assertIn("len(result) == 6", src,
+                      "`_valid` 没有要求「6 个位号全读到」")
+
+    def test_load_status_has_strict(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.state import load_status
+        sig = inspect.signature(load_status)
+        self.assertIn("strict", sig.parameters, "load_status 没有 strict 参数")
+        self.assertIn("SystemExit(8)", inspect.getsource(load_status),
+                      "strict 模式下没有 exit 8")
+
+    def test_daily_refuses_bad_snapshot(self):
+        """会花电量/材料的那条路必须检查 `_valid`（D5）。"""
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_daily.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        # 必须有对 "_valid" 的取值
+        has_valid_check = any(
+            isinstance(n, _ast.Call)
+            and getattr(n.func, "attr", None) == "get"
+            and n.args
+            and isinstance(n.args[0], _ast.Constant)
+            and n.args[0].value == "_valid"
+            for n in _ast.walk(tree))
+        self.assertTrue(has_valid_check,
+                        "zzz_daily 没检查快照的 `_valid` —— 会拿废数据算缺口")
+        self.assertIn("if not ok:", src,
+                      "zzz_daily 没检查 zzz_status 的返回码")

@@ -204,7 +204,13 @@ def main() -> int:
             blue = 0
         detail = [f"{x['name']}+{x['rolls']}" for x in e0["subs"]]
         if not d0["set"]:
+            # **读失败的位号要记下来**（D5）。
+            #
+            # 原来这里只 `continue` —— 既不 append 到 result，也不进 unread。
+            # 位号就**凭空消失了**：6 个位号最后 result 里只有 5 个，
+            # 而 unread 是空的，谁也不知道少了一个。
             print(f"  {slot} 号位：读不到")
+            unread.append(slot)
             continue
         main = ""
         for x in e0["subs"]:
@@ -295,7 +301,17 @@ def main() -> int:
         #   苍角：slots=6，6 个全空位            ← 真的没装盘
         # 读取方只看 total 分不出来，会把「读取失败」当成「角色没盘」，
         # 于是 `zzz_who` 报「未毕业」、`zzz_grind` 觉得「没进展」。
-        _valid = bool(result) and len(unread) < len(result)
+        # **`_valid` 的含义是「这份快照能拿来做决策」**（D5）。
+        #
+        # 原来是 `bool(result) and len(unread) < len(result)`：
+        # 6 个位号只读到 1 个时，result 有 1 条、unread 0 条 -> 判定有效。
+        # 下游于是拿着「只有 1 个位号」的快照算缺口：
+        #   · `zzz_cost` 当全新角色算 5480 电
+        #   · `zzz_who` 报「距毕业 28.0 / ✔ 没有明显缺口」
+        #   · `zzz_grind` 直接排 5 轮
+        #
+        # 现在要求**6 个位号全部读到，且 unread 为空**。
+        _valid = (len(result) == 6) and not unread
         _payload = {"agent": args.agent, "total": total,
                     "_valid": _valid,
                     "_slots_read": len(result),

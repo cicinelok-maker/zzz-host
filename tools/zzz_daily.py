@@ -425,14 +425,42 @@ def main() -> int:
         ok, out = run("状态", [str(HERE / "zzz_status.py"), args.agent,
                             "--json"], 1800)
         st_p = BASE / "state" / f"status_{args.agent}.json"
+
+        # **盘点失败 / 快照无效就必须停**（D5）。
+        #
+        # 原来这里：
+        #   · `ok`（子进程返回码）**从来没看过**
+        #   · `_valid` **从来没看过**
+        #   · `except Exception: pass` 把一切吞掉
+        #
+        # 于是「6 个位号只读到 1 个」的快照照样拿去做决策 ——
+        # 而这是**会花电量和材料**的那条路。实测下游会：
+        #   · 当全新角色算 5480 电
+        #   · 排 5 轮刷本
+        #
+        # 现在：读不了 / 标记无效，直接 exit 8（读不到数据）。
+        if not ok:
+            print()
+            print(f"  ✘ 盘点失败（zzz_status 返回 {out!r}），不敢拿它做决策")
+            print(f"     先手动跑一次：python tools/zzz_status.py {args.agent} --json")
+            return 8
         if st_p.exists():
             try:
                 st = json.loads(st_p.read_text(encoding="utf-8"))
-                slots_now = st.get("slots") or []
-                print(f"  有效副词条 {st.get('blue_total', '?')} 条，"
-                      f"质量分 {st.get('total', '?')}")
-            except Exception:
-                pass
+            except Exception as _e:
+                print()
+                print(f"  ✘ 状态快照读不了（{_e}），不敢拿它做决策")
+                return 8
+            if st.get("_valid") is False:
+                _n = st.get("_slots_read", len(st.get("slots") or []))
+                print()
+                print(f"  ✘ 状态快照**无效**：只读到 {_n}/6 个位号")
+                print(f"     拿它算缺口会把电量花在错的目标上。")
+                print(f"     先重跑：python tools/zzz_status.py {args.agent} --json")
+                return 8
+            slots_now = st.get("slots") or []
+            print(f"  有效副词条 {st.get('blue_total', '?')} 条，"
+                  f"质量分 {st.get('total', '?')}")
         battery = charge_now()
         print(f"  电量 {battery}/240")
 
