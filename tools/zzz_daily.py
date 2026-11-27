@@ -448,6 +448,8 @@ def main() -> int:
         except Exception as e:
             print(f"  （缺口分析跳过：{e}）")
 
+    # 「没做成事」的计数：用来决定退出码（BUG-087）
+    _noprog = {"steps": 0, "tried": 0}
     steps = [
         # 2026-11-24 改成 auto：指名角色 → 判断该装哪块 → 换装 → 升满
         # 原来的 up --lowest 只升当前装备的，不会换装
@@ -601,6 +603,11 @@ def main() -> int:
                     break
 
         n, notes = judge(label, out)
+        # **记下「没做成事」的次数**（BUG-087）—— 以前这个 n 只用来打印，
+        # 退出码永远是 0，上层完全看不出来。
+        if n == 0:
+            _noprog["steps"] += 1
+        _noprog["tried"] += 1
 
         # 每步成功就落盘断点 —— 这样硬 Ctrl+C（甚至关窗口）也不丢进度。
         # 只在内存里记的话，中断处理里拿不到 main() 的局部变量。
@@ -634,6 +641,9 @@ def main() -> int:
             ok, out = run("驱动盘", [str(HERE / "zzz_disc_daily.py"), args.agent,
                                      "--run", "--no-farm"], 5400)
             n, notes = judge("驱动盘", out)
+            if n == 0:
+                _noprog["steps"] += 1
+            _noprog["tried"] += 1
             if n == 0:
                 print("    [!] 驱动盘这步没做成事")
             else:
@@ -699,6 +709,16 @@ def main() -> int:
         run("体检", [str(HERE / "zzz_status.py"), args.agent, "--json"], 1800)
         print("\n" + "=" * 50)
         print("全部步骤完成")
+    # **真跑模式下，一步都没做成 -> 退出码 1**（BUG-087）。
+    #
+    # 原来无条件 return 0：哪怕每个步骤都打印「[!] 没做成事」，
+    # 退出码也是 0（成功）—— 上层完全看不出来。
+    #
+    # 只在「**所有**步骤都没做成」时返 1：一步跳过、其他步骤有进展，
+    # 仍是成功的一天。
+    if args.run and _noprog["tried"] and _noprog["steps"] == _noprog["tried"]:
+        print(f"  退出码 1：{_noprog['tried']} 个步骤全都「没做成事」")
+        return 1
     return 0
 
 

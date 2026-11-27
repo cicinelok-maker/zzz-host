@@ -325,6 +325,14 @@ def main() -> int:
     if final < args.target:
         print(f"还差 {args.target - final:.1f} 条")
     print(f"{'=' * 55}")
+    # **没到目标就不是成功**（BUG-087）。
+    #
+    # 原来这里无条件 `return 0` —— 上一行刚打印「还差 X 条」，
+    # 退出码却是成功。而 `zzz_grind` 的用途就是「一直养到毕业」，
+    # 收敛失败正是最该被上层知道的信号。
+    if final < args.target:
+        print(f"  退出码 1：没达到目标（{final} < {args.target}）")
+        return 1
     return 0
 
 

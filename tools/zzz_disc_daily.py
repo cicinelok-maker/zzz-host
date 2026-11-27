@@ -604,6 +604,19 @@ def main() -> int:
         ], 120)
     except Exception:
         pass
+
+    # **有动作失败就不能返回 0**（BUG-087）。
+    #
+    # 原来这里无条件 `return 0` —— 哪怕 `actions` 里全是
+    # 「刷本失败 / 训练失败」，退出码也是 0（成功）。
+    # 而 `zzz_daily`、`zzz_grind`、cron 脚本都按这个码决定「今天成没成」，
+    # 于是**失败的一轮被记成成功，第二天照常继续**。
+    #
+    # 「换装跳过」不算失败（那是按设计跳过的）。
+    _failed = [a for a in actions if "失败" in a]
+    if _failed:
+        print(f"\n  退出码 1：{len(_failed)} 个动作失败 -> {'、'.join(_failed)}")
+        return 1
     return 0
 
 

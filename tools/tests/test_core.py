@@ -3059,3 +3059,72 @@ class TestTrainLimitIsReal(unittest.TestCase):
                          f"这些 print 还在说「潜力最高」：{bad}")
         # 新措辞确实在（说明改动生效了，不是删了了事）
         self.assertIn("训练最多", inspect.getsource(zzz_disc_daily))
+
+
+class TestDestructiveFailureExitCode(unittest.TestCase):
+    """破坏性工具做事没做成时不能 `return 0`（BUG-087）。
+
+    ## 原来
+
+    · `zzz_disc_daily` 结尾无条件 `return 0` —— 哪怕 `actions` 里全是
+      「刷本失败 / 训练失败」
+    · `zzz_daily` 用 `judge()` 判了每步「没做成事」，但**那个结果从没用于退出码**
+    · `zzz_grind` 打印「还差 X 条」之后照样 `return 0`
+
+    而 `zzz_grind` / cron / 上层脚本都按退出码判断「今天成没成」——
+    **失败的一轮被记成成功，第二天照常继续。**
+
+    ## 判定口径
+
+    · `zzz_disc_daily`：`actions` 里有「失败」字样 -> 1（「换装跳过」不算）
+    · `zzz_daily`：真跑模式下**所有**步骤都「没做成事」-> 1（部分成功仍是 0）
+    · `zzz_grind`：`final < target` -> 1
+    """
+
+    def test_disc_daily_has_failure_exit(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_daily
+        src = inspect.getsource(zzz_disc_daily)
+        self.assertIn('if "失败" in a', src,
+                      "zzz_disc_daily 没有按 actions 里的「失败」判退出码")
+
+    def test_daily_tracks_noprog(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_daily
+        src = inspect.getsource(zzz_daily)
+        self.assertIn("_noprog", src, "zzz_daily 没有记录「没做成事」的次数")
+        self.assertIn("return 1", src, "zzz_daily 没有失败出口")
+
+    def test_grind_fails_when_target_missed(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_grind
+        src = inspect.getsource(zzz_grind)
+        i = src.find("if final < args.target")
+        self.assertGreater(i, -1, "找不到「没到目标」的判断")
+        tail = src[i:i + 700]
+        self.assertIn("return 1", tail,
+                      "zzz_grind 没到目标还是 return 0")
+
+    def test_plan_mode_still_zero(self):
+        """计划模式不该被这条改动影响。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_daily
+        src = inspect.getsource(zzz_daily)
+        # 退出 1 的条件里必须带 args.run
+        i = src.find('_noprog["steps"] == _noprog["tried"]')
+        self.assertGreater(i, -1, "找不到「全部没做成」的判断")
+        around = src[max(0, i - 200):i + 60]
+        self.assertIn("args.run", around,
+                      "退出 1 的条件没加 args.run —— 计划模式会被误判成失败")
