@@ -3430,3 +3430,71 @@ class TestTextAssertionRatchet(unittest.TestCase):
             n, self.BASELINE - 5,
             f"BASELINE={self.BASELINE} 但实际只有 {n} 处 —— "
             f"调小它，别让棘轮空转")
+
+
+class TestMissingPythonDoesNotCrash(unittest.TestCase):
+    """没有 OneDragon 的 python 时不能抛 `WinError 87`（RT-03）。
+
+    ## 原来
+
+    `one_dragon_python()` 找不到时返回空串，而 7 个工具直接
+
+    ```python
+    subprocess.run([PY, "-u", ...])      # PY == ""
+    ```
+
+    在 Windows 上 `subprocess.run([""])` 抛的是 `OSError: [WinError 87]
+    The parameter is incorrect` —— 而 `run()` 只 catch 了 `TimeoutExpired`。
+
+    **崩在任何配置提示之前**，用户看到的是一段 traceback。
+    干净机器上 README 第 4 步之后的每条命令都这样。
+    """
+
+    def test_require_python_exits_with_message(self):
+        import io
+        import contextlib
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import paths
+        orig = paths.one_dragon_python
+        try:
+            paths.one_dragon_python = lambda: ""
+            buf = io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                with self.assertRaises(SystemExit) as ctx:
+                    paths.require_python()
+            self.assertEqual(ctx.exception.code, 2, "应该是退出码 2（配置缺失）")
+            out = buf.getvalue()
+            self.assertIn("OneDragon", out, "提示里没提 OneDragon")
+            self.assertIn("check_config", out, "没给出验证命令")
+        finally:
+            paths.one_dragon_python = orig
+
+    def test_require_python_passes_through(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import paths
+        orig = paths.one_dragon_python
+        try:
+            paths.one_dragon_python = lambda: r"E:\x\python.exe"
+            self.assertEqual(paths.require_python(), r"E:\x\python.exe")
+        finally:
+            paths.one_dragon_python = orig
+
+    def test_run_returns_tuple_when_py_empty(self):
+        """`run()` 在 PY 为空时要返回 (False, 提示)，不能抛 OSError。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_daily
+        orig = zzz_daily.PY
+        try:
+            zzz_daily.PY = ""
+            ok, out = zzz_daily.run("测试", ["--help"], timeout=5, quiet=True)
+            self.assertFalse(ok)
+            self.assertIn("check_config", out,
+                          f"提示里没告诉用户怎么办：{out[:80]!r}")
+        finally:
+            zzz_daily.PY = orig

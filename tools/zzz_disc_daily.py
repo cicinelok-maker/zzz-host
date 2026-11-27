@@ -99,6 +99,14 @@ def run(script: str, args: list[str], timeout: int = 3600) -> tuple[bool, str]:
         return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
     except subprocess.TimeoutExpired:
         return False, "超时"
+    except OSError as e:
+        # **`PY` 是空串时抛 WinError 87**（RT-03）。
+        # `subprocess.run([""])` 在 Windows 上是 OSError 而不是 ValueError，
+        # 而上面只 catch 了 TimeoutExpired —— 于是崩在任何配置提示之前。
+        if not PY:
+            return False, ("没找到 OneDragon 的 python —— 先跑 "
+                           "`python tools/check_config.py` 看怎么配")
+        return False, f"启动子进程失败（{type(e).__name__}: {e}）"
 
 
 def _cached_int(key: str) -> int:

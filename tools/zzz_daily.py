@@ -75,6 +75,15 @@ def run(name: str, args: list[str], timeout: int = 1800,
     except subprocess.TimeoutExpired:
         print("  超时")
         return False, "超时"
+    except OSError as e:
+        # **`PY` 是空串时抛 WinError 87**（RT-03）—— 只 catch 了 TimeoutExpired，
+        # 于是崩在任何配置提示之前。
+        if not PY:
+            msg = "没找到 OneDragon 的 python —— 先跑 `python tools/check_config.py`"
+            print(f"  {msg}")
+            return False, msg
+        print(f"  启动子进程失败：{type(e).__name__}: {e}")
+        return False, f"{type(e).__name__}: {e}"
 
 
 # 每步「做成了什么」的判定规则：(正则, 描述)

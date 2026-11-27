@@ -205,3 +205,31 @@ def ensure() -> None:
             print(f"  ✘ {m}")
         print("  参考 config.example.json，或设环境变量")
     return
+
+
+def require_python() -> str:
+    """拿 OneDragon 自带的 python；没有就**给出可操作的指引**并退出。
+
+    ## 为什么需要这个（RT-03）
+
+    `one_dragon_python()` 找不到时返回空串，而 7 个工具直接
+    `subprocess.run([PY, ...])` —— 空串当可执行文件会抛
+
+        OSError: [WinError 87] The parameter is incorrect
+
+    **崩在任何配置提示之前**，用户看到的是一段 traceback。
+    """
+    py = one_dragon_python()
+    if py:
+        return py
+    import sys as _sys
+    print("=" * 62, file=_sys.stderr)
+    print("✘ 没找到 OneDragon 自带的 python", file=_sys.stderr)
+    print("  本项目读游戏画面要用它的 OCR 模块，没有它什么都做不了。", file=_sys.stderr)
+    print("", file=_sys.stderr)
+    print("  怎么配：", file=_sys.stderr)
+    print("    1 下载 OneDragon **完整包**（不是源码包）", file=_sys.stderr)
+    print("    2 把路径写进 state/config.json 的 paths 段，或环境变量 ONE_DRAGON_HOME", file=_sys.stderr)
+    print("    3 验证：python tools/check_config.py", file=_sys.stderr)
+    print("=" * 62, file=_sys.stderr)
+    raise SystemExit(2)
