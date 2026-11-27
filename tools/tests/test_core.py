@@ -3756,3 +3756,73 @@ class TestFarmPlanBudgetIsReal(unittest.TestCase):
         battery, per_run, want = 100, 100, 3
         can = min(want, battery // per_run)
         self.assertEqual(can, 1, "预算算术不对")
+
+
+class TestPlanOnlyTouchesNothing(unittest.TestCase):
+    """`--plan-only` 不能清空 OneDragon 的体力计划（RT-07）。
+
+    ## 原来
+
+    ```python
+    cfg = factory.create_config(...)
+    cfg.plan_list.clear()          # <- 清空现有计划
+    ... 加新计划 ...
+    cfg.save()                     # <- 写盘
+    ...
+    if args.plan_only or not args.run:    # <- 判断在**这之后**
+        return 0
+    ```
+
+    于是「只出计划」照样把用户手工配好的体力计划**清掉重写**。
+    用户只是想看一眼，配置没了。
+
+    ## 修法
+
+    `--plan-only` 在**碰 cfg 之前**就返回。三种模式：
+
+        --plan-only   只打印，不改任何配置
+        （默认）       写进 OneDragon 的计划，但不启动
+        --run         写进去并启动
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "od_material_farm.py").read_text(encoding="utf-8")
+
+    def test_plan_only_returns_before_clear(self):
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        # 找 cfg.plan_list.clear() 那一行
+        clear_line = None
+        for node in _ast.walk(tree):
+            if (isinstance(node, _ast.Call)
+                    and getattr(node.func, "attr", None) == "clear"):
+                obj = _ast.unparse(node.func.value)
+                if "plan_list" in obj:
+                    clear_line = node.lineno
+                    break
+        self.assertIsNotNone(clear_line, "找不到 cfg.plan_list.clear()")
+
+        # 找 plan_only 的 early return：`if ... plan_only ...: return`
+        ret_line = None
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.If):
+                continue
+            cond = _ast.unparse(node.test)
+            if "plan_only" in cond:
+                has_ret = any(isinstance(n, _ast.Return)
+                              for n in _ast.walk(node))
+                if has_ret:
+                    ret_line = node.lineno
+                    break
+        self.assertIsNotNone(ret_line,
+                             "找不到 --plan-only 的提前返回")
+        self.assertLess(ret_line, clear_line,
+                        f"plan_only 的返回在 L{ret_line}，"
+                        f"但 cfg.plan_list.clear() 在 L{clear_line} —— "
+                        f"「只出计划」还是会清空用户的配置")
+
+    def test_plan_only_message_says_untouched(self):
+        """提示要说清「没改配置」—— 否则用户不知道该不该放心。"""
+        self.assertIn("没有改 OneDragon 的计划配置", self._src())

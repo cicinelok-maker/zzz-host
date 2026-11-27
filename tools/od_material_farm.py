@@ -185,6 +185,26 @@ def main() -> int:
         print(f"     （不加 --mission 也会写进 OneDragon 的计划，但**启动后必然失败**）")
         return 2
 
+    # **`--plan-only` 必须真的只打印**（RT-07）。
+    #
+    # 下面那段会 `cfg.plan_list.clear()` 然后 `cfg.save()` ——
+    # **清空 OneDragon 里现有的体力计划**，再写成本次的。
+    #
+    # 而 `--plan-only` 的判断原来在这段**之后**（L224）——
+    # 于是「只出计划」照样把你手工配好的计划清掉了。
+    # 用户只是想看一眼，结果配置没了。
+    #
+    # 现在：`--plan-only` 在这里直接返回，**一个字节都不碰**。
+    #
+    # 三种模式的区别：
+    #   --plan-only   只打印，不改任何配置
+    #   （默认）       写进 OneDragon 的计划，但不启动
+    #   --run         写进去并启动
+    if getattr(args, "plan_only", False):
+        print("\n（--plan-only：只打印，**没有改 OneDragon 的计划配置**）")
+        print("  要写进去并启动：去掉 --plan-only，加 --run")
+        return 0
+
     sys.path.insert(0, str(OD / "src"))
     sys.path.insert(0, str(OD / "plugins"))
     from zzz_od.context.zzz_context import ZContext
