@@ -310,8 +310,11 @@ def main() -> int:
     commits = [x for x in (log.stdout or "").splitlines() if "|" in x]
     print(f"  本地 {len(commits)} 个提交")
 
-    # 简化：把本地历史压成一条提交（文件都在当前状态），
-    # 但 commit message 里列出原始历史，避免丢信息
+    # 把当前文件状态打成**一条**提交（不是把本地 git 历史逐条重放），
+    # 但 commit message 里列出本地历史。
+    #
+    # 注意：它**接在远程 main 后面**（有 parent），所以远程历史不会被抹掉 ——
+    # 只是每次发布新增一条。
     if commits:
         msgs = [f"- {c.split('|', 1)[1].split('|')[0]}" for c in commits]
         msg = f"发布：绝区零角色养成托管\n\n本地历史（{len(commits)} 个）：\n" + \
@@ -319,8 +322,27 @@ def main() -> int:
     else:
         msg = "初始发布"
 
+    # **必须带 parent**（RT-17）。
+    #
+    # 原来 `"parents": []` —— 造一个**孤根提交**。
+    # 配合下面的 `force: True`，效果是：**每次发布都把远程 main 的历史整个替换掉**。
+    #
+    # 现在先取远程 main 当前的 sha 当 parent，新提交就**长在**远程历史上，
+    # 天然能 fast-forward，不需要 force。
+    _pc, _pref = api(f"/repos/{owner}/{args.repo}/git/ref/heads/main", token)
+    _parents: list[str] = []
+    if _pc == 200 and isinstance(_pref, dict):
+        _psha = (_pref.get("object") or {}).get("sha") or ""
+        if _psha:
+            _parents = [_psha]
+            print(f"  远程 main 当前 {_psha[:8]}（新提交接在它后面）")
+    elif _pc == 404:
+        print("  远程还没有 main 分支（首次发布）")
+    else:
+        print(f"  ⚠ 读不到远程 main（HTTP {_pc}）—— 按首次发布处理")
+
     code, commit = api(f"/repos/{owner}/{args.repo}/git/commits", token, "POST",
-                       {"message": msg, "tree": tree_sha, "parents": []})
+                       {"message": msg, "tree": tree_sha, "parents": _parents})
     if code != 201:
         print(f"✘ 建提交失败（HTTP {code}）：{json.dumps(commit, ensure_ascii=False)[:300]}")
         return 7
@@ -341,10 +363,23 @@ def main() -> int:
     if code == 201:
         print("✔ 分支 main")
     elif code == 422:
-        # 已存在 → 强制更新
+        # 已存在 → 更新，但**不允许 force**（RT-17）。
+        #
+        # 原来这里是 `"force": True` —— 远程 main 被替换成孤根提交，
+        # **历史全没了**。而下面的文案还写着「不覆盖历史」。
+        #
+        # 现在：新提交的 parent 就是远程 main，所以正常情况下是 fast-forward；
+        # 万一不是（远程被别人推过），**报错让人处理**，别强推。
         code2, r2 = api(f"/repos/{owner}/{args.repo}/git/refs/heads/main",
-                        token, "PATCH", {"sha": commit_sha, "force": True})
-        print(f"{'✔ 更新' if code2 == 200 else '✘'} 分支 main")
+                        token, "PATCH", {"sha": commit_sha})
+        if code2 == 200:
+            print("✔ 更新分支 main（fast-forward）")
+        else:
+            print(f"✘ 更新分支 main 失败（HTTP {code2}）")
+            print(f"   {json.dumps(r2, ensure_ascii=False)[:200]}")
+            print("   多半是远程 main 在这期间被别人推过 —— 先 git pull 再发。")
+            print("   **不会强推覆盖远程历史。**")
+            return 8
     else:
         print(f"✘ 建分支失败（HTTP {code}）")
         return 8
@@ -362,7 +397,7 @@ def main() -> int:
     print()
     print("以后本地改了代码要同步：")
     print(f"  python tools/publish_github.py --repo {args.repo}")
-    print("  （会新建一条提交，不覆盖历史）")
+    print("  （会新建一条提交，接在远程 main 后面；不强推、不覆盖历史）")
     return 0
 
 

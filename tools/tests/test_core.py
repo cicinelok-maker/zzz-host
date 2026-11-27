@@ -4428,3 +4428,79 @@ class TestReleaseWorkflowIsSane(unittest.TestCase):
         from publish_github import IGN_FILES
         self.assertIn("HANDOFF.md", IGN_FILES,
                       "HANDOFF.md 没被排除 —— 里面有 C:\\Users\\<名> 这种路径")
+
+
+class TestPublishKeepsHistory(unittest.TestCase):
+    """发布不能抹掉远程历史，失败也不能报成功（RT-17）。
+
+    ## 原来
+
+    ```python
+    {"message": msg, "tree": tree_sha, "parents": []}       # <- 孤根提交
+    ...
+    api(..., "PATCH", {"sha": commit_sha, "force": True})   # <- 强推
+    ```
+
+    效果是**每次发布都把远程 main 的历史整个替换掉**。
+    而成功文案还写着「会新建一条提交，不覆盖历史」。
+
+    更糟的是：ref 更新失败时只打印一个 `✘`，**仍然继续打印「✔ 发布完成」并 return 0**。
+    """
+
+    def _tree(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "publish_github.py").read_text(encoding="utf-8")
+        return _ast.parse(src), src
+
+    def test_commit_has_parents(self):
+        """建提交时的 `parents` 不能是空列表字面量。"""
+        import ast as _ast
+        tree, _ = self._tree()
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Dict):
+                continue
+            keys = [k.value for k in node.keys
+                    if isinstance(k, _ast.Constant)]
+            if "parents" not in keys:
+                continue
+            val = node.values[keys.index("parents")]
+            self.assertNotIsInstance(
+                val, _ast.List,
+                "建提交的 parents 还是空列表 —— 又变成孤根提交了")
+            # 允许 `_parents` 变量
+            self.assertTrue(
+                _ast.unparse(val).strip().startswith("_parents"),
+                f"parents 应该用远程 sha 的变量，实际是 {_ast.unparse(val)[:40]}")
+
+    def test_no_force_push(self):
+        """ref 更新不能带 `force: True`。"""
+        import ast as _ast
+        tree, _ = self._tree()
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Dict):
+                continue
+            keys = [k.value for k in node.keys if isinstance(k, _ast.Constant)]
+            if "force" not in keys:
+                continue
+            val = node.values[keys.index("force")]
+            self.assertFalse(
+                isinstance(val, _ast.Constant) and val.value is True,
+                "还有 `force: True` —— 会覆盖远程历史")
+
+    def test_reads_remote_sha_first(self):
+        """建提交前要先读远程 main 的 sha。"""
+        _, src = self._tree()
+        self.assertIn("git/ref/heads/main", src,
+                      "没读远程 main 的 sha，parent 从哪来")
+        self.assertIn("_parents", src, "没有 parents 变量")
+
+    def test_failure_returns_nonzero(self):
+        """ref 更新失败要 return 非零，不能接着打「发布完成」。"""
+        _, src = self._tree()
+        i = src.find("更新分支 main 失败")
+        self.assertGreater(i, -1, "找不到失败分支")
+        tail = src[i:i + 400]
+        self.assertIn("return 8", tail,
+                      "更新失败没有 return 非零 —— 会继续报「发布完成」")
