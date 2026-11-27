@@ -104,9 +104,31 @@ for fn, change, files in checks:
 print("\n" + "=" * 62)
 print("六、指纹/状态机改动影响面")
 print("=" * 62)
-fp = json.loads((BASE / "state" / "fingerprints.json").read_text(encoding="utf-8"))
-pages = [k for k in fp if isinstance(fp[k], list)]
-mach = (T / "core" / "core/machine.py").read_text(encoding="utf-8")
+# **指纹文件可能不存在**（RT-20）。
+# `state/fingerprints.json` 被 .gitignore 排除 —— 干净克隆上根本没有，
+# 而原来直接 read_text -> FileNotFoundError，整个自检崩在第六节。
+#
+# 这不是错误，是「还没跑过识别」。跳过这一节，并说清楚。
+_fp_path = BASE / "state" / "fingerprints.json"
+if _fp_path.exists():
+    try:
+        fp = json.loads(_fp_path.read_text(encoding="utf-8"))
+        pages = [k for k in fp if isinstance(fp.get(k), list)]
+    except Exception as e:
+        print(f"  ⚠ {_fp_path.name} 读不了（{e}）—— 跳过指纹对比")
+        fp, pages = {}, []
+else:
+    print(f"  ℹ 还没有 {_fp_path.name}（干净克隆上正常）—— 跳过指纹对比")
+    fp, pages = {}, []
+
+# **路径少了一层 `core`**（RT-20）。
+# 原来是 `T / "core" / "core" / "machine.py"` —— 双重 core，
+# FileNotFoundError: ...tools\core\core\machine.py。
+# 而这一节就算跳过去，前面几节发现的问题也从来不体现在退出码上。
+_mach_path = T / "core" / "machine.py"
+mach = _mach_path.read_text(encoding="utf-8") if _mach_path.exists() else ""
+if not mach:
+    print(f"  ⚠ 找不到 {_mach_path.relative_to(BASE)} —— 跳过状态机对比")
 states = set()
 for a, b in re.findall(r'Transition\("([^"]+)", "([^"]+)"', mach):
     states.add(a)
@@ -117,3 +139,15 @@ only_fp = sorted(set(pages) - states)
 only_mach = sorted(states - set(pages))
 print(f"  只有指纹没导航的：{only_fp or '无'}")
 print(f"  只有导航没指纹的：{only_mach or '无'}")
+
+# **有问题就要非 0**（RT-20）。
+#
+# 原来这个脚本从头到尾没有一处 `sys.exit` —— 前五节就算打了满屏 ✗，
+# 退出码还是 0。而「兼容性自检」的意义就是让门禁能红。
+if bad:
+    print()
+    print(f"✘ {len(bad)} 个文件语法有问题")
+    sys.exit(1)
+print()
+print("✔ 兼容性自检通过")
+sys.exit(0)

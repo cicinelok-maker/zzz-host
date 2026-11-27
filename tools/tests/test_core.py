@@ -4232,3 +4232,73 @@ class TestEffLossLimitIsReal(unittest.TestCase):
         self.assertTrue(need(False, True, 18.5, 18.0, 1.5, False))
         # 主词条无效 -> 无论如何换
         self.assertTrue(need(False, True, 18.0, 0.0, 1.5, True))
+
+
+class TestSelfcheckRunsToCompletion(unittest.TestCase):
+    """`selfcheck.py` 必须能跑完，而且**发现问题要 non-0**（RT-20）。
+
+    ## 原来三处
+
+    ① `state/fingerprints.json` 直接 `read_text` ——
+       而它被 `.gitignore` 排除，干净克隆上没有 ->
+       `FileNotFoundError`，整个自检崩在第六节。
+
+    ② `T / "core" / "core" / "machine.py"` —— **双重 `core`**，
+       路径是 `tools/core/core/machine.py`（不存在）。
+
+    ③ 从头到尾**没有一处 `sys.exit`** —— 前五节就算打了满屏 ✗，
+       退出码还是 0。而「兼容性自检」的意义就是让门禁能红。
+
+    **一个永远跑不完、又永远返回 0 的自检，等于没有。**
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "selfcheck.py").read_text(encoding="utf-8")
+
+    def test_no_double_core_path(self):
+        """路径里不能出现「core 套 core」这种连写。
+
+        ## 用 AST，不用源码文本
+
+        第一版是 `assertNotIn('"core" / "core"', 源码)` ——
+        而**这条测试自己的 docstring 里就写着那两个词**
+        （解释 bug 用的），于是它抓的是自己。
+
+        自指陷阱第 9 次。前八次：zzz_cost 的 range、outcome rules 的注释、
+        START_HERE 的 od_farm 说明、DEFAULT_AGENT 的 docstring、
+        zzz_resource 的 required=True、--train-n 的文案、
+        locate 的 SKILL_LEVEL_PAT、以及上一次的 getsource 棘轮。
+
+        **注释是给人看的；测试应该查代码做了什么。**
+        """
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        bad = []
+        for node in _ast.walk(tree):
+            # 找 BinOp 链里相邻的两个 Constant "core"
+            if not isinstance(node, _ast.BinOp):
+                continue
+            consts = [n for n in _ast.walk(node)
+                      if isinstance(n, _ast.Constant) and n.value == "core"]
+            if len(consts) >= 2:
+                bad.append((node.lineno, _ast.unparse(node)[:60]))
+        self.assertEqual(bad, [],
+                         f"路径里 core 套了 core：{bad}")
+
+    def test_fingerprints_guarded(self):
+        """读指纹前必须判存在。"""
+        src = self._src()
+        i = src.find("fingerprints.json")
+        self.assertGreater(i, -1)
+        around = src[max(0, i - 400):i + 200]
+        self.assertIn("exists()", around,
+                      "读 fingerprints.json 之前没有 exists() 判断")
+        self.assertIn("跳过指纹对比", src, "没有「跳过」的说明")
+
+    def test_exits_nonzero_on_problem(self):
+        """发现语法错误必须 `sys.exit(1)`。"""
+        src = self._src()
+        self.assertIn("sys.exit(1)", src, "没有失败出口 —— 恒返回 0")
+        self.assertIn("sys.exit(0)", src, "没有显式成功出口")
