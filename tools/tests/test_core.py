@@ -6267,3 +6267,79 @@ class TestAscendCertSingleSource(unittest.TestCase):
             self.assertTrue(why, f"代码 {got} vs 数据 {want}，检测器却没报")
         else:
             self.assertEqual(why, [])
+
+
+class TestDocsCountIsHonest(unittest.TestCase):
+    """文档里写的用例数必须和实际一致（E30）。
+
+    ## 原来四处不一致
+
+        AGENTS.md    138 个用例
+        HANDOFF.md   204 个用例
+        COMPLETION.md 161
+        FIXED-REPORT.md 141 / 160
+
+    而实际一直在涨。**文档和代码脱节比没有文档更糟** ——
+    读者看到 138 会以为「就这么多」，实际有 300 多。
+
+    处理办法分两类：
+    · **现行文档**（AGENTS.md / HANDOFF.md）→ 必须等于当前值，这条测试强制
+    · **历史快照**（FIXED-REPORT / COMPLETION / STATUS）→ 加日期横幅，
+      里面的数字是当时的，不改（改了就是伪造记录）
+    """
+
+    def _actual(self) -> int:
+        import ast as _ast
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent / "test_core.py"
+        tree = _ast.parse(p.read_text(encoding="utf-8"))
+        return sum(
+            1 for node in _ast.walk(tree)
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+            and node.name.startswith("test_"))
+
+    # **精确数字必然过期**：加一个测试，文档就错一次。
+    # 所以现行文档用「300+ 个用例」这种**范围声明**，
+    # 测试只检查那个声明仍然成立 —— 这样它永远是真的。
+    def _check_claim(self, name: str) -> None:
+        import re
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        p = root / name
+        if not p.exists():
+            self.skipTest(f"{name} 不在当前集合里")
+        txt = p.read_text(encoding="utf-8")
+        m = re.search(r"(\d{2,4})\+?\s*个用例", txt)
+        if not m:
+            self.skipTest(f"{name} 里没写用例数")
+        claim = int(m.group(1))
+        actual = self._actual()
+        # 有 `+` 就是下限声明；没有就是精确值
+        has_plus = "+" in txt[m.start(1):m.end(1) + 1]
+        if has_plus:
+            self.assertGreaterEqual(
+                actual, claim,
+                f"{name} 声称「{claim}+ 个用例」，实际只有 {actual}")
+        else:
+            self.assertEqual(
+                claim, actual,
+                f"{name} 写死 {claim}，实际 {actual} —— 精确数字会过期，"
+                f"改成「{claim}+ 个用例」这种范围写法")
+
+    def test_agents_md_matches(self):
+        self._check_claim("AGENTS.md")
+
+    def test_handoff_md_matches(self):
+        self._check_claim("HANDOFF.md")
+
+    def test_historical_docs_are_marked(self):
+        """历史快照必须有日期横幅 —— 否则它的旧数字看起来像「错的」。"""
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        for name in ("FIXED-REPORT.md", "COMPLETION.md", "STATUS.md"):
+            p = root / name
+            if not p.exists():
+                continue
+            head = "\n".join(p.read_text(encoding="utf-8").splitlines()[:8])
+            self.assertIn("历史快照", head,
+                          f"{name} 没标「历史快照」—— 里面的旧数字会被当成当前值")

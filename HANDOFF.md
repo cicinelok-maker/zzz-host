@@ -178,7 +178,7 @@ foreach ($c in @('check_config','run_tests','smoke_test','audit_self',
 ```powershell
 git pull --rebase origin main
 & $py tools\check_config.py        # 环境对不对
-& $py tools\run_tests.py           # 204 个用例
+& $py tools\run_tests.py           # 300+ 个用例
 ```
 
 两个都绿，说明你接手的是一份**结构健康**的代码。
