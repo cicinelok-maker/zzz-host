@@ -180,15 +180,51 @@ def main() -> int:
                     "main": _main_txt, "main_verdict": _mvd}
             if s == main_set:
                 mlist.append(item)
-            elif s == sec_set:
+            elif s in sec_cands or (sec_set and s == sec_set):
+                # **收所有副套候选的盘**（RT-13），不是只收 sec_set 那一个。
+                # item 里带 `set`，后面按套装分组再选。
                 slist.append(item)
         slots[slot] = {"cur": cur, "main": mlist, "sec": slist}
 
     # ---- 求最优 4+2 分配 ----
     best_main = {s: (max(v["main"], key=lambda x: x["eff"]) if v["main"] else None)
                  for s, v in slots.items()}
-    best_sec = {s: (max(v["sec"], key=lambda x: x["eff"]) if v["sec"] else None)
-                for s, v in slots.items()}
+
+    # ---- 在所有副套候选里挑一个（RT-13）----
+    #
+    # 原来 `sec_set = sec_cands[0]`，只认第一个候选。实测：
+    # 「主套全 18 点、第一副套候选 0 点、第二候选有 18 点」
+    # -> 把 18 点的盘换成 0 点的。
+    #
+    # 现在按套装分组，每组算「最好的两件之和」，取最大的那组。
+    # 只取两件是因为 4+2 里副套最多占 2 个位号。
+    _by_set: dict[str, dict[int, dict]] = {}
+    for s, v in slots.items():
+        for it in (v["sec"] or []):
+            _st = it.get("set") or ""
+            if not _st:
+                continue
+            _by_set.setdefault(_st, {})
+            cur_best = _by_set[_st].get(s)
+            if cur_best is None or it["eff"] > cur_best["eff"]:
+                _by_set[_st][s] = it
+
+    if not args.secondary and len(_by_set) > 1:
+        _scored = []
+        for _st, _per_slot in _by_set.items():
+            _top2 = sorted((it["eff"] for it in _per_slot.values()), reverse=True)[:2]
+            _scored.append((sum(_top2), len(_top2), _st))
+        _scored.sort(reverse=True)
+        _best = _scored[0][2]
+        if _best != sec_set:
+            print(f"  副套候选里「{_best}」比「{sec_set}」更好"
+                  f"（两件最好之和 {_scored[0][0]:.1f}）—— 改用它")
+            sec_set = _best
+            known_sets = {main_set} | set(sec_cands) | {args.secondary} - {""}
+
+    # 用**选中那个套装**的盘
+    best_sec = {s: ((_by_set.get(sec_set) or {}).get(s))
+                for s in range(1, 7)}
 
     print("\n各位号候选：")
     for s in range(1, 7):
@@ -273,14 +309,32 @@ def main() -> int:
         # （cur_eff 在上面对 cur_verdict == "bad" 时已经归零）
         eff_better = item["eff"] > cur_eff
         set_diff = item["set"] != cur_set
-        need = eff_better or set_diff
+
+        # **`--eff-loss-limit` 原来是死参数**（RT-13）。
+        #
+        # 帮助文字写着「最多接受掉多少有效值（默认 1.5）」，
+        # 而它在文件里**只出现在 argparse 定义那一行** —— 判断里从没引用过。
+        # 于是 `--eff-loss-limit 0.1` 一点作用没有，
+        # 用户以为有损失上限保护，实际每换一件可能掉 18 点。
+        #
+        # 现在真的接进判定：**换套装要付的代价不能超过这个上限**。
+        # 主词条无效（cur_verdict == "bad"）时不受限 —— 那种盘本来就该换掉。
+        _loss_limit = float(getattr(args, "eff_loss_limit", 1.5) or 0)
+        _eff_loss = cur_eff - item["eff"]        # 正数 = 掉分
+        _sec_ok = (_eff_loss <= _loss_limit) or (cur_verdict == "bad")
+
+        need = eff_better or (set_diff and _sec_ok)
         why = []
         if cur_verdict == "bad":
             why.append(f"主词条无效 → 换掉（有效 {item['eff']:.1f}）")
         elif eff_better:
             why.append(f"有效 {cur_eff:.1f}→{item['eff']:.1f}")
         if set_diff:
-            why.append(f"套装 {cur_set or '空'}→{item['set']}")
+            if _sec_ok:
+                why.append(f"套装 {cur_set or '空'}→{item['set']}")
+            else:
+                why.append(f"套装 {cur_set or '空'}→{item['set']} 但掉 "
+                           f"{_eff_loss:.1f} > 上限 {_loss_limit:.1f}，不换")
         tag = (" → 换（" + "；".join(why) + "）") if need else " → 不换"
         print(f"  {s} 号位：{item['set']} Lv{item['level']} 有效 {item['eff']:.1f}"
               f"（当前 {cur_set or '空'} Lv{cur_lv} 有效 {cur_eff:.1f}）{tag}")

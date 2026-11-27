@@ -4098,3 +4098,137 @@ class TestElemDamageVariants(unittest.TestCase):
             got, _ = verdict(main, 5, {}, elem)
             self.assertEqual(got, want,
                              f"{main} 对 {elem} 属性角色应判 {want}，实际 {got}")
+
+
+class TestSecondaryCandidateChoice(unittest.TestCase):
+    """4+2 的副套要在**所有候选**里挑，不是只认第一个（RT-13）。
+
+    ## 原来
+
+    ```python
+    sec_set = args.secondary or (sec_cands[0] if sec_cands else "")
+    ...
+    elif s == sec_set:
+        slist.append(item)        # 只收这一个套装的盘
+    ```
+
+    实测：主套全 18 点、**第一候选 0 点、第二候选有 18 点**
+    -> 输出把 18 点的盘换成 0 点的。
+
+    ## 现在
+
+    收集**所有候选**的盘，按套装分组，每组算「最好的两件之和」，
+    取最大的那组（4+2 里副套最多占 2 个位号）。
+
+    `args.secondary` 显式指定时不参与择优 —— 那是用户的明确意图。
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "zzz_plan.py").read_text(encoding="utf-8")
+
+    def test_collects_all_candidates(self):
+        """收集盘时要收**所有候选**，不能只认 `s == sec_set`。"""
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        src = self._src()
+        # 必须出现「s in sec_cands」这种收集条件
+        found_in = False
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Compare):
+                continue
+            if not node.ops or not isinstance(node.ops[0], _ast.In):
+                continue
+            if "sec_cands" in _ast.unparse(node.comparators[0]):
+                found_in = True
+                break
+        self.assertTrue(found_in,
+                        "收集条件里没有 `s in sec_cands` —— 还是只收一个套装")
+
+    def test_scores_by_two_best(self):
+        """择优公式：取每组「最好两件」之和。"""
+        by_set = {
+            "候选A": {1: {"eff": 0.0}, 2: {"eff": 0.0}},
+            "候选B": {1: {"eff": 9.0}, 2: {"eff": 9.0}},
+            "候选C": {3: {"eff": 5.0}},
+        }
+        scored = []
+        for st, per_slot in by_set.items():
+            top2 = sorted((it["eff"] for it in per_slot.values()), reverse=True)[:2]
+            scored.append((sum(top2), len(top2), st))
+        scored.sort(reverse=True)
+        self.assertEqual(scored[0][2], "候选B",
+                         f"应该选两件之和最大的「候选B」，实际 {scored[0]}")
+
+    def test_explicit_secondary_wins(self):
+        """`--secondary X` 是用户明确意图，不该被择优覆盖。"""
+        self.assertIn('if not args.secondary and len(_by_set) > 1:',
+                      self._src(),
+                      "择优没有排除 args.secondary 的情况")
+
+
+class TestEffLossLimitIsReal(unittest.TestCase):
+    """`--eff-loss-limit` 必须真的参与换装判定（RT-13）。
+
+    ## 原来是个死参数
+
+    帮助文字写着「最多接受掉多少有效值（默认 1.5）」，
+    而它在文件里**只出现在 argparse 定义那一行** —— 判断里从没引用过。
+
+    于是 `--eff-loss-limit 0.1` 一点作用都没有，
+    用户以为有损失上限保护，实际每换一件可能掉 18 点。
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "zzz_plan.py").read_text(encoding="utf-8")
+
+    def test_limit_used_in_judgement(self):
+        """`eff_loss_limit` 必须出现在判定逻辑里，不只是 argparse。"""
+        import ast as _ast
+        src = self._src()
+        tree = _ast.parse(src)
+        # 参数名是**字符串**（`getattr(args, "eff_loss_limit", ...)`），
+        # 不是 Attribute 节点 —— 所以数源码里出现几次。
+        # argparse 里是 `--eff-loss-limit`（横线），代码里是 `eff_loss_limit`（下划线）
+        _decl = src.count("--eff-loss-limit")
+        _use = src.count("eff_loss_limit")
+        self.assertGreaterEqual(_decl, 1, "参数定义没了？")
+        self.assertGreaterEqual(_use, 1,
+                                "eff_loss_limit 只在 argparse 定义里 —— 死参数")
+
+        # **关键：`need` 的赋值必须真的引用 `_sec_ok`**。
+        #
+        # 只数「出现了几次」是不够的 —— 我试过把
+        # `need = eff_better or (set_diff and _sec_ok)`
+        # 改回 `need = eff_better or set_diff`，测试照样全绿。
+        # 那说明这个参数虽然被读了，但**结论没用它**。
+        need_refs_ok = False
+        for node in _ast.walk(tree):
+            if not (isinstance(node, _ast.Assign)
+                    and any(isinstance(t, _ast.Name) and t.id == "need"
+                            for t in node.targets)):
+                continue
+            body = _ast.unparse(node.value)
+            if "_sec_ok" in body:
+                need_refs_ok = True
+                break
+        self.assertTrue(need_refs_ok,
+                        "`need = ...` 没引用 `_sec_ok` —— 上限算出来了但没用上")
+        self.assertIn("_loss_limit", src, "没把上限读进变量")
+        self.assertIn("_eff_loss", src, "没算实际掉分")
+
+    def test_semantics(self):
+        """语义验证：掉分超过上限就换套装，不超过就换。"""
+        def need(eff_better, set_diff, cur_eff, item_eff, limit, cur_bad):
+            eff_loss = cur_eff - item_eff
+            sec_ok = (eff_loss <= limit) or cur_bad
+            return eff_better or (set_diff and sec_ok)
+        # 掉 18 点、上限 1.5 -> 不该单纯为套装而换
+        self.assertFalse(need(False, True, 18.0, 0.0, 1.5, False))
+        # 掉 0.5 点、上限 1.5 -> 可以换
+        self.assertTrue(need(False, True, 18.5, 18.0, 1.5, False))
+        # 主词条无效 -> 无论如何换
+        self.assertTrue(need(False, True, 18.0, 0.0, 1.5, True))
