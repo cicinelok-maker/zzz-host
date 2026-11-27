@@ -258,7 +258,7 @@ def set_directed(ui: Ui, slot: int) -> bool:
     return ok
 
 
-def do_tune(ui: Ui, times: int = 10) -> tuple[bool, str]:
+def do_tune(ui: Ui, times: int = 10) -> tuple[bool, str, int]:
     """点调律按钮。
 
     按钮文字会随模式/资源变化，**不能写死**：
@@ -279,7 +279,7 @@ def do_tune(ui: Ui, times: int = 10) -> tuple[bool, str]:
         cands.append((mult, it))
     if not cands:
         print(f"  底部没有调律按钮；实际：{vs.text(R_BOTTOM)[:100]}")
-        return False, ""
+        return False, "", 0
 
     cands.sort(key=lambda x: -x[0])
     exact = [c for c in cands if c[0] == times]
@@ -299,6 +299,11 @@ def do_tune(ui: Ui, times: int = 10) -> tuple[bool, str]:
         print(f"  ✔ 产出：{got}")
     else:
         print(f"  ✖ 点了「{label}」但没看到「调律获得」")
+    # **把实际用到的倍率带回去**（BUG-081）。
+    #
+    # 原来这函数返回 `(ok, got)`，倍率 `mult` 算出来就丢了；
+    # 调用方于是记 `×{args.times}`（**请求的**倍率）。
+    # 请求 ×10 而游戏只给 ×06 时，日志记的是「×10」，**记录在说谎**。
     for _ in range(3):
         inp.key("esc", wait=1.1)
         if is_tune_ui(vs):
@@ -308,7 +313,7 @@ def do_tune(ui: Ui, times: int = 10) -> tuple[bool, str]:
     m2 = re.search(r"(\d{8})", after)
     if m1 and m2:
         print(f"     母盘计数 {m1.group(1)} → {m2.group(1)}")
-    return ok, got
+    return ok, got, mult
 
 
 def main() -> int:
@@ -354,8 +359,13 @@ def main() -> int:
         print(log.summary())
         return 0
 
-    ok, got = do_tune(ui, args.times)
-    log.log("调律", f"×{args.times}", ok=ok, detail=got)
+    ok, got, _mult = do_tune(ui, args.times)
+    # **记实际倍率，不是请求的**（BUG-081）：请求 ×10 但游戏只给 ×06 时，
+    # 原来日志记「×10」—— 记录在说谎。
+    _rec = f"×{_mult}" if _mult else f"×{args.times}"
+    if _mult and _mult != args.times:
+        print(f"  ⚠ 请求 ×{args.times}，实际 ×{_mult}（按实际的记）")
+    log.log("调律", _rec, ok=ok, detail=got)
     print("调律完成" if ok else "调律未确认成功")
     print()
     print(log.summary())

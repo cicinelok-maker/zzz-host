@@ -2812,3 +2812,87 @@ class TestOutputContract(unittest.TestCase):
         self.assertTrue(found, "找不到 add_subparsers 调用")
         self.assertIn('args.cmd = "check"', inspect.getsource(zzz_resource),
                       "没有「没给子命令就默认 check」的处理")
+
+
+class TestReturnArityConsistent(unittest.TestCase):
+    """同一个函数里的 `return` 必须返回**同样长的元组**。
+
+    ## 为什么
+
+    改 `do_tune` 时我给一个 `return` 加了第三个值（实际倍率），
+    忘了另一个提前返回的分支 —— 于是调用方 `ok, got = do_tune(...)`
+    会在**那条分支上** `ValueError: not enough values to unpack`。
+
+    `compile()` 查不出（语法没错），`import` 查不出（不执行），
+    `--help` 查不出（走不到）。**只有真的走到那条分支才炸。**
+
+    这条和 `TestNoUndefinedVariables` 是同一个思路：
+    把「只在运行时才暴露」的结构性错误，改成静态可查。
+    """
+
+    def test_consistent_tuple_returns(self):
+        import ast as _ast
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for f in sorted(root.rglob("*.py")):
+            if "_legacy" in str(f) or f.name.startswith("test"):
+                continue
+            try:
+                tree = _ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for fn in _ast.walk(tree):
+                if not isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    continue
+                lens = set()
+                for node in _ast.walk(fn):
+                    if isinstance(node, _ast.Return) and node.value is not None:
+                        if isinstance(node.value, _ast.Tuple):
+                            lens.add(len(node.value.elts))
+                # 裸 return / return None 也算「另一种形状」
+                has_bare = any(
+                    isinstance(node, _ast.Return) and node.value is None
+                    for node in _ast.walk(fn))
+                if len(lens) > 1:
+                    bad.append(f"{f.name}:{fn.name} 返回长度 {sorted(lens)}")
+                elif lens and has_bare:
+                    bad.append(f"{f.name}:{fn.name} 有元组返回也有裸 return")
+        self.assertEqual(bad, [],
+                         "这些函数的 return 形状不一致：\n  " + "\n  ".join(bad))
+
+
+class TestTuneMultiplierAccounting(unittest.TestCase):
+    """调律日志要记**实际**倍率，不是请求的（BUG-081）。
+
+    `do_tune(args.times)` 在游戏只给更小倍率时会退而求其次，
+    但原来 `do_tune` 的 `mult` 算出来就丢了，调用方记的是
+    `×{args.times}` —— **请求 ×10、实际点了 ×06，日志却写 ×10。**
+    """
+
+    def test_do_tune_returns_multiplier(self):
+        import ast as _ast
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_tune
+        src = inspect.getsource(zzz_tune.do_tune)
+        tree = _ast.parse(src)
+        lens = {len(n.value.elts) for n in _ast.walk(tree)
+                if isinstance(n, _ast.Return) and isinstance(n.value, _ast.Tuple)}
+        self.assertEqual(lens, {3},
+                         f"do_tune 应该返回 (ok, got, mult) 三个值，实际 {sorted(lens)}")
+
+    def test_log_uses_actual_multiplier(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_tune
+        src = inspect.getsource(zzz_tune)
+        self.assertIn("_rec = f\"×{_mult}\"", src,
+                      "日志没有用实际倍率")
+        i = src.find('log.log("调律"')
+        self.assertIn("_rec", src[i:i + 120],
+                      "log.log 里还是用的 args.times")
