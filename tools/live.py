@@ -319,11 +319,36 @@ def main() -> int:
     Image.fromarray(img[:, :, ::-1]).save(SHOTS / f"{args.shot}.png")
 
     from one_dragon.base.matcher.ocr.onnx_ocr_matcher import OnnxOcrMatcher
+    # **`ocr_model_size` 是构造函数参数，不是 `init_model` 的**（E22）。
+    #
+    # 原来写的是 `ocr.init_model(ocr_model_size="small")` —— 而
+    # `OnnxOcrMatcher.init_model()` 的签名是
+    #
+    #     init_model(self, source_order=None, proxy_url=None,
+    #                ghproxy_url=None, skip_if_existed=...)
+    #
+    # **没有 `ocr_model_size`**，那一行必然抛 TypeError，
+    # 被 `except Exception` 吞掉后再调一次无参的 ——
+    # 看起来「能用」，实际每次都先失败一次，
+    # 而「想用 small 模型」这个意图**从来没生效过**。
+    #
+    # （默认 `ppocrv6` 在构造函数里本来就把 size 强制成 'small'，
+    #  见 onnx_ocr_matcher.py 的 `if ocr_model_name == PPOCRV6 ...`。）
+    #
+    # 失败处理对齐 `core/vision.py`：说人话 + exit 2，
+    # 而不是把 30 行 traceback 冒到顶层 —— 那看起来像「游戏卡了」。
     ocr = OnnxOcrMatcher()
     try:
-        ocr.init_model(ocr_model_size="small")
-    except Exception:
         ocr.init_model()
+    except Exception as e:
+        print("=" * 62)
+        print(f"✘ OCR 模块加载失败：{type(e).__name__}")
+        print(f"  {e}")
+        print("=" * 62)
+        print("  常见原因：模型文件没下完 / 解压漏了 assets / 杀软删了 .onnx")
+        print("  验证：python tools/check_config.py")
+        print("=" * 62)
+        raise SystemExit(2) from None
     items = ocr_items(ocr, img)
 
     if args.enter_loop:

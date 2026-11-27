@@ -44,12 +44,51 @@ CACHE = BASE / "state" / "agent_positions.json"
 
 
 def load_cache() -> dict:
-    if CACHE.exists():
-        try:
-            return json.loads(CACHE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    """读 `state/agent_positions.json`，**逐条校验值的形状**（E18）。
+
+    ## 原来
+
+    直接返回 `json.loads(...)` 的结果，什么都不看。而消费方是：
+
+        if name in cache:
+            order.append(tuple(cache[name]))     # <- 这里
+        ...
+        inp.click(pt[0], pt[1], wait=1.3)
+
+    值是下面任何一种都会炸，而文件看起来「是合法 JSON」：
+
+        {"佩洛伊斯": null}          -> TypeError: 'NoneType' is not iterable
+        {"佩洛伊斯": [1439]}        -> IndexError: tuple index out of range
+        {"佩洛伊斯": "1439,1004"}   -> 变成 ('1','4',...) 逐字符，点到天上
+
+    **12 个调用方全部走这一条路** —— 一个手改坏的文件能让所有工具崩在选人。
+
+    现在：只保留「两个数字」的条目，坏的丢掉并报一行。
+    """
+    if not CACHE.exists():
+        return {}
+    try:
+        raw = json.loads(CACHE.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"  ⚠ {CACHE.name} 读不了（{e}）—— 按空缓存继续")
+        return {}
+    if not isinstance(raw, dict):
+        print(f"  ⚠ {CACHE.name} 的内容是 {type(raw).__name__}，不是对象 —— 按空缓存继续")
+        return {}
+
+    good: dict = {}
+    bad: list[str] = []
+    for k, v in raw.items():
+        if (isinstance(v, (list, tuple)) and len(v) == 2
+                and all(isinstance(x, int) and not isinstance(x, bool) for x in v)):
+            good[str(k)] = [int(v[0]), int(v[1])]
+        else:
+            bad.append(f"{k}={v!r}")
+    if bad:
+        print(f"  ⚠ {CACHE.name} 里有 {len(bad)} 条位置不合法，已忽略："
+              f"{bad[:3]}{'…' if len(bad) > 3 else ''}")
+        print(f"     位置应该是 [x, y] 两个整数。删掉这个文件可以重新扫。")
+    return good
 
 
 def save_cache(d: dict) -> None:

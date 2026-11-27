@@ -5490,3 +5490,134 @@ class TestSnapshotValidityIsHonest(unittest.TestCase):
                         "zzz_daily 没检查快照的 `_valid` —— 会拿废数据算缺口")
         self.assertIn("if not ok:", src,
                       "zzz_daily 没检查 zzz_status 的返回码")
+
+
+class TestOcrInitSignature(unittest.TestCase):
+    """不能给 `init_model()` 传不存在的参数（E22）。
+
+    ## 原来
+
+    ```python
+    ocr = OnnxOcrMatcher()
+    try:
+        ocr.init_model(ocr_model_size="small")    # <- 没这个参数
+    except Exception:
+        ocr.init_model()
+    ```
+
+    OneDragon 的签名是：
+
+        init_model(self, source_order=None, proxy_url=None,
+                   ghproxy_url=None, skip_if_existed=...)
+
+    **必然 TypeError**，被 `except` 吞掉后再调一次无参的 ——
+    看起来「能用」，实际每次都先失败一次，
+    而「想用 small 模型」这个意图**从来没生效过**。
+
+    `ocr_model_size` 是**构造函数**的参数（而且默认 ppocrv6 本来就用 small）。
+    """
+
+    def test_no_bogus_init_model_kwarg(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "live.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call):
+                continue
+            if getattr(node.func, "attr", None) != "init_model":
+                continue
+            kws = [k.arg for k in node.keywords]
+            self.assertNotIn("ocr_model_size", kws,
+                             f"L{node.lineno} 还在给 init_model 传 ocr_model_size")
+
+    def test_ocr_failure_exits_2(self):
+        """加载失败要说人话 + exit 2，不能把 traceback 冒到顶层。"""
+        import pathlib
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "live.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        # **找真正的调用，不是注释里提到的**（自指陷阱）
+        line = None
+        for node in _ast.walk(tree):
+            if (isinstance(node, _ast.Call)
+                    and getattr(node.func, "attr", None) == "init_model"):
+                line = node.lineno
+                break
+        self.assertIsNotNone(line, "找不到真正的 init_model() 调用")
+        lines = src.splitlines()
+        tail = "\n".join(lines[line - 1:line + 25])
+        self.assertIn("SystemExit(2)", tail, "OCR 加载失败没有 exit 2")
+
+
+class TestAgentPositionsValidated(unittest.TestCase):
+    """`agent_positions.json` 的值必须校验形状（E18）。
+
+    ## 原来
+
+    `load_cache()` 直接返回 `json.loads(...)`，消费方是：
+
+        order.append(tuple(cache[name]))
+        ...
+        inp.click(pt[0], pt[1], wait=1.3)
+
+    值是下面任何一种都会炸，而文件看着「是合法 JSON」：
+
+        null          -> TypeError
+        [1439]        -> IndexError
+        "1439,1004"   -> 逐字符变成 ('1','4',...)，点到天上
+
+    **12 个调用方全走这条路** —— 一个手改坏的文件能让所有工具崩在选人。
+    """
+
+    def test_bad_values_dropped(self):
+        import sys
+        import json
+        import pathlib
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import pick_agent as PA
+
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "agent_positions.json"
+        orig = PA.CACHE
+        try:
+            PA.CACHE = tmp
+            tmp.write_text(json.dumps({
+                "好": [100, 200],
+                "空": None,
+                "短": [1439],
+                "串": "1439,1004",
+                "浮": [1.5, 2],
+                "多": [1, 2, 3],
+            }, ensure_ascii=False), encoding="utf-8")
+            d = PA.load_cache()
+            self.assertEqual(d, {"好": [100, 200]})
+            for k in ("空", "短", "串", "浮", "多"):
+                self.assertNotIn(k, d, f"{k} 这种值不该被接受")
+        finally:
+            PA.CACHE = orig
+
+    def test_missing_file_is_quiet(self):
+        import sys
+        import pathlib
+        import tempfile
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import pick_agent as PA
+
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "nope.json"
+        orig = PA.CACHE
+        try:
+            PA.CACHE = tmp
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                d = PA.load_cache()
+            self.assertEqual(d, {})
+            self.assertEqual(buf.getvalue().strip(), "",
+                             "文件不存在时不该打印东西")
+        finally:
+            PA.CACHE = orig
