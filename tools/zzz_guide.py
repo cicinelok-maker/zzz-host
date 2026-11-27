@@ -857,6 +857,16 @@ def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
                 _sec["材料"] = [m for m in (_sec.get("材料") or [])
                                 if (m.get("材料") or "").strip() != _self]
 
+        # **先记住「上一节」是哪个**（E32）。
+        #
+        # 下面那个「无主材料挂到上一次见到的节」用的是 `merged["分节"][-1]` ——
+        # 而这一帧可能**刚刚追加了新节**（标题先滚进视野），于是 `[-1]`
+        # 指向的是**新节**，而孤儿材料其实属于**上一节**。
+        #
+        # 结果：上一节的最后几个材料被挂到下一节标题下面，
+        # 看起来「这一节多了几样不该有的东西」。
+        _prev_last = merged["分节"][-1] if merged["分节"] else None
+
         added = False
         for sec in d.get("分节") or []:
             key = sec.get("节") or ""
@@ -880,9 +890,8 @@ def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
         # 所以「材料出现时标题已滚走」= 它属于刚才那一节。
         _orphan = d.get("_未归属") or []
         if _orphan:
-            tgt = None
-            if merged["分节"]:
-                tgt = merged["分节"][-1]
+            # **挂到「上一节」，不是「最后一节」**（E32）
+            tgt = _prev_last
             if tgt is not None:
                 have = {m.get("材料") for m in tgt.get("材料") or []}
                 for m in _orphan:

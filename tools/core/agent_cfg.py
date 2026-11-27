@@ -337,11 +337,35 @@ def suggest(name: str, limit: int = 3) -> list[str]:
     n = normalize_name(name)
     if not n:
         return []
+    # **单字输入不能走编辑距离**（D23 / E20）。
+    #
+    # `_edit_distance('2', '本') == 1` —— **任何**一个汉字/字符和**任何**
+    # 一个单字名字的距离都是 1。实测：
+    #
+    #     suggest('2')  -> ['本', '柳', '照']      ← 纯垃圾
+    #     suggest('?')  -> ['本', '柳', '照']
+    #
+    # 垃圾候选有两个后果（就是 D23 和 E20 说的那两头）：
+    #
+    # · **D23**：某个残字恰好只剩 **1** 个候选时，`resolve_agent` 会
+    #   直接把它当成那个角色 —— **认错人**，而且不报错
+    # · **E20**：真正该命中的（`'露'` ⊂ `'露西'`）被 3 个垃圾挤出了 `limit`
+    #
+    # 现在：单字只认「**包含**」关系（残字是名字的一部分），不算编辑距离。
+    # 这是唯一对单字有意义的判据。
+    _single = len(n) == 1
     scored = []
     for k in known():
-        d = _edit_distance(n, normalize_name(k))
+        kn = normalize_name(k)
+        contains = (n in kn) or (kn in n)
+        if _single:
+            if not contains:
+                continue          # 单字且不包含 -> 不是候选，别拿距离凑
+            scored.append((0, k))
+            continue
+        d = _edit_distance(n, kn)
         # 也考虑「包含」关系（输「洛伊斯」应该能想到「佩洛伊斯」）
-        if n in normalize_name(k) or normalize_name(k) in n:
+        if contains:
             d = min(d, 1)
         scored.append((d, k))
     scored.sort()
@@ -378,8 +402,20 @@ def resolve_agent(name: str, allow_unknown: bool = False) -> str:
         return canon
     # 归一化后还不在 → 模糊找
     sug = suggest(name)
-    if len(sug) == 1:
-        return sug[0]          # 只有一个候选，直接用
+    # **单字不自动纠正，只提示**（D23）。
+    #
+    # `suggest('露')` 现在能正确给出 `['露西']` —— 但那是**建议**，
+    # 不是「用户说的是露西」。把单字静默换成某个角色，
+    # 万一用户真想说的是别的（或者 OCR 把某个名字读成了这一个字），
+    # 就变成**认错人**，而且不报错。
+    #
+    # 实测的坏例子：OCR 把「11号」读成 `'2'`，以前
+    # `suggest('2')` 给 `['本','柳','照']` —— 三个候选所以没自动纠正；
+    # 要是那天恰好只剩一个候选，就会被悄悄换成别人。
+    #
+    # 现在：单字一律走「报错 + 给建议」那条路，让用户确认。
+    if len(sug) == 1 and len(str(name).strip()) >= 2:
+        return sug[0]          # 只有一个候选，且够长，直接用
     if allow_unknown:
         # 显式允许未知角色：返回归一化名，让调用方自己警告
         from core.agent_name import normalize_name

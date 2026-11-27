@@ -7119,3 +7119,110 @@ class TestCleanupUsesToolsJson(unittest.TestCase):
                       / "cleanup_tools.py").read_text(encoding="utf-8"))
         self.assertIn("_LIMIT", code, "没有数量护栏")
         self.assertIn("return 1", code, "超限时没有 return 非零")
+
+
+class TestOrphanMaterialsGoToPreviousSection(unittest.TestCase):
+    """无主材料要挂到**上一节**，不是「最后一节」（E32）。
+
+    ## 原来
+
+    ```python
+    # **无主材料挂到「上一次见到的节」下面**
+    _orphan = d.get("_未归属") or []
+    if _orphan:
+        tgt = merged["分节"][-1]        # <- 最后一个 = 本帧刚追加的新节
+    ```
+
+    注释是对的，代码不对：这一帧如果**刚刚追加了新节**
+    （标题先滚进视野），`[-1]` 指向的是**新节**，而孤儿材料属于**上一节**。
+
+    后果：上一节的最后几个材料被挂到下一节标题下面 ——
+    看起来「这一节多了几样不该有的东西」。
+
+    ## 现在
+
+    在 append 新节**之前**记住 `_prev_last`，孤儿挂到它上面。
+    """
+
+    def test_prev_last_captured_before_append(self):
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_guide.py").read_text(encoding="utf-8"))
+        self.assertIn("_prev_last", code, "没有记录上一节的引用")
+        # `_prev_last` 的赋值必须在 `merged["分节"].append` 之前
+        i_prev = code.find("_prev_last = merged")
+        i_app = code.find('merged["分节"].append')
+        self.assertGreater(i_prev, -1, "找不到 _prev_last 赋值")
+        self.assertGreater(i_app, -1, "找不到 append")
+        self.assertLess(i_prev, i_app,
+                        "_prev_last 是在 append 之后才记的 —— 那就没意义了")
+
+    def test_orphan_uses_prev_last(self):
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_guide.py").read_text(encoding="utf-8"))
+        i = code.find("_orphan = d.get")
+        self.assertGreater(i, -1)
+        seg = code[i:i + 260]
+        self.assertIn("tgt = _prev_last", seg,
+                      "孤儿还是挂在 `merged[\"分节\"][-1]` 上")
+        self.assertNotIn('merged["分节"][-1]', seg,
+                         "孤儿还在用「最后一节」")
+
+
+class TestShortNameDoesNotMatchEveryone(unittest.TestCase):
+    """单字输入的候选不能是「谁都可以」（D23 / E20）。
+
+    ## 根因
+
+    `_edit_distance('2', '本') == 1` —— **任何**一个字符和**任何**一个
+    单字名字的距离都是 1。所以 `d <= 1` 这个门槛对单字等于「全都匹配」。
+
+    实测（修前）：
+
+        suggest('2')  -> ['本', '柳', '照']      ← 纯垃圾
+        suggest('?')  -> ['本', '柳', '照']
+        suggest('露') -> ['本', '柳', '照']      ← 真正该出的「露西」被挤掉了
+
+    两个后果正好是审计里的两条：
+
+    · **E20**：「白名单丢掉本地角色」—— 真名字被垃圾挤出 `limit`
+    · **D23**：残字恰好只剩 1 个候选时会**静默认错人**
+
+    ## 现在
+
+    · 单字只认「**包含**」关系（残字是名字的一部分），不算编辑距离
+    · 而且单字**不自动纠正** —— 只报错 + 给建议，让用户确认
+    """
+
+    def test_single_char_gives_no_garbage(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import suggest
+        self.assertEqual(suggest("2"), [],
+                         "`suggest('2')` 应该给空 —— 不该匹配任何角色")
+        self.assertEqual(suggest("?"), [],
+                         "`suggest('?')` 应该给空")
+        self.assertEqual(suggest("露"), ["露西"],
+                         "`suggest('露')` 应该只给「露西」（包含关系）")
+
+    def test_single_char_not_auto_corrected(self):
+        """单字不能**静默**换成某个角色 —— 那是认错人（D23）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import resolve_agent, UnknownAgent
+        for bad in ("2", "?", "露"):
+            with self.assertRaises(UnknownAgent,
+                                   msg=f"{bad!r} 被静默纠正了 —— 会认错人"):
+                resolve_agent(bad)
+
+    def test_two_char_still_auto_corrects(self):
+        """两字以上仍然可以自动纠正（那是本来的便利）。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.agent_cfg import resolve_agent
+        self.assertEqual(resolve_agent("丽那"), "丽娜")
+        self.assertEqual(resolve_agent("11号"), "11号")
