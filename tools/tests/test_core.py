@@ -5224,3 +5224,63 @@ class TestFarmQuotaGate(unittest.TestCase):
         self.assertEqual(calls, [],
                          f"zzz_daily 还在 L{calls} 自己记账 —— "
                          f"od_material_farm 已经记过了，会双计")
+
+
+class TestDiscGapNotMultipliedBySets(unittest.TestCase):
+    """驱动盘缺口不能「空位数 × 候选套装数」（D13）。
+
+    ## 原来
+
+    ```python
+    for _sn in _sets:
+        add(f"驱动盘_{_dungeon}", len(empty) * _per, ...)
+    ```
+
+    6 个空位、4 个候选套 -> 6×4×4 = **96 盘**（48 趟/角色）。
+    而实际只需要 **6 个盘**：四件套 4 个 + 两件套 2 个。
+
+    **一个盘掉出来只用一次** —— 同一位号不需要「每个候选套各来一个」。
+    两件套更是**只会用一个**。
+
+    实测：两角色 5760 电 vs 手算 1440；修完整套规划 54 轮 -> 39 轮。
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "zzz_farm_plan.py").read_text(encoding="utf-8")
+
+    def test_no_multiply_by_all_sets(self):
+        """不能出现「对每个套装都按全部空位加一次」的写法。"""
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        bad = []
+        for node in _ast.walk(tree):
+            # for <sn> in <sets>: ... add(..., len(empty) * <per>, ...)
+            if not isinstance(node, _ast.For):
+                continue
+            body = _ast.unparse(node)
+            if ("len(empty)" in body and "add(" in body
+                    and "_sets" in _ast.unparse(node.iter)):
+                bad.append(node.lineno)
+        self.assertEqual(bad, [],
+                         f"L{bad} 还在「遍历套装 × 全部空位」—— 盘数会虚高")
+
+    def test_formula_caps_at_six_discs(self):
+        """6 空位 + 4 候选套，总盘数应该等于 6×per，不是 24×per。"""
+        per = 4
+        for n_empty, n_sets, want in (
+            (6, 4, 6),      # 满配：4 件套 + 2 件套 = 6
+            (6, 1, 6),      # 只有四件套：4 件套 + 2 个无归属位号，还是要 6 个盘
+            (2, 1, 2),      # 只空 2 位
+            (1, 4, 1),      # 只空 1 位
+            (6, 4, 6),      # 4 个候选套也只算 1 个两件套 —— 不能乘 4
+        ):
+            _main = "A" if n_sets else ""
+            _secs = ["B"] * max(0, n_sets - 1) if n_sets > 1 else []
+            _n_main = min(n_empty, 4) if _main else 0
+            _n_sec = min(n_empty - _n_main, 2) if _secs else 0
+            _rest = n_empty - _n_main - _n_sec
+            got = _n_main + _n_sec + _rest
+            self.assertEqual(got, want,
+                             f"空{n_empty} 候选{n_sets} 应该总共 {want} 件，实际 {got}")

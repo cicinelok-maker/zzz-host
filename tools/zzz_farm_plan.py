@@ -249,14 +249,44 @@ def collect() -> dict[str, dict]:
                 add("驱动盘_未配置", len(empty) * _per,
                     f"{name}(空{empty}，但 disc_meta 里没配置套装)")
             else:
-                for _sn in _sets:
-                    _dungeon = PATROL_BY_SET.get(_sn)
-                    if not _dungeon:
-                        add("驱动盘_无副本", len(empty) * _per,
-                            f"{name}(套装 {_sn} 查不到副本)")
-                        continue
-                    add(f"驱动盘_{_dungeon}", len(empty) * _per,
-                        f"{name}(空{empty} 要 {_sn})")
+                # **盘数按「实际要几件」算，不是「空位 × 候选套」**（D13）。
+                #
+                # 原来 `for _sn in _sets: add(..., len(empty) * _per)` ——
+                # 6 个空位、4 个候选套 -> 6×4×4 = **96 盘**
+                # （48 趟）。而实际只需要 **6 个盘**：四件套 4 个 + 两件套 2 个，
+                # 24 盘 / 12 趟。**虚高 4 倍**，实测两角色 5760 电 vs 手算 1440。
+                #
+                # 一个盘掉出来只用一次 —— 同一位号不需要「每个候选套各来一个」。
+                # 两件套**只会用一个**，所以只按一个候选算（取第一个），
+                # 并把「按哪个候选算的」写进理由，免得用户以为另一个也含在内。
+                _main = cfg.get("四件套") or ""
+                _secs = [x for x in (cfg.get("两件套候选") or []) if x]
+                _n_main = min(len(empty), 4) if _main else 0
+                _n_sec = min(len(empty) - _n_main, 2) if _secs else 0
+                _rest = len(empty) - _n_main - _n_sec
+
+                if _n_main:
+                    _dg = PATROL_BY_SET.get(_main)
+                    if not _dg:
+                        add("驱动盘_无副本", _n_main * _per,
+                            f"{name}(套装 {_main} 查不到副本)")
+                    else:
+                        add(f"驱动盘_{_dg}", _n_main * _per,
+                            f"{name}(四件套 {_main} 要 {_n_main} 件)")
+                if _n_sec:
+                    _sec = _secs[0]
+                    _dg = PATROL_BY_SET.get(_sec)
+                    if not _dg:
+                        add("驱动盘_无副本", _n_sec * _per,
+                            f"{name}(套装 {_sec} 查不到副本)")
+                    else:
+                        add(f"驱动盘_{_dg}", _n_sec * _per,
+                            f"{name}(两件套 {_sec} 要 {_n_sec} 件"
+                            + (f"；只按这一个候选算，另有 {len(_secs) - 1} 个没算"
+                               if len(_secs) > 1 else "") + ")")
+                if _rest > 0:
+                    add("驱动盘_未配置", _rest * _per,
+                        f"{name}(空{_rest} 个位号没有套装归属)")
 
     if _unk:
         print()
