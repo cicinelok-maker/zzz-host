@@ -250,3 +250,39 @@ python tools/zzz_daily.py 佩洛伊斯 --run    # 真跑
 ## 开源协议
 
 [MIT](LICENSE)
+
+---
+
+## 依赖与许可
+
+**本仓的代码是 [MIT](LICENSE)。**
+
+但它**运行时依赖 [OneDragon](https://github.com/DoctorReid/ZenlessZoneZero-OneDragon)**，
+而 OneDragon 是 **GPL-3.0**。具体怎么依赖的：
+
+| 方式 | 说明 |
+|---|---|
+| `sys.path.insert` 进 OneDragon 的 `src/` | 直接 `import` 它的 OCR / 控制器 |
+| 用它的 `.venv` python 跑某些工具 | 见 `core/paths.py` 的 `one_dragon_python()` |
+
+**本仓不包含 OneDragon 的任何代码** —— 它要用户自己装，路径由 `paths.json` 指过去。
+
+### 这意味着什么
+
+* **只分发本仓**（这个 zip / 这个 git 仓库）：发的是 MIT 代码，不含 GPL 代码。
+* **把两者打包在一起发**（比如做一个"开箱即用整合包"）：
+  那么这个**合并的产物**要按 GPL-3.0 分发。
+
+这条不是法律意见，是**事实陈述** —— 具体怎么处理，取决于你怎么分发。
+如果你不确定，最省事的做法就是：**只发本仓，让用户自己装 OneDragon**。
+
+### 依赖清单
+
+| 依赖 | 许可 | 必需？ |
+|---|---|---|
+| [OneDragon](https://github.com/DoctorReid/ZenlessZoneZero-OneDragon) | GPL-3.0 | **必需**（读画面 / 注入输入） |
+| Python 3.10+ | PSF | 必需 |
+| `pywin32` / `numpy` / `pillow` | BSD / MIT / HPND | 必需 |
+| `vgamepad` | MIT | 手柄注入（可选） |
+
+

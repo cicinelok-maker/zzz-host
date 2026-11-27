@@ -438,3 +438,15 @@ python tools/audit_ship.py; python tools/audit_stale_frame.py
 `audit_ship` 特别重要 —— 它会在**发布集子集**里重跑测试，
 能抓到「只在全仓里成立」的假设（我加的一条测试就因为假定
 `AGENTS.md` 一定存在而红过）。
+
+---
+
+## 许可提醒（给接手的 agent）
+
+本仓是 **MIT**，但**运行时依赖 GPL-3.0 的 OneDragon**（`sys.path.insert` + import）。
+
+**发布时要注意**：
+* 只发本仓 -> 发的是 MIT 代码，没问题
+* 把 OneDragon 一起打包发 -> **合并产物要按 GPL-3.0**
+
+详见 README 的「依赖与许可」。
