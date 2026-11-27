@@ -82,7 +82,22 @@ def main() -> int:
         vs.frame(force=True)
 
         def fingerprint(dd):
-            return (dd["set"], dd["level"],
+            """去重指纹。
+
+            ## **必须带 `slot` 和 `main`**（BUG-080）
+
+            原来只有 `set + level + subs` —— 于是下面这两种盘会被当成同一块：
+
+            · 同套装、同等级、副词条一样，但**主属性不同**
+              （「攻击力」vs「暴击率」）
+            · 同套装、同等级，但**位号不同**（1号位 vs 2号位）
+
+            第二块盘会被 `if fp in seen_fp: continue` **直接跳过**，
+            于是 `discs_v2.json` 里少一块 —— 而这是判盘和换装的输入。
+
+            实测这类「看起来一样」的盘在扫仓库时很常见（同一套刷出来一堆）。
+            """
+            return (dd.get("slot"), dd["set"], dd.get("main"), dd["level"],
                     tuple(sorted((sub["name"], sub["rolls"])
                                  for sub in dd.get("subs") or [])))
 

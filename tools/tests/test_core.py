@@ -2896,3 +2896,74 @@ class TestTuneMultiplierAccounting(unittest.TestCase):
         i = src.find('log.log("调律"')
         self.assertIn("_rec", src[i:i + 120],
                       "log.log 里还是用的 args.times")
+
+
+class TestDiscDedupFingerprint(unittest.TestCase):
+    """扫仓库的去重指纹必须区分「主属性」和「位号」（BUG-080）。
+
+    ## 原来
+
+    ```python
+    def fingerprint(dd):
+        return (dd["set"], dd["level"],
+                tuple(sorted((sub["name"], sub["rolls"]) for sub in ...)))
+    ```
+
+    只有 `set + level + subs`。于是这两种盘会被当成同一块：
+
+    · 同套装、同等级、副词条一样，但**主属性不同**（攻击力 vs 暴击率）
+    · 同套装、同等级，但**位号不同**（1号位 vs 2号位）
+
+    第二块被 `if fp in seen_fp: continue` **直接跳过**，
+    `discs_v2.json` 里就少一块 —— 而这是判盘和换装的输入。
+
+    同一套刷出来的盘本来就长得像，这个漏读在实际扫仓库时很常见。
+    """
+
+    def _fingerprint_node(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_disc_v2.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.FunctionDef) and node.name == "fingerprint":
+                return node
+        return None
+
+    def test_fingerprint_has_five_parts(self):
+        fn = self._fingerprint_node()
+        self.assertIsNotNone(fn, "找不到 fingerprint 函数")
+        ret = next((n for n in ast_walk(fn) if isinstance(n, __import__("ast").Return)),
+                   None) if False else None
+        import ast as _ast
+        ret = next((n for n in _ast.walk(fn) if isinstance(n, _ast.Return)), None)
+        self.assertIsNotNone(ret, "fingerprint 没有 return")
+        self.assertIsInstance(ret.value, _ast.Tuple, "返回的不是元组")
+        self.assertEqual(len(ret.value.elts), 5,
+                         f"指纹应该有 5 段（slot/set/main/level/subs），"
+                         f"实际 {len(ret.value.elts)} 段")
+
+    def test_fingerprint_includes_slot_and_main(self):
+        import ast as _ast
+        fn = self._fingerprint_node()
+        self.assertIsNotNone(fn)
+        src = _ast.unparse(fn)
+        self.assertIn("slot", src, "指纹里没有位号 slot")
+        self.assertIn("main", src, "指纹里没有主属性 main")
+
+    def test_dedup_semantics(self):
+        """语义验证：主属性/位号不同 -> 不去重；完全一样 -> 去重。"""
+        def new_fp(dd):
+            return (dd.get("slot"), dd["set"], dd.get("main"), dd["level"],
+                    tuple(sorted((s["name"], s["rolls"])
+                                 for s in dd.get("subs") or [])))
+        base = {"set": "啄木鸟电音", "level": 15,
+                "subs": [{"name": "攻击力百分比", "rolls": 2}]}
+        a = {**base, "slot": 4, "main": "攻击力"}
+        b = {**base, "slot": 4, "main": "暴击率"}
+        c = {**base, "slot": 1, "main": "攻击力"}
+        d = {**base, "slot": 4, "main": "攻击力"}
+        self.assertNotEqual(new_fp(a), new_fp(b), "主属性不同却被当成重复")
+        self.assertNotEqual(new_fp(a), new_fp(c), "位号不同却被当成重复")
+        self.assertEqual(new_fp(a), new_fp(d), "完全一样的没被去重")
