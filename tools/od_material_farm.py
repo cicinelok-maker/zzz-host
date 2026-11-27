@@ -57,7 +57,17 @@ def build_plans(args) -> list[tuple[str, str, int]]:
 
 def from_gaps() -> list[tuple[str, str, int]]:
     """按 material_sources.json 和当前状态给出刷本计划"""
-    table = json.loads((BASE / "state" / "material_sources.json").read_text(encoding="utf-8"))
+    # **判存在再读**（BUG-079）。原来直接 read_text，
+    # 文件不在就抛 FileNotFoundError + 30 行 traceback ——
+    # 而那只是「还没盘点过」，不是程序坏了。
+    #
+    # 顺带：这份 `table` 原来读出来**一个字都没用**（死变量），
+    # 真正的判据在下面两段（skill_status / core_status）。
+    # 所以这里不读它，只检查它在不在。
+    _ms = BASE / "state" / "material_sources.json"
+    if not _ms.exists():
+        print(f"  ⚠ 还没有 {_ms.name} —— 缺口判断会不完整")
+        print("     先跑：python tools/zzz_gap.py <角色名>")
     plans = []
 
     # 技能材料缺口
@@ -102,14 +112,31 @@ def main() -> int:
                     help="角色名（用于按岗位推导副本类型）")
     ap.add_argument("--patrol-type", default="",
                     help="区域巡防：直接给副本类型名，覆盖 --patrol")
-    ap.add_argument("--plan-only", action="store_true", help="只出计划不执行")
+    ap.add_argument("--plan-only", action="store_true",
+                    help="写计划配置但不启动刷本（会改 OneDragon 的配置，不用开游戏）")
     ap.add_argument("--loop", action="store_true",
                     help="刷到电量耗尽（默认 False：只刷 --times 次）")
     ap.add_argument("--use-backup", action="store_true",
                     help="电量不足时使用储蓄电量")
     args = ap.parse_args()
 
-    plans = from_gaps() if args.from_gaps else build_plans(args)
+    # **显式指定的不能因为加了 --from-gaps 就被丢掉**（BUG-079）。
+    #
+    # 原来是二选一：`from_gaps() if args.from_gaps else build_plans(args)`。
+    # 于是 `--from-gaps --patrol 机师与叛甲` 里那个 `--patrol` **静默消失**，
+    # 用户以为自己指定了副本，实际跑的是缺口算出来的另一个。
+    #
+    # 现在：显式的在前，缺口补在后（去重）。
+    plans = build_plans(args)
+    if args.from_gaps:
+        _gap = from_gaps()
+        if _gap:
+            print(f"  缺口补了 {len(_gap)} 项：{[g[1] for g in _gap]}")
+        for _g in _gap:
+            if _g not in plans:
+                plans.append(_g)
+    if not plans:
+        print("  没有要刷的（既没给参数，缺口也算不出来）")
 
     # **周本有次数上限**（恶名狩猎每周 3 次），刷完就刷不到东西。
     # 不查的话：调进去游戏显示「次数已用完」，工具报「没做成事」，
