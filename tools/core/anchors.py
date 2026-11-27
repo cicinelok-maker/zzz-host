@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .vision import Region
+from .locate import R_SKILL_ROW as _R_SKILL_ROW, SKILL_LEVEL_PAT as _SKILL_LEVEL_PAT
 
 # ---------- 常用区域 ----------
 R_TITLE = (0, 0, 900, 220)            # 左上角标题（含仓库计数）
@@ -52,13 +53,24 @@ class Anchor:
     # 于是 must 全中永远不成立 → 明明在世界里，`describe()` 却说「未知界面」。
     any_of: tuple[str, ...] = ()
 
+    #: **必须匹配的正则**（全都要中）。给「有结构性特征」的界面用（RT-05）。
+    #:
+    #: 为什么需要：底部 tab 标签在**三个 tab 上都有**，
+    #: 「技能页」原来只靠 `must=("技能",)` + **锚点顺序**消歧 ——
+    #: 装备页的 DRIVER 一漏读，技能页就抢注，然后在错的页面上点。
+    #: 而技能行有「1012」这种「当前/上限」编号，是**正向唯一证据**。
+    must_re: tuple[str, ...] = ()
+
     def match(self, vision) -> bool:
+        import re as _re
         txt = vision.text(self.region)
         if any(f in txt for f in self.forbidden):
             return False
         if not all(m in txt for m in self.must):
             return False
         if self.any_of and not any(a in txt for a in self.any_of):
+            return False
+        if self.must_re and not all(_re.search(r, txt) for r in self.must_re):
             return False
         return True
 
@@ -150,8 +162,18 @@ ANCHORS: list[Anchor] = [
     #   基础页（生命值/攻击力/防御力）再认领
     #   剩下的带「技能」标签的才是技能页
     # 这样区域只要盖住底部标签行（1440x80 = 11 万像素），20 倍快。
-    Anchor("技能页", (1000, 960, 1500, 1040), must=("技能",),
-           note="角色详情-技能 tab（靠顺序区分：装备页/基础页先认领）"),
+    # **不再靠锚点顺序消歧**（RT-05）。
+    #
+    # 原来 `must=("技能",)` 查的是底部 tab 行 —— 而「技能」这个标签
+    # **三个 tab 上都有**。装备页的 DRIVER 一漏读、基础页三属性漏一个，
+    # 技能页就抢注，`go_to` 变成「0 次点击就说到了」，
+    # 然后上层按技能页坐标点核心技 —— 实际点在装备页/基础页上。
+    #
+    # 现在用**正向唯一证据**：技能行有「当前/上限」编号（1012、0812…），
+    # 那是只有技能页才有的。模式来自 `locate.SKILL_LEVEL_PAT`，和
+    # `skill_cells()` 共用同一份 —— 别写两处。
+    Anchor("技能页", _R_SKILL_ROW, must_re=(_SKILL_LEVEL_PAT,),
+           note="角色详情-技能 tab（判据=技能行的「当前/上限」编号）"),
 
     Anchor("代理人列表", (0, 0, 1920, 400), must=("代理人攻略",),
            forbidden=("DRIVER", "驱动盘定制", "简略描述"),

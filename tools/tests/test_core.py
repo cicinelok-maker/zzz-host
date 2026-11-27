@@ -3396,7 +3396,12 @@ class TestTextAssertionRatchet(unittest.TestCase):
     #:
     #: 所以这里用**总数**当棘轮：每个新增的 `getsource` 都得想一想
     #: 「我是要用它做文本匹配，还是喂 AST」。前者别写。
-    BASELINE = 41
+    #:
+    #: 2026-11-27 从 41 调到 43：新增的 4 处都是**喂 AST 的正当用途**
+    #: （`TestDiscMarkMatchesMain`、`TestDestructiveFailureExitCode`、
+    #: `TestSkillPageNotStolen`、`TestNoNewGhostStates`），
+    #: 同时把 `test_pattern_is_shared` 原来那 2 处文本断言改成了 AST。
+    BASELINE = 43
 
     def test_getsource_count_does_not_grow(self):
         import pathlib
@@ -3584,3 +3589,113 @@ class TestNoNewGhostStates(unittest.TestCase):
         self.assertIn("不是一个可识别的状态", out,
                       "没告诉用户「这不是导航失败，是没有锚点」")
         self.assertIn("能识别的", out, "没列出可识别的状态")
+
+
+class TestSkillPageNotStolen(unittest.TestCase):
+    """技能页不能靠「底部标签 + 锚点顺序」判定（RT-05）。
+
+    ## 原来
+
+    ```python
+    Anchor("技能页", (1000, 960, 1500, 1040), must=("技能",))
+    ```
+
+    而「技能」这个标签**三个 tab 上都有**。所以：
+
+    · 装备页的 `DRIVER` 一旦 OCR 漏读 → 技能页抢注
+    · 基础页三属性漏一个 → 技能页抢注
+
+    抢注的后果不是「认错」，是 **`go_to` 0 次点击就返回 True**，
+    然后上层按技能页坐标点核心技 A~F —— **实际点在装备页的盘位上**。
+
+    ## 修法
+
+    用**正向唯一证据**：技能行有「当前/上限」编号（`1012`、`0812`…），
+    只有技能页才有。模式来自 `locate.SKILL_LEVEL_PAT`，和 `skill_cells()` 共用。
+    """
+
+    _seq = [0]
+
+    def _fake(self, texts):
+        """假 Vision。
+
+        ## `_frame_key` 必须**每个实例不同**
+
+        `anchors.describe()` 的缓存键是 `(id(vision), vision._frame_key())`。
+        第一版这里恒返回 `1` —— 于是两个不同的假 Vision
+        如果**恰好拿到同一个 id**（前一个被 GC 后地址复用），
+        第二次会命中第一次的缓存，测试就间歇性失败。
+
+        实测：同一份代码连跑两次，一次过一次不过。
+        """
+        type(self)._seq[0] += 1
+        key = type(self)._seq[0]
+
+        class V:
+            occluded = False
+            def text(self, r): return texts.get(tuple(r), "")
+            def items(self, r): return []
+            def frame(self, force=False): pass
+            def _frame_key(self): return key
+        return V()
+
+    def test_bottom_tab_alone_is_not_skill_page(self):
+        """只有底部「技能」标签 —— 那是三个 tab 共有的，不能当判据。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors
+        v = self._fake({(1000, 960, 1500, 1040): "技能 影画 基础 装备",
+                        (900, 690, 1800, 800): ""})
+        self.assertFalse(anchors.at(v, "技能页", tries=1, need=1),
+                         "只有底部标签就判成技能页 —— 这就是 RT-05 那个抢注")
+
+    def test_skill_row_numbers_identify_page(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors
+        v = self._fake({(1000, 960, 1500, 1040): "技能 影画 基础 装备",
+                        (900, 690, 1800, 800): "1012 0812 0612 1212 0312"})
+        self.assertTrue(anchors.at(v, "技能页", tries=1, need=1),
+                        "技能行有编号却没认出技能页")
+
+    def test_equipment_page_still_wins(self):
+        """装备页有 DRIVER 时要认成装备页，不能被技能页抢。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors
+        v = self._fake({(900, 300, 1850, 950): "DRIVER 等级15",
+                        (1000, 960, 1500, 1040): "技能 影画 基础 装备"})
+        self.assertEqual(anchors.describe(v), "装备页")
+
+    def test_pattern_is_shared(self):
+        """锚点和 skill_cells 必须用**同一个**模式常量。
+
+        ## 用 AST，不用源码文本
+
+        第一版是 assertIn("SKILL_LEVEL_PAT", getsource(anchors)) ——
+        正是本文件 TestTextAssertionRatchet 在批的那种写法
+        （**棘轮当场把它抓了：41 -> 43**）。
+
+        注释里写个名字就骗过文本检查。AST 看的是**真实引用**。
+        """
+        import ast as _ast
+        import sys
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root))
+        from core import locate
+        self.assertTrue(hasattr(locate, "SKILL_LEVEL_PAT"),
+                        "locate 里没有 SKILL_LEVEL_PAT")
+        self.assertIn("12", locate.SKILL_LEVEL_PAT)
+
+        for name, path in (("anchors", root / "core" / "anchors.py"),
+                           ("locate", root / "core" / "locate.py")):
+            tree = _ast.parse(path.read_text(encoding="utf-8"))
+            # anchors 里用的是别名 `_SKILL_LEVEL_PAT`（导入时 as 了），两个都认
+            refs = [n for n in _ast.walk(tree)
+                    if isinstance(n, _ast.Name)
+                    and n.id in ("SKILL_LEVEL_PAT", "_SKILL_LEVEL_PAT")]
+            self.assertTrue(refs, f"{name}.py 里没有任何 SKILL_LEVEL_PAT 的引用")

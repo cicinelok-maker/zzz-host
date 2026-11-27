@@ -24,6 +24,12 @@ import re
 
 # 代理人技能页：底部五个格子，标签形如「1012」（OCR 把「10 12」粘起来）
 R_SKILL_ROW = (900, 690, 1800, 800)
+
+# 技能行的「当前/上限」编号（1012 = 当前 10 / 上限 12）。
+# **这是「我在技能页」的正向唯一证据**（RT-05）—— 底部「技能」标签
+# 三个 tab 上都有，靠它判会抢注。
+# 锚点和 `skill_cells()` **共用这一个**，别写两份。
+SKILL_LEVEL_PAT = r"\d{2}12"
 SKILL_LABEL_DY = -58          # 格子图标中心相对标签
 
 # 核心技 A~F
@@ -60,12 +66,12 @@ def skill_cells(vs) -> list[tuple[int, int]]:
     """技能页五个格子。
 
     标签是「当前/上限」粘在一起的形式（1012、0812、0612），
-    所以按 `\\d{2}12` 匹配，取前五个，按 x 排序。
+    所以按 `SKILL_LEVEL_PAT`（`当前/上限` 四位数）匹配，取前五个，按 x 排序。
     """
     vs.frame(force=True)
     cells = []
     for it in vs.items(R_SKILL_ROW):
-        if re.fullmatch(r"\d{2}12", it["text"].strip()):
+        if re.fullmatch(SKILL_LEVEL_PAT, it["text"].strip()):
             cells.append((it["cx"], it["cy"] + SKILL_LABEL_DY))
     cells.sort()
 
