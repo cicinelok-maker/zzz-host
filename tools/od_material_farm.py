@@ -106,6 +106,8 @@ def main() -> int:
     ap.add_argument("--level", default="默认等级", help="挑战等级")
     ap.add_argument("--from-gaps", action="store_true", help="按当前缺口自动选")
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--again", action="store_true",
+                    help="今天已经刷过了还刷（默认会拦）")
     ap.add_argument("--instance", type=int, default=1)
     # 2026-11-24 从 od_farm.py 合并过来的参数（避免两个刷本工具重复）
     ap.add_argument("--agent", default=_DEFAULT_AGENT,
@@ -119,6 +121,29 @@ def main() -> int:
     ap.add_argument("--use-backup", action="store_true",
                     help="电量不足时使用储蓄电量")
     args = ap.parse_args()
+
+    # **额度闸门放在这里 —— 刷本的唯一收口**（E31）。
+    #
+    # 原来「每天只刷一次」只写在 `zzz_daily` 里，而 `od_material_farm` 是
+    # 真正执行刷本的那个工具，**它自己不看额度**。于是：
+    #   · 直接跑 `od_material_farm --run`
+    #   · 或者从 `zzz_farm_plan --run` 进来
+    # 都会把当天的电量再烧一遍。
+    #
+    # 现在闸门在最底层，任何入口都绕不过去。
+    if args.run and not getattr(args, "again", False):
+        try:
+            from core import farm_log as _fl
+            _today, _why = _fl.count_today_safe()
+            if _why:
+                print(f"  ⚠ {_why}")
+                print(f"     **不知道今天刷过没** —— 按「可能刷过」处理，不拦")
+            elif _today > 0:
+                print(f"  ✘ 今天已经刷过 {_today} 次（额度闸门）")
+                print(f"     再刷一遍会把明天的电量提前烧掉。确实要刷就加 --again。")
+                return 4
+        except Exception as _e:
+            print(f"  （额度检查跳过：{_e}）")
 
     # **显式指定的不能因为加了 --from-gaps 就被丢掉**（BUG-079）。
     #
@@ -279,6 +304,14 @@ def main() -> int:
                 print(f"  记一次 {_cat}：本周 {_u}/{_wk.LIMITS.get(_cat, '?')}")
     except Exception as _e:
         print(f"  （记周本次数失败：{_e}）")
+    # **刷成功后记账**（E31）：闸门的依据就是这个文件。
+    try:
+        from core import farm_log as _fl2
+        _fl2.append(dungeon=str(getattr(args, 'patrol', '') or ''),
+                    times=sum(n for _c, _n, n in plans), ok=True,
+                    source='od_material_farm')
+    except Exception as _e:
+        print(f'  （记账失败：{_e}）')
     return 0
 
 

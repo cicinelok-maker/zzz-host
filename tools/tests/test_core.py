@@ -5158,3 +5158,69 @@ class TestAdminPs1Command(unittest.TestCase):
         tail = txt[i:i + 500]
         self.assertIn("exit $rc", tail,
                       "没有把退出码带出来 —— 提权后丢退出码")
+
+
+class TestFarmQuotaGate(unittest.TestCase):
+    """「每天只刷一次」的闸门必须在**最底层**（E31）。
+
+    ## 原来只在一个入口
+
+    `zzz_daily` 自己查额度，但 `od_material_farm` —— **真正执行刷本的那个工具** ——
+    完全不看。于是：
+
+        od_material_farm.py --run            # 直接跑，额度形同虚设
+        zzz_farm_plan.py --run               # 从别的入口进来，同样不看
+
+    都会把当天的电量再烧一遍。
+
+    ## 现在
+
+    闸门在 `od_material_farm` 的参数解析之后、`ZContext()` **之前** ——
+    任何入口都绕不过去，而且会在**碰游戏之前**就拦下来。
+    """
+
+    def _src(self):
+        import pathlib
+        return (pathlib.Path(__file__).resolve().parent.parent
+                / "od_material_farm.py").read_text(encoding="utf-8")
+
+    def test_has_again_flag(self):
+        self.assertIn('"--again"', self._src(), "没有 --again 逃生口")
+
+    def test_gate_exists(self):
+        src = self._src()
+        self.assertIn("额度闸门", src, "找不到额度闸门")
+        self.assertIn("count_today_safe", src, "没用 farm_log 的计数")
+
+    def test_gate_before_game_init(self):
+        """闸门必须在 `ZContext()` 之前 —— 白初始化 OneDragon 没意义。"""
+        import ast as _ast
+        tree = _ast.parse(self._src())
+        gate_line = None
+        ctx_line = None
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Call):
+                nm = _ast.unparse(node.func)
+                if nm.endswith("count_today_safe"):
+                    gate_line = node.lineno
+                if nm == "ZContext" and ctx_line is None:
+                    ctx_line = node.lineno
+        self.assertIsNotNone(gate_line, "没找到额度检查")
+        self.assertIsNotNone(ctx_line, "没找到 ZContext")
+        self.assertLess(gate_line, ctx_line,
+                        f"额度检查在 L{gate_line}，ZContext 在 L{ctx_line} —— "
+                        f"应该先查额度")
+
+    def test_daily_does_not_double_record(self):
+        """`zzz_daily` 不能自己再记一次 —— 双计会让闸门第二次就误拦。"""
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "zzz_daily.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        calls = [n.lineno for n in _ast.walk(tree)
+                 if isinstance(n, _ast.Call)
+                 and getattr(n.func, "id", None) == "_farm_record"]
+        self.assertEqual(calls, [],
+                         f"zzz_daily 还在 L{calls} 自己记账 —— "
+                         f"od_material_farm 已经记过了，会双计")

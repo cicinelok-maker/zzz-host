@@ -558,9 +558,15 @@ def main() -> int:
                 print(f"    按缺口选：{dungeon} × {times}")
             # **按副本名路由参数** —— 原来一律 `--patrol`，
             # 只能刷区域巡防；芯片/认证章/高维数据/周本全都刷不了。
-            _ok_farm = run("刷本", _farm_cmd(dungeon, times), 3600)
+            # **传 --again**：额度已经在本函数上面查过了（`_already`），
+            # 而 `od_material_farm` 自己也有一道闸门（E31）。
+            # 不传的话会因为「今天已刷」被自己拦下来。
+            _ok_farm = run("刷本", _farm_cmd(dungeon, times) + ["--again"], 3600)
             if _ok_farm[0]:
-                _farm_record(dungeon, times)
+                # **不在这里记账**（E31）：`od_material_farm` 刷成功后会自己记。
+                # 两边都记会双计 —— 那样「今天刷了几次」直接翻倍，
+                # 额度闸门就变成「第二次就拦住」了。
+                pass
             # 2026-11-24 修：zzz_mark.py 点的是仓库底部弃置按钮（已失效，是灰的）。
             # 改走实测可用的链路：升级→判定→标记(R键)→拆解。
             # 刷本拿到素材后再转化一次（材料可双向转化，缺什么补什么）

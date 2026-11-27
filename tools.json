@@ -232,6 +232,9 @@
      "flag": "--run"
     },
     {
+     "flag": "--again"
+    },
+    {
      "flag": "--instance"
     },
     {
