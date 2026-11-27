@@ -122,7 +122,7 @@ def _level_label(text: str, level: int) -> bool:
 
 
 def mark_disc_abandoned(ui: Ui, m: Machine, slot: int, set_name: str,
-                        level: int) -> bool:
+                        level: int, want_main: str = "") -> bool:
     """在拆解页找到指定盘，按 R 标记弃置。
 
     做法：进拆解页 → 取消所有筛选 → 逐张点开读 → 匹配 套装+位号+等级 → 按 R → 确认
@@ -168,8 +168,12 @@ def mark_disc_abandoned(ui: Ui, m: Machine, slot: int, set_name: str,
         # 原来只比 set+slot，同套同位号的 Lv0 废盘和 Lv15 毕业盘无法区分，
         # 标记会落在该位号第一张卡片上 —— 最坏是把毕业盘标成狗粮，
         # 下一轮拆解就真拆掉了（不可逆）。
+        # **匹配加上主属性**（RT-12）：同一套同位号同等级可能有两块，
+        # 主属性不同（攻击力 vs 暴击率）。原来只比三级，标记可能落在错的那块，
+        # 下一轮「全选已弃置」就把它拆了 —— 拆解不可逆。
+        _main_ok = (not want_main) or (d.get("main") == want_main)
         if (d["set"] != set_name or d["slot"] != slot
-                or d["level"] != level):
+                or d["level"] != level or not _main_ok):
             continue
         # 命中：按 R
         inp.key("r", wait=1.8)
@@ -362,7 +366,7 @@ def main() -> int:
             verdict = "过渡"
         print(f"  → Lv{d['level']} 有效 {ev['eff']} {verdict}")
         if verdict == "废":
-            junk.append((slot, d["set"], d["level"], ev["eff"]))
+            junk.append((slot, d["set"], d["level"], ev["eff"], d.get("main", "")))
         else:
             kept.append((slot, d["set"], d["level"], ev["eff"]))
         log.log(f"{slot}号位", verdict, ok=True, detail=f"Lv{d['level']} 有效{ev['eff']}")
@@ -370,15 +374,15 @@ def main() -> int:
     print()
     print(f"留：{len(kept)} 块　废：{len(junk)} 块")
     for j in junk:
-        print(f"  废 {j[1]}[{j[0]}] Lv{j[2]} 有效{j[3]}")
+        print(f"  废 {j[1]}[{j[0]}] Lv{j[2]} 有效{j[3]}  主属性 {j[4] or '?'}")
 
     if args.recycle and junk:
         print()
         print("=== 标记弃置 ===")
         # **记成功数** —— 拆解闸要拿它比对，标记失败的不该被算进「该拆」
         marked = 0
-        for slot, set_name, level, _e in junk:
-            if mark_disc_abandoned(ui, m, slot, set_name, level):
+        for slot, set_name, level, _e, main_attr in junk:
+            if mark_disc_abandoned(ui, m, slot, set_name, level, main_attr):
                 marked += 1
         print(f"  标记成功 {marked}/{len(junk)}")
 

@@ -3252,3 +3252,73 @@ class TestRollsPctFilter(unittest.TestCase):
         self.assertEqual(self._f(38, False).get("攻击力"), 1)
         self.assertEqual(self._f(2.4, True).get("暴击率"), 0)
         self.assertEqual(self._f(6, True).get("生命值百分比"), 1)
+
+
+class TestDiscMarkMatchesMain(unittest.TestCase):
+    """标记弃置时必须比对**主属性**，不只是套装+位号+等级（RT-12）。
+
+    ## 为什么这条不可逆
+
+    同一套、同一位号、同一等级可能有两块盘 —— 主属性不同
+    （「攻击力」vs「暴击率」）。原来只比三级：
+
+    ```python
+    if (d["set"] != set_name or d["slot"] != slot or d["level"] != level):
+        continue
+    ```
+
+    标记可能落在**错的那一块**上。而下一轮
+    `dismantle_all_abandoned` 点的是「全选已弃置」，就把它拆了。
+    **拆解没有撤销。**
+
+    ## 修法
+
+    `mark_disc_abandoned(..., want_main="")` —— 给了就要求主属性一致。
+    调用方从 `read_disc` 的结果里带上 `d["main"]`。
+    """
+
+    def test_signature_has_want_main(self):
+        import ast as _ast
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_cycle as C
+        fn = next((n for n in _ast.walk(_ast.parse(inspect.getsource(C)))
+                   if isinstance(n, _ast.FunctionDef)
+                   and n.name == "mark_disc_abandoned"), None)
+        self.assertIsNotNone(fn, "找不到 mark_disc_abandoned")
+        args = [a.arg for a in fn.args.args]
+        self.assertIn("want_main", args, f"签名里没有 want_main：{args}")
+
+    def test_comparison_uses_main(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_cycle as C
+        src = inspect.getsource(C.mark_disc_abandoned)
+        self.assertIn("_main_ok", src, "比对里没有主属性判断")
+        self.assertIn('d.get("main")', src, "没有读 d 的主属性")
+
+    def test_caller_passes_main(self):
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_cycle as C
+        src = inspect.getsource(C)
+        self.assertIn("main_attr", src, "调用方没把主属性传下去")
+        self.assertIn('junk.append((slot, d["set"], d["level"], ev["eff"], d.get("main"',
+                      src, "junk 元组里没有主属性")
+
+    def test_empty_want_main_falls_back(self):
+        """不给 want_main 时要退回原来的三级比对（不能因此永远匹配不上）。"""
+        import inspect
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_disc_cycle as C
+        src = inspect.getsource(C.mark_disc_abandoned)
+        self.assertIn("not want_main", src,
+                      "want_main 为空时没有跳过主属性比对")
