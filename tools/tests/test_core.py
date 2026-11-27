@@ -4302,3 +4302,60 @@ class TestSelfcheckRunsToCompletion(unittest.TestCase):
         src = self._src()
         self.assertIn("sys.exit(1)", src, "没有失败出口 —— 恒返回 0")
         self.assertIn("sys.exit(0)", src, "没有显式成功出口")
+
+
+class TestNoPiiInRelease(unittest.TestCase):
+    """发布集里不能有 PII，而且要**按内容**扫（RT-18 / RT-16）。
+
+    ## RT-18 的问题正是「文件名正常，内容敏感」
+
+    `config.json` 里原来有 `account: {nickname, uid}` ——
+    照着文档填了真值再发布，**真实游戏 UID 进公开仓库**。
+    而 `.gitignore` 只忽略 `config.local.json`，
+    `paths.example.json` 和 `paths.py` 却都写着「config.json 已被 .gitignore 排除」
+    —— **那是假的**。
+
+    光看文件名永远发现不了这类问题。所以 `audit_ship` 加了内容扫描。
+    """
+
+    def test_config_has_no_account_section(self):
+        """`config.json` 不该有 `account` 段 —— 那是 PII 的邀请函。"""
+        import json
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        cfg = root / "config.json"
+        if not cfg.exists():
+            self.skipTest("config.json 不在当前集合里")
+        d = json.loads(cfg.read_text(encoding="utf-8"))
+        self.assertNotIn("account", d,
+                         "config.json 里还有 account 段（昵称/UID）—— "
+                         "这个文件会进发布包")
+        self.assertIn("_account_note", d, "没告诉用户 PII 该放哪")
+
+    def test_paths_docs_are_honest(self):
+        """文档不能说「config.json 已被 .gitignore 排除」—— 那是假的。"""
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent.parent
+        for rel in ("paths.example.json", "tools/core/paths.py"):
+            p = root / rel
+            if not p.exists():
+                continue
+            txt = p.read_text(encoding="utf-8")
+            # 查**具体的那句假话**，不是「同时出现两个词」——
+            # 改好之后的句子也会同时提到 config.json 和 gitignore
+            # （「config.json 会进发布包，paths.json 才被 gitignore 排除」）。
+            for bad in ("config.json 已被 .gitignore 排除",
+                        "config.json（项目根目录，已 gitignore）"):
+                self.assertNotIn(bad, txt,
+                                 f"{rel} 还在说假话：{bad}")
+
+    def test_audit_ship_has_content_scan(self):
+        """`audit_ship` 要有**内容级**隐私扫描，不只是文件名黑名单。"""
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "audit_ship.py").read_text(encoding="utf-8")
+        self.assertIn("_RISKY", src, "没有内容级扫描的模式表")
+        self.assertIn("隐私内容", src, "没有「隐私内容」这一类失败")
+        # 至少要有 token 和 UID 两类
+        self.assertIn("gh", src.lower(), "没扫平台 token")
+        self.assertIn("UID", src, "没扫 UID")

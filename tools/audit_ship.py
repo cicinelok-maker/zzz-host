@@ -194,6 +194,49 @@ def main() -> int:
             if _re.search(pat, r):
                 hits.append((r, why))
                 break
+    # **内容级隐私扫描**（RT-16 / RT-18）。
+    #
+    # 原来只有「按文件名」的黑名单，而 RT-18 的问题是
+    # **一个正常的文件名里装着 PII**（`config.json` 里的 nickname/uid）。
+    # 光看文件名永远发现不了。
+    #
+    # 扫的是一小撮高危模式，宁少勿滥（避免把正常文档也判红）：
+    #   · 真实游戏 UID：9 位数字且不是全 0 / 全占位
+    #   · 平台 token：ghp_ / ghp_ 前缀 / sk- 开头
+    #   · 本机绝对路径带真实用户名
+    import re as _re2
+    _RISKY = [
+        (r"\b(?!0{9})[0-9]{9}\b", "像是游戏 UID（9 位数字）"),
+        (r"gh[pousr]_[A-Za-z0-9]{20,}", "GitHub token"),
+        (r"sk-[A-Za-z0-9]{20,}", "API key"),
+        (r"C:\\Users\\(?!cicin)[A-Za-z0-9_.-]{3,}", "别人的本机路径"),
+        (r'"nickname"\s*:\s*"(?![A-Z_]{4,})[^"]{2,}"', "真昵称"),
+    ]
+    _hits = []
+    for rel in files:
+        _p = tmp / rel
+        if not _p.exists() or _p.suffix.lower() not in (
+                ".md", ".json", ".py", ".txt", ".yml", ".yaml", ".ps1"):
+            continue
+        try:
+            _txt = _p.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for _pat, _why in _RISKY:
+            for _m in _re2.finditer(_pat, _txt):
+                _hits.append((str(rel), _why, _m.group(0)[:40]))
+    print()
+    print("⑥ 发布集里有没有隐私内容（按内容）")
+    print("-" * 74)
+    if _hits:
+        for _r, _w, _v in _hits[:12]:
+            print(f"  ✘ {_r}  {_w}：{_v!r}")
+        if len(_hits) > 12:
+            print(f"  … 还有 {len(_hits) - 12} 处")
+        fails.append("隐私内容")
+    else:
+        print(f"  ✔ {len(_RISKY)} 条隐私模式都没命中")
+
     print()
     print("⑤ 发布集里有没有敏感文件（按模式）")
     print("-" * 74)

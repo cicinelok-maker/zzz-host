@@ -1,14 +1,5 @@
 {
-  "_note": "成本/权重都是可校准的近似值：版本更新后按实测改这里，引擎只负责相对排序与电量预算。",
-  "account": {
-    "nickname": "YOUR_NICKNAME",
-    "uid": "000000000",
-    "stamina_cap": 240,
-    "battery_pack": 60,
-    "battery_stock": 12,
-    "daily_denny": 60000,
-    "denny_stock": 1200000
-  },
+  "_note": "成本/权重都是可校准的近似值：版本更新后按实测改这里，引擎只负责相对排序与电量预算。**账号信息（昵称/UID）不要写这里** —— 写 config.local.json（已 gitignore）。",
   "denny_per_stamina": 5000,
   "reset": {
     "daily_hour": 4,
@@ -171,5 +162,6 @@
     "skill_other": 10,
     "wengine": 60,
     "disc": 15
-  }
+  },
+  "_account_note": "账号信息放 config.local.json，不要放这个文件。这个文件会进发布包。"
 }

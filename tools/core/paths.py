@@ -17,7 +17,7 @@ ENV = {"PYTHONPATH": r"E:\\OneDragon\\...\\src;...\\plugins"}
      ONE_DRAGON_HOME    OneDragon 安装目录
      GAME_EXE           游戏 exe 路径
      ZZZ_PYTHON         OneDragon 的 python.exe
-② config.json（项目根目录，已 gitignore）
+② config.json 的 paths 段（**注意：这个文件会进发布包，别写本机路径**）
 ③ 自动探测（常见安装位置）
 ```
 

@@ -19,6 +19,7 @@ tools/feishu.py
 tools/feishu_img.py
 tools/feishu_conf.json
 paths.json
+# 账号信息（昵称/UID）和本机路径写这里 —— 这个文件不进发布包
 config.local.json
 .env
 .env.*

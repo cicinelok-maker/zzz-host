@@ -1,5 +1,5 @@
 {
-  "_说明": "复制成 config.json 并改成本机实际路径。config.json 已被 .gitignore 排除。",
+  "_说明": "复制成 paths.json 并改成本机实际路径。paths.json 已被 .gitignore 排除（真实的 config.json 会进发布包，不要往里写本机路径）。",
 
   "one_dragon_home": "E:\\OneDragon\\ZenlessZoneZero-OneDragon-v2.6.1-Full",
   "_one_dragon_home说明": "OneDragon 的安装目录（含 src 和 plugins 子目录）",
