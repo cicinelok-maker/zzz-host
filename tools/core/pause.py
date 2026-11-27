@@ -29,8 +29,21 @@ def save(agent: str, done: list[str], pending: list[str], reason: str) -> pathli
     return CKPT
 
 
-def load(agent: str = "") -> dict | None:
-    """读断点。给了 agent 就检查是不是同一个角色。"""
+def load(agent: str = "", today_only: bool = True) -> dict | None:
+    """读断点。给了 agent 就检查是不是同一个角色。
+
+    ## **断点只当天有效**（RT-10）
+
+    原来只校验角色，不校验日期。于是「昨天跑完一轮」留下的断点，
+    今天 `--run --resume` 会把**全部步骤当成已完成**跳过 —— 然后返回 0。
+
+    **看起来像跑完了，其实一步没做。**
+
+    而 `zzz_daily` 本来是「每日养成」工具，断点的语义就是「今天做到哪了」，
+    跨天继续是错的。
+
+    `today_only=False` 可以关掉这个检查（调试用）。
+    """
     if not CKPT.exists():
         return None
     try:
@@ -40,6 +53,13 @@ def load(agent: str = "") -> dict | None:
     if agent and d.get("agent") and d["agent"] != agent:
         print(f"  ⚠ 断点是「{d['agent']}」的，不是「{agent}」，忽略")
         return None
+    if today_only:
+        _ts = str(d.get("ts") or "")
+        _today = time.strftime("%Y-%m-%d")
+        if _ts[:10] != _today:
+            print(f"  ⚠ 断点是 {_ts[:10] or '（无日期）'} 的，不是今天（{_today}）—— 忽略")
+            print(f"     每日养成的断点只当天有效。要接着跑就重跑一遍（不加 --resume）")
+            return None
     return d
 
 

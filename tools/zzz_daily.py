@@ -735,6 +735,16 @@ def main() -> int:
     if args.run and _noprog["tried"] and _noprog["steps"] == _noprog["tried"]:
         print(f"  退出码 1：{_noprog['tried']} 个步骤全都「没做成事」")
         return 1
+    # **正常收尾要清断点**（RT-10）。
+    # 原来 `pause.clear()` 全仓零调用 —— 断点永久有效，
+    # 下次 --resume 会把全部步骤当「已完成」跳过然后返回 0。
+    # （日期校验是第二道闸，两道都要有。）
+    if args.run:
+        try:
+            from core import pause as _pause_clr
+            _pause_clr.clear()
+        except Exception:
+            pass
     return 0
 
 
@@ -757,7 +767,7 @@ if __name__ == "__main__":
                 if not _a.startswith("-"):
                     _agent = _a
                     break
-            _ck = pause.CKPT if hasattr(pause, "CKPT") else None
+            # **这里原来写的是 `pause`，而作用域里只有 `_pause`**（RT-10）——\n            # NameError 被外层 except 吞掉，只打印「存断点失败」。\n            # 而且 `_ck` 本身没被用到：断点是在步骤循环里存的。\n            _ck = _pause.CKPT if hasattr(_pause, "CKPT") else None
             print(f"  已完成的步骤不会重跑 —— 断点存在 state/run_checkpoint.json")
             print(f"  续跑：python tools/zzz_daily.py {_agent} --run --resume")
             print()
