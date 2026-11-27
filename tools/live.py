@@ -139,6 +139,52 @@ def grab(win) -> np.ndarray:
     return np.array(ImageGrab.grab(bbox=box, all_screens=True).convert("RGB"))[:, :, ::-1]
 
 
+def window_rect(hwnd: int) -> dict | None:
+    """**当场问系统窗口现在在哪**（E10）。
+
+    `find_window()` 一次调用返回的是**那一刻**的位置。而 `Input` 把
+    `win["x"] / win["y"]` 缓存成原点（`self.ox/oy`），之后所有点击都用它 ——
+    窗口一移动（用户拖了一下、游戏换了分辨率、重开了一下），
+    **点击就全部错位**，而且错得很安静：工具不报错，只是点到别的地方。
+
+    这个函数走一次 `GetWindowRect`，很便宜（不是枚举窗口）,
+    可以每次注入前调。
+
+    返回和 `find_window()` 同形的 dict（x/y/w/h），拿不到就 None。
+
+    ## **必须用客户区，不能用 GetWindowRect**
+
+    `find_window()` 算的是：
+
+        GetClientRect(hwnd)                -> w, h（客户区尺寸）
+        ClientToScreen(hwnd, POINT(0,0))   -> x, y（客户区左上角的屏幕坐标）
+
+    而 `GetWindowRect` 返回的是**含边框和标题栏**的外框。实测同一时刻：
+
+        find_window   x=965  y=122  w=1920 h=1080     <- 客户区（坐标换算的基准）
+        GetWindowRect x=952  y=64   w=1946 h=1151     <- 外框
+
+    差 (−13, −58) —— 拿外框去当原点，**每一次点击都会偏**，
+    而且不报错，只是点到别的地方。这里刻意用和 `find_window` 一样的算法。
+    """
+    if not hwnd:
+        return None
+    try:
+        r = wt.RECT()
+        if not user32.GetClientRect(wt.HWND(hwnd), ctypes.byref(r)):
+            return None
+        w = int(r.right - r.left)
+        h = int(r.bottom - r.top)
+        if w <= 0 or h <= 0:
+            return None
+        pt = wt.POINT(0, 0)
+        if not user32.ClientToScreen(wt.HWND(hwnd), ctypes.byref(pt)):
+            return None
+        return {"hwnd": hwnd, "x": int(pt.x), "y": int(pt.y), "w": w, "h": h}
+    except Exception:
+        return None
+
+
 def is_foreground(win) -> bool:
     """**只查，不抢**（D7）。
 

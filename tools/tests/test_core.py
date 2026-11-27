@@ -5621,3 +5621,81 @@ class TestAgentPositionsValidated(unittest.TestCase):
                              "文件不存在时不该打印东西")
         finally:
             PA.CACHE = orig
+
+
+class TestInputOriginRefresh(unittest.TestCase):
+    """`Input` 的原点必须每次注入前同步，不能永久缓存（E10）。
+
+    ## 原来
+
+    `Input.__init__` 里 `self.ox, self.oy = self.win["x"], self.win["y"]`
+    —— 只赋值一次，之后**永不刷新**。而所有点击都是 `self.ox + x`。
+
+    窗口一移动（用户拖了一下 / 游戏换了分辨率 / 重开了一下），
+    **点击就全部错位**，而且错得很安静：工具不报错，只是点到别的地方。
+
+    ## 还发现一个更危险的东西
+
+    我第一版用 `GetWindowRect` 实现「窗口现在在哪」。实测同一时刻：
+
+        find_window   x=965  y=122  w=1920 h=1080     <- 客户区
+        GetWindowRect x=952  y=64   w=1946 h=1151     <- 含边框/标题栏
+
+    差 (−13, −58)。拿外框当原点，**每次点击都偏**，而且代码看着很对。
+    `find_window` 用的是 `GetClientRect` + `ClientToScreen`，必须对齐。
+    """
+
+    def test_guard_syncs_origin(self):
+        import ast as _ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "core" / "input.py").read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        # _guard 里必须调 _sync_origin
+        for node in _ast.walk(tree):
+            if not (isinstance(node, _ast.FunctionDef) and node.name == "_guard"):
+                continue
+            body = _ast.unparse(node)
+            self.assertIn("_sync_origin", body,
+                          "_guard 里没有同步原点 —— 窗口移动后点击会错位")
+            return
+        self.fail("找不到 _guard")
+
+    def test_window_rect_matches_find_window(self):
+        """**不变量**：`window_rect(hwnd)` 必须和 `find_window()` 对齐。
+
+        这条是回归防线 —— 谁把 `window_rect` 改成 `GetWindowRect`
+        （看着更自然），这里会红。
+        """
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import live
+
+        w = live.find_window()
+        if not w:
+            self.skipTest("游戏没开")
+        r = live.window_rect(w["hwnd"])
+        self.assertIsNotNone(r, "window_rect 拿不到窗口矩形")
+        self.assertEqual((r["x"], r["y"], r["w"], r["h"]),
+                         (w["x"], w["y"], w["w"], w["h"]),
+                         "window_rect 和 find_window 不一致 —— "
+                         "多半是用了 GetWindowRect（含边框）而不是客户区")
+
+    def test_window_rect_uses_client_area(self):
+        """源码层面也要对：不能出现 `GetWindowRect`。"""
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "live.py").read_text(encoding="utf-8")
+        # **用 `_code()` 剥掉注释和 docstring** ——
+        # 这个函数的 docstring 里就写着 `GetWindowRect`（解释为什么不能用），
+        # 直接搜文本会抓到自己。
+        body = _code(src)
+        i = body.find("def window_rect")
+        self.assertGreater(i, -1)
+        j = body.find("def is_foreground", i)
+        seg = body[i:j if j > i else i + 2000]
+        self.assertIn("GetClientRect", seg, "没用 GetClientRect")
+        self.assertIn("ClientToScreen", seg, "没用 ClientToScreen")
+        self.assertNotIn("GetWindowRect", seg,
+                         "用了 GetWindowRect —— 会偏 (边框宽, 标题栏高)")

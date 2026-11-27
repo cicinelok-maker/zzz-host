@@ -190,10 +190,12 @@ class Input:
     所有等待时间都带 ±30% 随机抖动，更接近真人节奏，也避免固定间隔踩到动画节拍。
     """
 
-    def __init__(self, jitter: bool = True):
+    def __init__(self, jitter: bool = True, win: dict | None = None):
         self.jitter = jitter
         user32.SetProcessDPIAware()
-        self.win = live.find_window()
+        # **能共用就共用**（E10）：`Vision` 也调了一次 `find_window()`，
+        # 两边各拿一份快照 —— 如果中间窗口动过，两边的坐标基准就不一样。
+        self.win = win or live.find_window()
         if not self.win:
             raise RuntimeError("没找到游戏窗口")
         self.ox, self.oy = self.win["x"], self.win["y"]
@@ -216,6 +218,21 @@ class Input:
             self._pad_obj = vg.VX360Gamepad()
         return self._pad_obj
 
+    def _sync_origin(self) -> None:
+        """把原点刷新成窗口**当前**的位置（E10）。拿不到就保持原值。"""
+        try:
+            r = live.window_rect(self.hwnd)
+        except Exception:
+            return
+        if not r:
+            return
+        if (r["x"], r["y"]) != (self.ox, self.oy):
+            print(f"  （游戏窗口移动了：({self.ox},{self.oy}) -> ({r['x']},{r['y']})，已同步）")
+            self.ox, self.oy = r["x"], r["y"]
+        # 尺寸也一起更新 —— 坐标换算要按当前客户区算
+        self.win["x"], self.win["y"] = r["x"], r["y"]
+        self.win["w"], self.win["h"] = r["w"], r["h"]
+
     def _guard(self, what: str = "") -> None:
         """注入输入前确认游戏在前台。
 
@@ -225,6 +242,13 @@ class Input:
         **不静默跳过** —— 静默跳过会让脚本以为点过了，继续往下走，
         后面读画面全错，表现成「卡住」。
         """
+        # **每次注入前把原点同步到「窗口现在的位置」**（E10）。
+        #
+        # 原来 `self.ox/oy` 只在 `__init__` 里赋值一次，之后**永不刷新**。
+        # 窗口一移动，所有 `ox + x` 的点击都错位 —— 而且不报错。
+        # `GetWindowRect` 很便宜，放在这里没有性能顾虑。
+        self._sync_origin()
+
         if not self.guard or not self.hwnd:
             return
         if focus.is_active(self.hwnd):
