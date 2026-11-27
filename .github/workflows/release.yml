@@ -88,25 +88,47 @@ jobs:
             sys.exit(1)
           print("✔ 64 个角色数据完整")
 
-      # 发布包里不能有个人数据
+      # **扫「发布集」，不是扫整个工作区**（RT-16）。
+      #
+      # 原来用递归列目录的方式扫 —— 把 od_test/、MAINTENANCE.md、
+      # HANDOFF.md 全扫进去，而那些本来就不进 zip。
+      # 于是 `$bad.Count` 恒 > 0，**打 tag 发布必然在这一步失败**。
+      #
+      # 现在直接调 `publish_github.collect()` —— 和真正打包用的是**同一份清单**。
       - name: 确认没有个人数据
         shell: pwsh
         run: |
-          $bad = @()
-          Get-ChildItem -Recurse -File -Include *.py,*.md,*.json,*.ps1 |
-            Where-Object { $_.FullName -notmatch '\\\.git\\' } |
-            ForEach-Object {
-              $t = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-              if ($t -match 'cicin' -or $t -match 'cli_[a-zA-Z0-9]{12,}') {
-                $bad += $_.FullName
-              }
-            }
-          if ($bad.Count -gt 0) {
-            Write-Host "✘ 发现个人数据："
-            $bad | ForEach-Object { Write-Host "  $_" }
-            exit 1
-          }
-          Write-Host "✔ 没有个人数据"
+          python -c @"
+          import pathlib, sys
+          sys.path.insert(0, 'tools')
+          from publish_github import collect
+          root = pathlib.Path('.').resolve()
+          ME = 'ci' + 'cin'      # 拆开写：本文件自己会被扫到
+          bad = []
+          for f in collect(root):
+              rel = str(f).replace(chr(92), '/')
+              if rel.startswith('.github/'):
+                  continue        # 工作流文件里就有这个检查本身
+              p = root / f
+              if not p.exists():
+                  continue
+              try:
+                  t = p.read_text(encoding='utf-8', errors='replace')
+              except Exception:
+                  continue
+              import re as _re
+              # **查真的 app_id**（cli_ + 16 位十六进制），
+              # 不是查 'cli_' 三个字符 —— 那会把检测用的正则本身也扫进来。
+              _cli = _re.search(r'cli_[a-f0-9]{16,}', t)
+              if ME in t or _cli:
+                  bad.append(rel)
+          if bad:
+              print('找到个人数据：')
+              for b in bad:
+                  print('  ' + b)
+              sys.exit(1)
+          print('没有个人数据')
+          "@
 
   # ============================================================ 发布
   release:

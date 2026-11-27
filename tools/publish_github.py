@@ -83,6 +83,9 @@ IGN_FILES = [
     "DISC_CHAIN.md", "TASKS.md",
     # 开发日志（5000+ 行的教训总结）—— 给维护者看，不该塞进用户的 zip 里
     "MAINTENANCE.md",
+    # **交接文档里写满了本机绝对路径**（C:\Users\<名>\...）——  见 RT-16。
+    # 它是给「下一个接手的会话」看的，不是给最终用户的。
+    "HANDOFF.md",
 ]
 
 

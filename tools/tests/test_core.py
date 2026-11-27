@@ -4359,3 +4359,72 @@ class TestNoPiiInRelease(unittest.TestCase):
         # 至少要有 token 和 UID 两类
         self.assertIn("gh", src.lower(), "没扫平台 token")
         self.assertIn("UID", src, "没扫 UID")
+
+
+class TestReleaseWorkflowIsSane(unittest.TestCase):
+    """发布 workflow 不能**必然失败**，也不能有语法错（RT-16）。
+
+    ## 原来三处
+
+    ① 隐私检查用 `Get-ChildItem -Recurse` 扫**整个工作区** ——
+       把 `od_test/`、`MAINTENANCE.md`、`HANDOFF.md` 全扫进去，
+       而那些本来就不进 zip。于是 `$bad.Count` 恒 > 0，
+       **打 tag 发布必然在这一步失败**。
+
+    ② `unzip -l ... | grep ...` 后面缺 `|| {` —— bash 语法错，
+       那一段根本执行不到。
+
+    ③ 两条通道的排除规则相反：zip 的 `-x` 里没有 `MAINTENANCE.md`，
+       而 `publish_github.IGN_FILES` 有。
+    """
+
+    def _wf(self):
+        import pathlib
+        p = pathlib.Path(__file__).resolve().parent.parent.parent / ".github" / "workflows" / "release.yml"
+        if not p.exists():
+            return None
+        return p.read_text(encoding="utf-8")
+
+    def test_workflow_parses(self):
+        txt = self._wf()
+        if txt is None:
+            self.skipTest("release.yml 不在当前集合里")
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("没有 yaml 模块")
+        d = yaml.safe_load(txt)
+        self.assertIn("jobs", d)
+        self.assertIn("verify", d["jobs"])
+
+    def test_privacy_check_uses_release_set(self):
+        """隐私检查要扫 `collect()` 的发布集，不能扫整个工作区。"""
+        txt = self._wf()
+        if txt is None:
+            self.skipTest("release.yml 不在当前集合里")
+        self.assertIn("from publish_github import collect", txt,
+                      "隐私检查没用发布集的同一份清单")
+        self.assertNotIn("Get-ChildItem -Recurse", txt,
+                         "还在扫整个工作区 —— 必然误报")
+
+    def test_bash_brace_is_closed(self):
+        """`unzip -l ... | grep ...` 后面必须有 `|| {`。"""
+        txt = self._wf()
+        if txt is None:
+            self.skipTest("release.yml 不在当前集合里")
+        for line in txt.splitlines():
+            if "unzip -l" in line:
+                self.assertIn("|| {", line,
+                              f"这行缺 `|| {{` —— bash 语法错：{line.strip()[:70]}")
+                break
+        else:
+            self.fail("找不到 unzip -l 那一行")
+
+    def test_handoff_excluded_from_release(self):
+        """`HANDOFF.md` 写满本机路径，不能进发布集。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from publish_github import IGN_FILES
+        self.assertIn("HANDOFF.md", IGN_FILES,
+                      "HANDOFF.md 没被排除 —— 里面有 C:\\Users\\<名> 这种路径")
