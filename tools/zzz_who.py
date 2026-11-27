@@ -493,6 +493,18 @@ def main() -> int:
     if args.menu:
         return show_menu()
     if args.agent:
+        # **别静默忽略 --ready / --graduated**（BUG-056）。
+        #
+        # 这两个是「列名单」用的过滤器，和「看某个角色详情」是两条路。
+        # 原来的顺序是 `if args.agent: return detail(...)` 在前，
+        # 于是 `zzz_who 佩洛伊斯 --ready` 里那个 `--ready` **什么都不做** ——
+        # 用户以为加了过滤，其实看的是详情。
+        if args.ready or args.graduated:
+            _f = "--ready" if args.ready else "--graduated"
+            print(f"⚠ 指定了角色「{args.agent}」，{_f} 这个过滤不生效")
+            print(f"   要看名单：python tools/zzz_who.py {_f}")
+            print(f"   要看详情：python tools/zzz_who.py {args.agent}")
+            print()
         return detail(args.agent, force_unknown=args.force_unknown)
     only = "ready" if args.ready else ("graduated" if args.graduated else "")
     return list_all(only)

@@ -390,7 +390,23 @@ def main() -> int:
         print(f"✘ {_e}")
         return 3
 
+    # **校验 --skip 的键**（BUG-058）。
+    #
+    # 键是英文的（wengine/level/skill/core/disc/farm），
+    # 但原来不校验：写 `--skip 驱动盘` 也能过，然后
+    # `if "disc" not in skip` 仍为真 —— **一步都没跳过，而且没有任何提示**。
+    #
+    # 用户以为跳过了驱动盘，实际照跑。
+    _VALID_SKIP = {"wengine", "level", "skill", "core", "disc", "farm"}
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+    _bad = skip - _VALID_SKIP
+    if _bad:
+        print(f"  ✘ --skip 里有认不出的键：{sorted(_bad)}")
+        print(f"     可用的：{sorted(_VALID_SKIP)}")
+        print(f"     （用英文键，不是中文步骤名）")
+        return 2
+    if args.skip:
+        print(f"  将跳过：{sorted(skip)}")
 
     print(f"养成总控：{args.agent}")
     print(f"{'执行' if args.run else '计划'}模式")
