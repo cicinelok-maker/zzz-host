@@ -250,7 +250,18 @@ class Vision:
     def items(self, region: Region, *, scale: float = 1.0,
               use_cache: bool = True) -> list[dict]:
         """区域内 OCR。带缓存；scale>1 时先放大（小字更准，但不缓存）。"""
-        key = (region, round(scale, 2))
+        # **缓存键必须带帧号**（RT-23）。
+        #
+        # 原来 `key = (region, round(scale, 2))` —— 不含帧号。
+        # 于是 `frame()` 拿到**新一帧**之后，0.35 秒内 `items()` 返回的
+        # 还是**上一帧**的文字。
+        #
+        # 这不是理论问题：`_do()` 里刚点完一个按钮就 `items()` 判断结果，
+        # 拿到的是点击**之前**的画面 —— 结论是「没生效」，于是再点一次。
+        #
+        # 加上 `_frame_id` 之后，缓存只在**同一帧内**去重（多次读同一块区域），
+        # 跨帧立即失效。TTL 仍然保留：同一帧里重复读不必重新 OCR。
+        key = (self._frame_id, region, round(scale, 2))
         if use_cache:
             with self._lock:
                 hit = self._ocr_cache.get(key)

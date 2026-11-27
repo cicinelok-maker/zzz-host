@@ -297,13 +297,34 @@ def detect_by_fingerprint(vision) -> str | None:
 
 
 def detect(vision, candidates: list[Anchor] | None = None) -> Anchor | None:
-    """返回第一个匹配上的界面锚点。顺序即优先级。"""
+    """返回第一个匹配上的界面锚点。顺序即优先级。
+
+    ## **不匹配 ≠ 出错了**（RT-25）
+
+    原来这里 `except Exception: continue` —— 把「这个锚点不匹配」和
+    「读画面时崩了」混成同一个结果 `None`。
+
+    后果：OCR 挂了，`detect()` 照样返回 `None`，`describe()` 说「未知界面」，
+    然后状态机开始**盲按 ESC**。用户看到的是「工具在乱点」，
+    实际是 OCR 崩了 —— 而那个 `Exception` 被吞得一点痕迹都没有。
+
+    现在：区分两种结束。
+    · 全部锚点**正常判断但都不匹配** -> 返回 None（正常，就是未知界面）
+    · 有锚点**抛了异常**且一个都没匹配上 -> 把异常抛出去（说明系统有问题）
+    """
+    errs: list[Exception] = []
     for a in (candidates or ANCHORS):
         try:
             if a.match(vision):
                 return a
-        except Exception:
-            continue
+        except Exception as e:
+            errs.append(e)
+    if errs and len(errs) == len(candidates or ANCHORS):
+        # 每一个都炸了 —— 那不是「界面不认识」，是**判断本身坏了**
+        raise RuntimeError(
+            f"所有 {len(errs)} 个锚点判断都抛异常（{type(errs[0]).__name__}: "
+            f"{errs[0]}）—— 这多半是 OCR/截图出了问题，不是「未知界面」"
+        ) from errs[0]
     return None
 
 

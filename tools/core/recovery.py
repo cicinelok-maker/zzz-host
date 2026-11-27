@@ -23,23 +23,27 @@ class WatchdogTimeout(Exception):
     pass
 
 
-@contextlib.contextmanager
-def watchdog(seconds: float, label: str = ""):
-    """超时中断。Windows 上用线程定时器实现（signal.alarm 不可用）。"""
-    fired = {"v": False}
-
-    def _kill():
-        fired["v"] = True
-
-    t = threading.Timer(seconds, _kill)
-    t.daemon = True
-    t.start()
-    try:
-        yield fired
-    finally:
-        t.cancel()
-
-
+# **`watchdog()` 已经删掉了**（RT-24）。
+#
+# 它原来长这样：
+#
+#     @contextlib.contextmanager
+#     def watchdog(seconds, label=""):
+#         """超时中断。Windows 上用线程定时器实现。"""
+#         fired = {"v": False}
+#         def _kill(): fired["v"] = True
+#         t = threading.Timer(seconds, _kill); t.start()
+#         try: yield fired
+#         finally: t.cancel()
+#
+# **名字和 docstring 都说「超时中断」，实际只是设了一个标志位。**
+# Python 的线程定时器**打断不了**正在阻塞的调用（OCR、点击、等窗口），
+# 而全仓**没有任何地方检查 `fired["v"]`** —— 所以它连「标记」都没起作用。
+#
+# 留着的害处：看到 `with watchdog(60):` 会以为这里有超时保护，
+# 实际上什么保护都没有。**一个让人误以为安全的东西，比没有更糟。**
+#
+# 真要超时，得在**等待循环内部**判时间（`wait_for(..., timeout=)` 就是那样做的）。
 def reset_to_world(ui, limit: int = 12) -> bool:
     """把界面无脑退回大世界。
 
@@ -121,7 +125,23 @@ def reset_to_world(ui, limit: int = 12) -> bool:
 
 def guard(fn: Callable, *, retries: int = 3, ui=None,
           label: str = "", on_fail_reset: bool = True) -> bool:
-    """执行动作，失败重试；连续失败则复位。返回是否最终成功。"""
+    """执行动作，失败重试；连续失败则复位。返回是否最终成功。
+
+    ## **目前没有调用方**（RT-24）
+
+    这是个能用的实现（重试 + 复位 + 记日志），但全仓**一处都没调**。
+    审计把它和 `watchdog()` 一起列为「空壳且零调用」—— 对
+    `watchdog()` 它是准确的（已删），对这里只对了一半：
+    **实现是真的，只是没接上**。
+
+    想用的时候：套在「一个动作 + 一次校验」外面，比如
+
+        ok = guard(lambda: ui.click_text("确认", R) and vs.has(R, "已确认"),
+                   retries=2, ui=ui, label="点确认")
+
+    注意它会**在连续失败后调 `reset_to_world()`** ——
+    在「不该退出当前界面」的流程里要传 `on_fail_reset=False`。
+    """
     for i in range(retries):
         try:
             if fn():

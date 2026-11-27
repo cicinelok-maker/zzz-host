@@ -7226,3 +7226,150 @@ class TestShortNameDoesNotMatchEveryone(unittest.TestCase):
         from core.agent_cfg import resolve_agent
         self.assertEqual(resolve_agent("丽那"), "丽娜")
         self.assertEqual(resolve_agent("11号"), "11号")
+
+
+class TestOcrCacheIsPerFrame(unittest.TestCase):
+    """OCR 缓存键必须带**帧号**（RT-23）。
+
+    ## 原来
+
+    ```python
+    key = (region, round(scale, 2))
+    ```
+
+    不含帧号。于是 `frame()` 拿到**新一帧**之后，0.35 秒内 `items()`
+    返回的还是**上一帧**的文字。
+
+    这不是理论问题：`_do()` 里刚点完一个按钮就 `items()` 判结果，
+    拿到的是点击**之前**的画面 —— 结论是「没生效」，于是再点一次。
+
+    ## 实测（修后）
+
+        同一帧读两次 -> 第 1 次 / 第 1 次   OCR 实际调用 1 次（走缓存）
+        换帧后再读   -> 第 2 次            OCR 累计 2 次（重新识别）
+    """
+
+    def _vision(self):
+        import sys
+        import pathlib
+        import threading
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import vision as V
+        vs = V.Vision.__new__(V.Vision)
+        vs._ocr_cache = {}
+        vs._ocr_ttl = 5.0
+        vs._lock = threading.Lock()
+        vs._frame_id = 1
+        vs.crop = lambda region: "img"
+        calls = {"n": 0}
+
+        def fake_raw(sub, scale=1.0):
+            calls["n"] += 1
+            n = calls["n"]
+
+            class R:
+                data = f"第{n}次"
+
+                class center:
+                    x = 10
+                    y = 10
+            return [R()]
+        vs._ocr_raw = fake_raw
+        return vs, calls
+
+    def test_same_frame_uses_cache(self):
+        vs, calls = self._vision()
+        a = vs.items((0, 0, 100, 100))
+        b = vs.items((0, 0, 100, 100))
+        self.assertEqual(a[0]["text"], b[0]["text"])
+        self.assertEqual(calls["n"], 1, "同一帧应该只 OCR 一次")
+
+    def test_new_frame_invalidates(self):
+        vs, calls = self._vision()
+        a = vs.items((0, 0, 100, 100))
+        vs._frame_id += 1
+        c = vs.items((0, 0, 100, 100))
+        self.assertNotEqual(a[0]["text"], c[0]["text"],
+                            "换帧后还返回旧 OCR —— 会拿点击前的画面判结果")
+        self.assertEqual(calls["n"], 2, "换帧后应该重新 OCR")
+
+
+class TestAllAnchorsThrowingIsLoud(unittest.TestCase):
+    """每个锚点都抛异常时不能静默返回 None（RT-25）。
+
+    ## 原来
+
+    ```python
+    for a in (candidates or ANCHORS):
+        try:
+            if a.match(vision): return a
+        except Exception:
+            continue
+    return None
+    ```
+
+    「这个锚点不匹配」和「读画面时崩了」混成同一个 `None`。
+    于是 OCR 挂了 -> `describe()` 说「未知界面」-> 状态机开始**盲按 ESC**。
+    用户看到「工具在乱点」，实际是 OCR 崩了，异常被吞得没痕迹。
+    """
+
+    def test_all_throwing_raises(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors as A
+
+        class Bad:
+            def match(self, vision):
+                raise RuntimeError("模拟 OCR 崩了")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            A.detect(object(), candidates=[Bad(), Bad()])
+        self.assertIn("OCR", str(ctx.exception),
+                      "报错没说清是 OCR/截图的问题")
+
+    def test_none_matching_is_still_none(self):
+        """都不匹配（但没抛）仍然是 None —— 那是正常的「未知界面」。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import anchors as A
+
+        class No:
+            def match(self, vision):
+                return False
+
+        self.assertIsNone(A.detect(object(), candidates=[No(), No()]))
+
+
+class TestWatchdogIsGone(unittest.TestCase):
+    """`watchdog()` 删掉了（RT-24）。
+
+    它原来的 docstring 说「超时中断」，实际只是设了一个标志位 ——
+    Python 的线程定时器**打断不了**正在阻塞的调用，而全仓
+    **没有任何地方检查那个标志**。
+
+    留着的害处：看到 `with watchdog(60):` 会以为这里有超时保护，
+    实际上什么保护都没有。**一个让人误以为安全的东西，比没有更糟。**
+
+    真要超时，得在等待循环内部判时间（`wait_for(..., timeout=)` 就是那样）。
+    """
+
+    def test_watchdog_removed(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import recovery as R
+        self.assertFalse(hasattr(R, "watchdog"),
+                         "watchdog 又回来了？它做不到名字承诺的事")
+
+    def test_guard_still_there(self):
+        """`guard()` 是**真实现**，只是没接上 —— 留着。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import recovery as R
+        self.assertTrue(hasattr(R, "guard"))
+        doc = (R.guard.__doc__ or "")
+        self.assertIn("没有调用方", doc,
+                      "guard 的 docstring 应该说清「目前没接上」")
