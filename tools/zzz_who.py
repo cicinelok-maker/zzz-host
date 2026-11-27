@@ -312,9 +312,39 @@ def _load_progress(agent: str) -> list[dict]:
     """读 disc_progress.json 里这个角色的记录，按时间排序。"""
     if not PROGRESS.exists():
         return []
+    _txt = PROGRESS.read_text(encoding="utf-8", errors="replace")
+    if not _txt.strip():
+        return []
     try:
-        d = json.loads(PROGRESS.read_text(encoding="utf-8"))
-    except Exception:
+        d = json.loads(_txt)
+    except Exception as e:
+        # **坏文件要说一声**（BUG-067 的同一个毛病）。
+        print(f"  ⚠ {PROGRESS.name} 读不了（{e}）—— 历史显示为空")
+        return []
+
+    # **`d` 可能不是 list**（BUG-076）。
+    #
+    # `disc_progress.json` 的约定是 list，但历史上/别处写过 dict 形态。
+    # 而 `for x in d` 在 dict 上迭代的是**键字符串** ——
+    # `isinstance(x, dict)` 全假 → rows 恒空 → 历史**永远显示「还没有记录」**。
+    # 用户只会觉得「我的记录丢了」。
+    if isinstance(d, dict):
+        # 常见形状：{"records": [...]} / {"<角色名>": [...]} / 单条记录
+        for _key in ("records", "history", "items", "data"):
+            if isinstance(d.get(_key), list):
+                d = d[_key]
+                break
+        else:
+            _v = d.get(agent)
+            if isinstance(_v, list):
+                d = _v
+            elif "agent" in d or "质量分" in d:
+                d = [d]          # 整个文件就是一条记录
+            else:
+                print(f"  ⚠ {PROGRESS.name} 是对象而不是列表，认不出记录在哪 —— 历史为空")
+                return []
+    if not isinstance(d, list):
+        print(f"  ⚠ {PROGRESS.name} 的内容是 {type(d).__name__}，不是列表 —— 历史为空")
         return []
     rows = [x for x in d if isinstance(x, dict) and x.get("agent") == agent]
     rows.sort(key=lambda x: str(x.get("ts") or ""))

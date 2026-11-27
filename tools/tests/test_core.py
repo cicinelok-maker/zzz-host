@@ -3128,3 +3128,76 @@ class TestDestructiveFailureExitCode(unittest.TestCase):
         around = src[max(0, i - 200):i + 60]
         self.assertIn("args.run", around,
                       "退出 1 的条件没加 args.run —— 计划模式会被误判成失败")
+
+
+class TestProgressShapes(unittest.TestCase):
+    """`disc_progress.json` 的多种形态都要能读（BUG-076 / BUG-067）。
+
+    ## BUG-076 dict 形态下历史恒空
+
+    ```python
+    d = json.loads(...)
+    rows = [x for x in d if isinstance(x, dict) and x.get("agent") == agent]
+    ```
+
+    约定是 list，但历史上/别处写过 dict 形态。而 `for x in d` 在 dict 上
+    迭代的是**键字符串** —— `isinstance(x, dict)` 全假 → rows 恒空 →
+    历史**永远显示「还没有记录」**。用户只会觉得「我的记录丢了」。
+
+    ## BUG-067 坏 JSON 静默当空
+
+    `except Exception: return []` —— 文件被写到一半就中断 = 历史凭空消失，
+    而且没有任何输出。
+
+    （`zzz_disc_daily` 那边已经加了 `.corrupt` 备份 + 提示，这里是读侧。）
+    """
+
+    def _load(self, payload):
+        import json as _j
+        import pathlib
+        import sys
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_who as W
+        rec = {"agent": "测试角色", "ts": "2026-11-27 10:00:00",
+               "质量分": 20.5, "蓝条": 10}
+        if payload is None:
+            data = _j.dumps([rec], ensure_ascii=False)
+        elif payload == "BAD":
+            data = "{不是合法 json"
+        elif payload == "records":
+            data = _j.dumps({"records": [rec]}, ensure_ascii=False)
+        elif payload == "byname":
+            data = _j.dumps({"测试角色": [rec]}, ensure_ascii=False)
+        elif payload == "single":
+            data = _j.dumps(rec, ensure_ascii=False)
+        else:
+            data = _j.dumps(payload, ensure_ascii=False)
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "p.json"
+        tmp.write_text(data, encoding="utf-8")
+        orig = W.PROGRESS
+        try:
+            W.PROGRESS = tmp
+            import io, contextlib
+            with contextlib.redirect_stdout(io.StringIO()):
+                return W._load_progress("测试角色")
+        finally:
+            W.PROGRESS = orig
+
+    def test_list_shape(self):
+        self.assertEqual(len(self._load(None)), 1)
+
+    def test_dict_with_records_key(self):
+        self.assertEqual(len(self._load("records")), 1,
+                         "dict + records 形态读不出来")
+
+    def test_dict_keyed_by_agent(self):
+        self.assertEqual(len(self._load("byname")), 1,
+                         "dict + 角色名 形态读不出来")
+
+    def test_single_record_dict(self):
+        self.assertEqual(len(self._load("single")), 1,
+                         "整个文件就是一条记录时读不出来")
+
+    def test_bad_json_returns_empty(self):
+        self.assertEqual(self._load("BAD"), [])
