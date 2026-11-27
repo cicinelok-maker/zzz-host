@@ -18,6 +18,7 @@
 return 的数字、写的文件。
 """
 from __future__ import annotations
+from core import atomic as _aw
 
 import ast
 import json
@@ -302,8 +303,7 @@ manifest = {
 }
 
 out = BASE / "tools.json"
-out.write_text(json.dumps(manifest, ensure_ascii=False, indent=1),
-               encoding="utf-8")
+_aw.write_json(out, manifest, indent=1)
 print(f"已生成 tools.json")
 print(f"  工具数：{len(tools)}")
 print(f"  有 --json：{sum(1 for t in tools if t['json_output'])}")

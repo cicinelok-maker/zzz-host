@@ -36,6 +36,7 @@ HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
+from core import atomic as _aw
 from core import Vision,Input,Ui,Journal,anchors# noqa: E402
 from core.machine import Machine# noqa: E402
 from pick_agent import select_agent# noqa: E402
@@ -337,8 +338,7 @@ def main() -> int:
         args.out = str(BASE / "state" / f"core_status_{args.agent}.json")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     from core.state import stamp as _stamp
-    Path(args.out).write_text(json.dumps(_stamp(data), ensure_ascii=False, indent=2),
-                              encoding="utf-8")
+    _aw.write_json(Path(args.out), _stamp(data))
     print(f"\n已写入 {args.out}")
     if args.cmd == "upgrade":
         rep = do_upgrade(ui, m, args.agent, getattr(args, "times", 1) or 1)

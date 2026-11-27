@@ -32,6 +32,7 @@
 按 y 聚类成行，每行取「最左的中文」「两个数值」。
 """
 from __future__ import annotations
+from core import atomic as _aw
 
 import re
 import sys
@@ -208,9 +209,8 @@ def main() -> int:
 
     out = BASE / "state" / "guide_stats.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"角色": zzz_guide.current_agent(ui),
-                               "属性": gaps, "驱动盘": discs},
-                              ensure_ascii=False, indent=2), encoding="utf-8")
+    _aw.write_json(out, {"角色": zzz_guide.current_agent(ui),
+                               "属性": gaps, "驱动盘": discs})
     print(f"\n已写入 {out}")
     return 0
 

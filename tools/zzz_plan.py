@@ -37,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
+from core import atomic as _aw
 from core import Vision,Input,Ui,Journal# noqa: E402
 from core.machine import Machine# noqa: E402
 from pick_agent import select_agent# noqa: E402
@@ -358,9 +359,7 @@ def main() -> int:
     _plan_doc = _stamp({"agent": args.agent, "main_set": main_set,
                         "sec_set": sec_set, "main_count": main_count,
                         "plan": plan})
-    Path(args.out).write_text(
-        json.dumps(_plan_doc, ensure_ascii=False, indent=2),
-        encoding="utf-8")
+    _aw.write_json(Path(args.out), _plan_doc)
     print(f"\n计划已写入 {args.out}")
 
     todo = [p for p in plan if p.get("action") == "equip"]

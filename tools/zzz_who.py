@@ -35,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
+from core import atomic as _aw
 from core.agent_cfg import cfg_of, known, element_of  # noqa: E402
 from core.disc_cfg import THRESHOLDS  # noqa: E402
 
@@ -244,8 +245,7 @@ def do_scan() -> int:
         return 4
 
     STATE.mkdir(parents=True, exist_ok=True)
-    ROSTER.write_text(json.dumps(roster, ensure_ascii=False, indent=1),
-                      encoding="utf-8")
+    _aw.write_json(ROSTER, roster, indent=1)
     print(f"✔ 扫到 {len(roster)} 个角色，已写入 state/agent_roster.json")
     print()
     return show_menu()

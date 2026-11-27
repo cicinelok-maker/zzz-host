@@ -37,6 +37,7 @@ python tools/zzz_guide_agents.py --diff     # 和 roster 对比，看缺谁
 · **可以直接点名字切角色**，不用箭头循环、不会进空槽
 """
 from __future__ import annotations
+from core import atomic as _aw
 
 import argparse
 import json
@@ -155,8 +156,7 @@ def main() -> int:
         print(f"  {i:>2}. {n}")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({"agents": names}, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
+    _aw.write_json(OUT, {"agents": names})
     print()
     print(f"已写入 {OUT}")
 

@@ -10,6 +10,7 @@ import pathlib
 import sys
 import time
 
+from core import atomic as _aw
 from . import focus
 
 BASE = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -19,13 +20,13 @@ CKPT = BASE / "state" / "run_checkpoint.json"
 def save(agent: str, done: list[str], pending: list[str], reason: str) -> pathlib.Path:
     """存断点。"""
     CKPT.parent.mkdir(parents=True, exist_ok=True)
-    CKPT.write_text(json.dumps({
+    _aw.write_json(CKPT, {
         "agent": agent,
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "done": list(done),
         "pending": list(pending),
         "reason": reason,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    })
     return CKPT
 
 

@@ -28,6 +28,7 @@
 所以库存只有一份，缺口要**按角色汇总后减去库存**。
 """
 from __future__ import annotations
+from core import atomic as _aw
 
 import json
 import pathlib

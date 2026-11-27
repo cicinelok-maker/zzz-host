@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
+from core import atomic as _aw
 from core.game_cfg import DEFAULT_AGENT as _DEFAULT_AGENT
 
 from core import Vision,Input,Ui,Journal# noqa: E402
@@ -166,8 +167,7 @@ def main() -> int:
             inp.wheel(-2, wait=0.5)
         print(f"{slot} 号位：读到 {got} 块（{page + 1} 屏）")
 
-    Path(args.out).write_text(
-        json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    _aw.write_json(Path(args.out), out, indent=1)
     print(f"\n共 {len(out)} 块，已写入 {args.out}")
     from collections import Counter
     c = Counter(x["slot"] for x in out)

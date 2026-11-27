@@ -28,6 +28,7 @@
 这样用户只需填「和默认不一样的那几个」。
 """
 from __future__ import annotations
+from core import atomic as _aw
 
 import json
 import pathlib
@@ -78,8 +79,7 @@ def ensure_file() -> pathlib.Path:
     """确保覆盖层文件存在（带模板），返回路径。"""
     if not LOCAL.exists():
         LOCAL.parent.mkdir(parents=True, exist_ok=True)
-        LOCAL.write_text(json.dumps(_TEMPLATE, ensure_ascii=False, indent=2),
-                         encoding="utf-8")
+        _aw.write_json(LOCAL, _TEMPLATE)
     return LOCAL
 
 
@@ -92,7 +92,7 @@ def add(name: str, cfg: dict) -> str:
     merged.update(cfg)
     chars[name] = merged
     LOCAL.parent.mkdir(parents=True, exist_ok=True)
-    LOCAL.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    _aw.write_json(LOCAL, d)
     return f"已写入 {LOCAL}（{name}：{', '.join(cfg.keys())}）"
 
 

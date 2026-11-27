@@ -12,6 +12,7 @@
     prog.save()
 """
 from __future__ import annotations
+from core import atomic as _aw
 
 import json
 import time
@@ -73,9 +74,7 @@ class Progress:
             return
         self.data["updated"] = self._now()
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-        tmp.replace(self.path)
+        _aw.write_json(self.path, self.data)
 
     # ---------- 展示 ----------
     def summary(self) -> str:

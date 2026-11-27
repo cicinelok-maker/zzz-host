@@ -14,6 +14,7 @@
     词条数量      2 / 3 / 4
     排除筛选      开关
 """
+from core import atomic as _aw
 import json
 import sys
 from pathlib import Path
@@ -82,11 +83,11 @@ def main() -> int:
         print(f"  有效勾选：{' / '.join(good)}{flag}")
         print(f"  次选勾选：{' / '.join(half) or '（无）'}")
 
-    OUT.write_text(json.dumps({
+    _aw.write_json(OUT, {
         "面板选项": STAT_OPTIONS_HINT,
         "别名": ALIAS,
         "角色": out,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    })
     print(f"\n已写入 {OUT}")
     return 0
 

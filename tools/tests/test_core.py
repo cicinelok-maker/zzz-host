@@ -4967,3 +4967,117 @@ class TestInventoryCorruptFile(unittest.TestCase):
                              "文件不存在时不该打印任何东西")
         finally:
             IV.STORE = orig
+
+
+class TestNoBareJsonWrite(unittest.TestCase):
+    """所有 JSON 写盘都必须走原子写（E6）。
+
+    ## 原来
+
+    `X.write_text(json.dumps(...), encoding="utf-8")` 散布在各处 ——
+    看起来是「写完了」，但**写到一半被杀就是半截 JSON**，
+    而读侧很多地方又是 `except: return {}` —— 一个半截文件就能让整份数据消失。
+
+    `core/atomic.py` 早就有了（tmp + `os.replace`），但只被 6 处调用。
+
+    现在 14 处全改成 `_aw.write_json(...)`。
+    """
+
+    def test_no_bare_json_write(self):
+        import ast as _ast
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for f in sorted(root.rglob("*.py")):
+            if "_legacy" in str(f) or f.name.startswith("test"):
+                continue
+            try:
+                tree = _ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in _ast.walk(tree):
+                if not isinstance(node, _ast.Call):
+                    continue
+                if getattr(node.func, "attr", None) != "write_text":
+                    continue
+                if not node.args:
+                    continue
+                if "json.dump" in _ast.unparse(node.args[0]):
+                    bad.append(f"{f.name}:{node.lineno}")
+        self.assertEqual(bad, [],
+                         f"这些地方还是裸写 JSON（半截就丢数据）：{bad}")
+
+
+class TestModuleImportsAreReal(unittest.TestCase):
+    """`compile()` 过不代表 import 真的执行了（我差点栽在这）。
+
+    ## 背景
+
+    批量把 `write_text(json...)` 改成 `_aw.write_json(...)` 之后，
+    我插 `from core import atomic as _aw` 的位置算错了 ——
+    插进了**模块 docstring 里**。
+
+    `compile()` **照样通过**（那在字符串里，语法没问题），
+    但模块 import 时 `_aw` 根本不存在 ——
+    `gen_manifest` 直接 `NameError`，另外 5 个模块一旦走到写盘就炸。
+
+    -> 这条测试：**凡是用了 `_aw` 的模块，import 之后必须真的有 `_aw`**。
+    """
+
+    def test_aw_is_importable_everywhere(self):
+        import ast as _ast
+        import importlib
+        import sys
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root))
+        bad = []
+        for f in sorted(root.rglob("*.py")):
+            if "_legacy" in str(f) or f.name.startswith("test"):
+                continue
+            txt = f.read_text(encoding="utf-8")
+            if "_aw.write_json" not in txt:
+                continue
+            # 算模块名
+            rel = f.relative_to(root).with_suffix("")
+            parts = list(rel.parts)
+            if parts[-1] == "__init__":
+                parts = parts[:-1]
+            if not parts:
+                continue
+            modname = ".".join(parts)
+            if modname.startswith("tools."):
+                modname = modname[6:]
+            try:
+                mod = importlib.import_module(modname)
+            except Exception as e:
+                bad.append(f"{modname} import 失败：{type(e).__name__}: {e}")
+                continue
+            # **两种写法都合法**：
+            #   ① 模块级 `from core import atomic as _aw`
+            #   ② 函数内 `from . import atomic as _aw`（farm_log 就是这种）
+            # 只要 AST 里能找到这个导入，且**不在 docstring 里**就行。
+            tree = _ast.parse(txt)
+
+            # **看 names，不是看 module**：
+            #   `from core import atomic as _aw`  -> module="core", names 里有 atomic
+            #   `from . import atomic as _aw`     -> module="",     names 里有 atomic
+            def _imports_atomic(nodes):
+                for n in nodes:
+                    if not isinstance(n, _ast.ImportFrom):
+                        continue
+                    for a in n.names:
+                        if a.name == "atomic":
+                            return True
+                return False
+
+            has_import = _imports_atomic(_ast.walk(tree))
+            if not has_import:
+                bad.append(f"{modname} 用了 _aw 但没有任何 atomic 导入")
+                continue
+            # **模块级**有导入 -> import 之后就必须真的有 `_aw`。
+            # 这条专门抓「import 被插进 docstring」：那行在字符串里，
+            # 不在 `tree.body` 而是文本，所以不走这里 —— 但模块不会有 `_aw`。
+            if _imports_atomic(tree.body) and not hasattr(mod, "_aw"):
+                bad.append(f"{modname}: 模块级导入了 atomic，但 import 后没有 `_aw`")
+        self.assertEqual(bad, [], "\n  ".join(bad))

@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
+from core import atomic as _aw
 from core import Vision, Input, Ui, anchors  # noqa: E402
 from core.machine import Machine  # noqa: E402
 from pick_agent import reset_to_world  # noqa: E402
@@ -156,8 +157,7 @@ def _write_cache(data: dict) -> None:
     try:
         d = BASE / "state"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "resource_cache.json").write_text(
-            json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+        _aw.write_json(d / "resource_cache.json", out, indent=1)
     except Exception:
         pass
 
