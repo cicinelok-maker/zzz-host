@@ -159,6 +159,14 @@ def one_dragon_env() -> dict:
     }
     od_home = c.get("od_home") or ""
     if od_home:
+# **`OD_HOME` 是 zzz-host 自己的变量，不是 OneDragon 的**（F4）。
+#
+# OneDragon 全仓**没有任何地方读 `OD_HOME`** —— 它靠自己的
+# 安装位置找资源。这里设它是给**我们自己**的
+# `od_material_farm.py` 用（`one_dragon_env().get("OD_HOME")`）。
+#
+# 留着这个名字是因为 `run_feishu_agent.ps1` 里已经这么写了，
+# 改名字会让那份脚本失效。但**别误以为设了它就影响 OneDragon 的行为**。
         env["OD_HOME"] = od_home
     return env
 

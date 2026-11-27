@@ -331,27 +331,48 @@ def enter_loop(win, ocr, tries: int = 4, gap: float = 10.0) -> int:
     print("4 次之后仍在标题页")
     return 5
 def main() -> int:
-    try:
-        from agent_growth.core import preflight
-    except ImportError:
-        print("✘ 这个功能需要 agent_growth / pyautogui，发布版没有")
-        print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
-        return 2
-    ok, lines = preflight.report()
-    print("\n".join(lines))
-    if not ok:
-        print("\n✖ 前置没满足，不测了（上面的 → 就是修法）")
-        return 6
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--probe", action="store_true")
+    ap.add_argument("--probe", action="store_true",
+                    help="【仅开发版】需要 agent_growth，发布集里没有")
     ap.add_argument("--enter", action="store_true")
-    ap.add_argument("--enter-loop", action="store_true")
+    ap.add_argument("--enter-loop", action="store_true",
+                    help="【仅开发版】需要 agent_growth，发布集里没有")
     ap.add_argument("--click-text")
-    ap.add_argument("--click-tpl")
+    ap.add_argument("--click-tpl",
+                    help="【仅开发版】模板匹配，需要 agent_growth")
     ap.add_argument("--shot", default="live")
     ap.add_argument("--wait", type=float, default=1.2)
     args = ap.parse_args()
+
+    # **前置检查放到 argparse 之后**（F5）。
+    #
+    # 原来 `main()` 第一件事就是 `from agent_growth.core import preflight`，
+    # 而 `agent_growth` **不在发布集里** —— 于是发布版里：
+    #
+    #     python tools/live.py --help
+    #     ✘ 这个功能需要 agent_growth / pyautogui，发布版没有
+    #     （exit 2）
+    #
+    # **连 `--help` 都看不了。** 而 `--help` 是不该需要任何依赖的。
+    #
+    # 现在：先解析参数（`--help` 正常退出），再对**用到 agent_growth 的那些
+    # 选项**做检查。
+    _need_dev = (args.probe or args.enter_loop or args.click_tpl)
+    if _need_dev:
+        try:
+            from agent_growth.core import preflight
+        except ImportError:
+            print("✘ 这些选项需要 agent_growth / pyautogui，**发布版没有**")
+            print("   --probe / --enter-loop / --click-tpl 是仅开发版的")
+            print("   发布集里能用的：--enter / --click-text / --shot / --wait")
+            print("   本地开发才有：pip install pyautogui + od_plugin/agent_growth")
+            return 2
+        ok, lines = preflight.report()
+        print("\n".join(lines))
+        if not ok:
+            print("\n✖ 前置没满足，不测了（上面的 → 就是修法）")
+            return 6
 
     win = find_window()
     if not win:

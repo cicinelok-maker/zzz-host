@@ -132,9 +132,15 @@
   {
    "name": "gap_analysis",
    "cmd": "python tools/gap_analysis.py",
-   "args": [],
+   "args": [
+    {
+     "pos": "agent"
+    }
+   ],
    "json_output": false,
-   "exit_codes": [],
+   "exit_codes": [
+    0
+   ],
    "purpose": "分析距离小毕业还差多少，差在哪个位号",
    "outputs": [],
    "requires": [],

@@ -602,3 +602,45 @@ python tools/zzz_daily.py 佩洛伊斯 --run      # 2. 真跑一轮
 ```
 
 约 100 电量。能同时验证：状态机导航、点击落点、材料/电量消耗、退出码。
+
+---
+
+## 十三、`--help` 跑不了的工具（10 个，同一个病）
+
+**病**：参数解析之前就干活 —— 连游戏 / 读运行时文件 / 跑全套检查。
+于是 `python tools/xxx.py --help` 要么超时、要么报「还没有数据」然后 exit 2。
+
+**为什么重要**：`--help` 是用户第一次接触一个工具时**唯一能安全运行**的东西。
+它挂了，等于这个工具没法自助排查。
+
+**清单**（全仓里能跑的标 ✅，子集里才挂的标 ⚠）：
+
+| 工具 | 现象 |
+|---|---|
+| `audit_ship.py` | 直接跑全套，不看 `--help` |
+| `audit_lessons.py` | 同上 |
+| `audit_slim.py` | 同上 |
+| `audit_fresh.py` | 同上 |
+| `feishu_img.py` | 先初始化客户端 |
+| `zzz_guide_max.py` | 先连游戏 |
+| `zzz_guide_plan.py` | 先连游戏 |
+| `zzz_guide_stats.py` | 先连游戏 |
+| `explain_crit.py` ⚠ | 先读 `od_test/discs_v2.json` |
+| `show_discs_v2.py` ⚠ | 同上 |
+
+**已经修好的两个**：
+
+* `live.py`（F5）—— preflight 移到 argparse 之后
+* `gap_analysis.py`（E15）—— 加 `main()` + argparse + `__main__` 守卫
+
+**改法**：把 `argparse` 提到最前面，`--help` 直接退出；所有初始化放在
+`args = ap.parse_args()` 之后。
+
+**为什么没有测试守着**：我写过一个「所有工具 `--help` 必须 exit 0」的测试，
+但 `audit_ship` 会在**发布集子集**里重跑 —— 那个副本没有 `od_test/` / `state/`，
+于是 `explain_crit` / `show_discs_v2` 必然挂，**发布闸门永远红**。
+
+> 一条在发布集里必然失败的测试，**比没有测试更糟** —— 它挡的是发布，
+> 而不是那个缺陷。
+
+所以这条记在这里，等有功夫按上面的改法逐个修。修完把这张表划掉。

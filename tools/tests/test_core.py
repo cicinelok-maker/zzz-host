@@ -6754,3 +6754,5 @@ class TestActionNHonored(unittest.TestCase):
         from core.machine import Action
         names = {f.name for f in dataclasses.fields(Action)}
         self.assertIn("required", names, "Action 没有 required 字段")
+
+
