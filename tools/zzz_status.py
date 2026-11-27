@@ -18,6 +18,10 @@ HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
 
+# **模块级导入**（E16）：main() 里第 219 行原来有个同名的**局部**导入，
+# 于是 `_DEFAULT_AGENT` 在 main() 里是局部变量 —— 第 61 行用它就 UnboundLocalError。
+from core.game_cfg import DEFAULT_AGENT as _DEFAULT_AGENT
+
 from core import Vision, Input, Ui, Journal, anchors, vocab  # noqa: E402
 from core.machine import Machine  # noqa: E402
 from core.slots import slot_xy  # noqa: E402
@@ -56,7 +60,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force-unknown", action="store_true",
                     help="角色不在库里也继续（按强攻模板判定，可能不准）")
-    ap.add_argument("agent", nargs="?", default="佩洛伊斯")
+    # **默认角色只有一个真相**：`core.game_cfg.DEFAULT_AGENT`（E16）。
+    # 写死作者自己的角色名，朋友的机器上会去操作一个不存在的角色。
+    ap.add_argument("agent", nargs="?", default=_DEFAULT_AGENT)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
     # 角色名校验：能纠正就纠正，纠正不了就退出（不静默走默认）

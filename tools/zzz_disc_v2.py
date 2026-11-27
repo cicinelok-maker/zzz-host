@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
 sys.path.insert(0, str(HERE))
+from core.game_cfg import DEFAULT_AGENT as _DEFAULT_AGENT
 
 from core import Vision,Input,Ui,Journal# noqa: E402
 from core.machine import Machine# noqa: E402
@@ -38,7 +39,9 @@ R_SUBS = (1420, 510, 1900, 810)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("agent", nargs="?", default="佩洛伊斯")
+    # **默认角色只有一个真相**：`core.game_cfg.DEFAULT_AGENT`（E16）。
+    # 写死作者自己的角色名，朋友的机器上会去操作一个不存在的角色。
+    ap.add_argument("agent", nargs="?", default=_DEFAULT_AGENT)
     ap.add_argument("--out", default=str(BASE / "od_test" / "discs_v2.json"))
     args = ap.parse_args()
 

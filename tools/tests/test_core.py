@@ -4703,3 +4703,62 @@ class TestSubstringAssertionRatchet(unittest.TestCase):
             total, self.BASELINE,
             f"源码子串断言从 {self.BASELINE} 涨到 {total} —— "
             f"新写的请改用 AST，或者用 `_code()` 已经剥过的 `src`。")
+
+
+class TestDefaultAgentSingleSource(unittest.TestCase):
+    """默认角色只能有**一个**真相（E16）。
+
+    ## 原来两个真相
+
+    `core/game_cfg.DEFAULT_AGENT` 已经是 `""`（可配置），
+    但还有 4 个工具**自己写死** `default="佩洛伊斯"`：
+
+        zzz_status / zzz_disc_cycle / zzz_disc_train / zzz_disc_v2
+
+    于是朋友的机器上：
+
+        python tools/zzz_status.py          # 不带参数
+        -> 去操作一个他账号上根本没有的角色
+
+    `DEFAULT_AGENT` 那句话在这个上下文里是**假的**。
+    """
+
+    def test_no_hardcoded_default_agent(self):
+        """所有 `default=` 里都不能写死角色名。"""
+        import ast as _ast
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for f in sorted(root.glob("*.py")):
+            try:
+                tree = _ast.parse(f.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in _ast.walk(tree):
+                if not isinstance(node, _ast.Call):
+                    continue
+                if getattr(node.func, "attr", None) != "add_argument":
+                    continue
+                for a in node.args:
+                    if not (isinstance(a, _ast.Constant)
+                            and a.value == "agent"):
+                        continue
+                    for kw in node.keywords:
+                        if kw.arg != "default":
+                            continue
+                        val = kw.value
+                        if (isinstance(val, _ast.Constant)
+                                and isinstance(val.value, str)
+                                and val.value and val.value != ""):
+                            bad.append((f.name, node.lineno, val.value))
+        self.assertEqual(bad, [],
+                         f"这些地方写死了默认角色名：{bad}")
+
+    def test_default_agent_is_empty_by_default(self):
+        """出厂默认必须是空串，不能是某个具体角色。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.game_cfg import DEFAULT_AGENT
+        self.assertEqual(DEFAULT_AGENT, "",
+                         f"DEFAULT_AGENT 出厂值不是空串：{DEFAULT_AGENT!r}")
