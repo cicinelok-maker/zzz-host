@@ -153,7 +153,28 @@ def open_upgrade_panel(ui: Ui, name: str) -> bool:
         return False
     inp.click(hit["cx"], hit["cy"], wait=2.0)
     vs.frame(force=True)
-    return vs.has((400, 130, 1200, 220), "技能强化")
+    if not vs.has((400, 130, 1200, 220), "技能强化"):
+        print(f"  {name}：强化面板没打开")
+        return False
+
+    # **核对是哪个技能**（BUG-083）。
+    #
+    # 原来只验「技能强化」这四个字 —— 而那四个字**每个技能的面板上都有**。
+    # 所以点偏一格（点到相邻技能）也会「成功」，材料照样花掉，
+    # 而且 `skill_status.json` 记的是你要升的那个技能，**记录和实际不符**。
+    #
+    # 现在读一次面板，看上面写着哪个技能名：
+    # · 明确写着**别的**技能 -> 判定失败（不花材料）
+    # · 一个都认不出 -> 只警告，不拦（面板布局可能变，不能因此卡死）
+    _txt = vs.text(R_PANEL)
+    _found = [k for k in SKILLS if k in _txt]
+    if _found and name not in _found:
+        print(f"  ✘ 点偏了：要升「{name}」，但面板上是「{_found[0]}」")
+        print(f"     （已中止，没有花材料）")
+        return False
+    if not _found:
+        print(f"  ⚠ 面板上看不出技能名，按「{name}」继续（可能点偏，留意结果）")
+    return True
 
 
 def parse_panel(vs: Vision) -> dict:
