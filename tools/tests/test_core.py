@@ -4146,6 +4146,16 @@ class TestBossRoutingBeforeGeneric(unittest.TestCase):
 
     实测都被路由到「专业挑战室」—— **去刷错的副本，材料不掉、电量白花**。
 
+    ## **这条判断后来被推翻了**（2026-11-28）
+
+    真机 `zzz_agent_plan --list` 显示「征服者」只在**专业挑战室**下，
+    恶名狩猎那 11 个 boss 里没有它；game8 也说 Conqueror 是
+    **Expert Challenge**（专业挑战室）的 boss。
+
+    所以「拟造核心/拳坠如陨 该去恶名狩猎」**是错的**，
+    `恶名狩猎_材料对照` 里那两条本身就不该在。正确结论见
+    `TestHighDimensionalDataToBoss`。
+
     **具体名字优先于泛匹配。**
     """
 
@@ -4157,8 +4167,12 @@ class TestBossRoutingBeforeGeneric(unittest.TestCase):
         # 路由函数叫 where_to_farm(mat, role="", attr="")
         fn = getattr(G, "where_to_farm", None)
         self.assertIsNotNone(fn, "找不到 where_to_farm()")
-        for mat, want_prefix in (("高维数据：拟造核心", "恶名狩猎"),
-                                 ("高维数据：拳坠如陨", "恶名狩猎")):
+        # **结论在 2026-11-28 改了**：这两个都该去**专业挑战室**。
+        # 真机 --list 里「征服者」只在专业挑战室下，恶名狩猎没有它。
+        # 这条留着是因为「具体名字优先于泛匹配」的原则仍然成立 ——
+        # 只是正确答案不是「恶名狩猎」。
+        for mat, want_prefix in (("高维数据：拟造核心", "专业挑战室"),
+                                 ("高维数据：拳坠如陨", "专业挑战室")):
             got = (fn(mat) or {}).get("副本", "")
             self.assertTrue(got.startswith(want_prefix),
                             f"{mat} 路由到了「{got}」，应该去恶名狩猎")
@@ -7573,8 +7587,10 @@ class TestMissingSubDungeonIsHandled(unittest.TestCase):
         import pathlib
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
         import zzz_gap as G
-        w = G.where_to_farm("高维数据：凶刑讣告", role="支援", attr="冰")
-        self.assertIsNotNone(w, "高维数据应该有路由")
+        # **换成表里没有的名字**：凶刑讣告 2026-11-28 已经查到是
+        # 恶名·杜拉罕，不再「缺子名」了。要用真未知的才能测这条保护。
+        w = G.where_to_farm("高维数据：表里没有的名字", role="支援", attr="冰")
+        self.assertIsNotNone(w, "高维数据应该有路由（兜底到专业挑战室）")
         self.assertTrue(w.get("缺子名"),
                         "裸「专业挑战室」没有标 缺子名 —— 用户会以为能自动刷")
 
@@ -8049,3 +8065,74 @@ class TestAgentPlanCanListTargets(unittest.TestCase):
     def test_agent_is_optional(self):
         code = self._code_ap()
         self.assertIn('nargs="?"', code, "agent 还是必填的 —— --list 时没有角色")
+
+class TestHighDimensionalDataToBoss(unittest.TestCase):
+    """「高维数据：X」掉它的专业挑战室 boss —— 查证过的六条。
+
+    ## 之前是错的
+
+    `恶名狩猎_材料对照` 里错收了两个高维数据：
+
+        拟造核心 -> 「征服者」        拳坠如陨 -> 恶名·装甲哈提
+
+    而真机 `zzz_agent_plan --list` 显示「征服者」只在**专业挑战室**下
+    （恶名狩猎那 11 个 boss 里没有它），game8 也说 Conqueror 是
+    **Expert Challenge**（专业挑战室）的 boss。
+
+    所以 **RT-14 那条审计判断是错的**，我当时照着它修也错了。
+
+    ## 查证来源（2026-11-28）
+
+    · game8: Deep Erosion Circuit -> "defeat the Airspace Sentinel Boss"
+    · game8: Imitation Core -> "Expert Challenge Boss ... Conqueror"
+    · biligame: 淬刺蚀芯 描述含「秽息行者·蝎骸」
+    · gamevika: 喋血秽羽 -> 牲鬼·卫律使者
+    · 52xz/百度: 拳坠如陨 -> 蛮横力士；凶刑讣告 -> 恶名·杜拉罕
+
+    这 6 个 boss 名**全部**出现在 `--list` 的真机输出里。
+    """
+
+    WANT = {
+        "高维数据：拟造核心": "专业挑战室·「征服者」",
+        "高维数据：凶刑讣告": "专业挑战室·恶名·杜拉罕",
+        "高维数据：拳坠如陨": "专业挑战室·蛮横力士",
+        "高维数据：深蚀回路": "专业挑战室·「空域戒戍者」",
+        "高维数据：喋血秽羽": "专业挑战室·牲鬼·卫律使者",
+        "高维数据：淬刺蚀芯": "专业挑战室·秽息行者·蝎骸",
+    }
+
+    def _w(self, m):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_gap as G
+        return G.where_to_farm(m, role="强攻", attr="以太")
+
+    def test_six_known_mappings(self):
+        for m, want in self.WANT.items():
+            w = self._w(m)
+            self.assertIsNotNone(w, f"{m} 应该能路由")
+            self.assertEqual(w["副本"], want, f"{m} 应该去 {want}")
+            self.assertFalse(w.get("缺子名"),
+                             f"{m} 有对照表了，不该再标缺子名")
+
+    def test_unknown_still_marks_missing(self):
+        """表里没有的**不许猜** —— 标缺子名，让人去查。"""
+        w = self._w("高维数据：根本没这个名字")
+        self.assertIsNotNone(w)
+        self.assertTrue(w.get("缺子名"),
+                        "未知的高维数据没标缺子名 —— 会传送到错的 boss")
+
+    def test_boss_names_with_middot_split_right(self):
+        """`恶名·杜拉罕` 自带 `·`，`farm_cmd` 用 split('·', 1) 不能切坏。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        for d, want in (("专业挑战室·恶名·杜拉罕", "恶名·杜拉罕"),
+                        ("专业挑战室·牲鬼·卫律使者", "牲鬼·卫律使者"),
+                        ("恶名狩猎·冥宁芙·双子", "冥宁芙·双子")):
+            c = farm_cmd(d, 3)
+            flag = "--challenge" if "挑战室" in d else "--hunt"
+            self.assertEqual(c[c.index(flag) + 1], want,
+                             f"{d} 的 {flag} 参数被切坏了")
