@@ -46,6 +46,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -62,7 +63,31 @@ AVATAR_DY = -60
 GRID = (440, 430, 1500, 830)
 
 #: 设好目标之后「特训目标」下面那块可滚动面板（实测 y 430~1010 是真的列表）
-PANEL = (250, 430, 1750, 1015)
+# **左栏在 x≈180~350，必须排除** —— 否则「专业挑战室」这个左栏标签
+# 也会被当任务名匹配到，然后找它那一行的「前往」当然找不到。
+PANEL = (430, 430, 1750, 1015)
+
+#: **左栏是类别切换**（从截图量出来的，不是猜的）。
+#:
+#: 真机截图看得清清楚楚：左边一竖列是
+#:     特训目标（默认选中，蓝色）
+#:     实战模拟室 / 区域巡防 / 专业挑战室 / 恶名狩猎
+#: 点哪个，右边就只显示那个类别的任务。
+LEFT_RAIL = {
+    "特训目标": (263, 309),
+    "实战模拟室": (263, 461),
+    "区域巡防": (263, 596),
+    "专业挑战室": (263, 736),
+    "恶名狩猎": (263, 830),
+}
+
+#: **任务名和它那行的「前往」y 差约 80px**（真机实测 79/85/84）。
+#:
+#: 我原来按 y 差 ≤18 配对 —— 永远配不上，于是配到别的行、传到错的副本。
+ROW_GO_DY = 80
+
+#: 配对时允许的 y 差范围（实测 79/85/84，留余量）
+ROW_GO_LO, ROW_GO_HI = 40, 130
 
 
 def _click(vs: Vision, inp: Input, hit: dict, wait: float = 2.0) -> None:
@@ -252,60 +277,161 @@ def _rows(items: list[dict]) -> list[tuple[int, list[dict]]]:
     return rows
 
 
+def _norm(t: str) -> str:
+    """去掉引号/空格，方便匹配「征服者」和 `「征服者」` 这种差异。"""
+    return re.sub(r"[\s「」『』\"']", "", t or "")
+
+
+def _pick_rail(vs: Vision, category: str) -> bool:
+    """点左栏类别，让右边只显示该类别。"""
+    xy = LEFT_RAIL.get(category)
+    if not xy:
+        return False
+    inp = Input()
+    inp.move(xy[0], xy[1])
+    time.sleep(0.3)
+    inp.click(xy[0], xy[1], wait=2.4)
+    vs.frame(force=True)
+    return True
+
+
 def go_to(ui: Ui, keyword: str, max_pages: int = 12,
-          allow_click: bool = False) -> int:
-    """在「特训目标」面板里**滚着找** keyword，点它那一行的「前往」。
+          allow_click: bool = True) -> int:
+    """在「特训目标」面板里找到指定任务，点它那一行的「前往」传送。
 
-    ## 为什么不能直接点第一个「前往」（真机教训）
+    ## 真机看懂的布局（截图，不是 OCR 猜的）
 
-    这个面板是**可滚动**的，而且每屏同时有 2 个「前往」（不同 y）。
-    实测滚动过程：
+    ```
+    左栏（类别切换，固定）        右边（该类别下的任务，可滚动）
+    特训目标(选中)                 ┌ 恶名·杜拉罕   40   [前往] ┐
+    实战模拟室                     └ 差 79px                 ┘
+    区域巡防                       ┌「征服者」    40-80 [前往] ┐
+    专业挑战室  ← 点它             └ 差 85px                 ┘
+    恶名狩猎                       ┌「空域戒戍者」 40-80 [前往]
+    ```
 
-        没滚：  前往 (1475,652)   前往 (1475,910)
-        滚1次： 前往 (1475,559)   前往 (1475,816)
-        滚2次： 前往 (1474,465)   前往 (1475,722)
-        滚4次： 前往 (1475,534)   前往 (1475,750)
+    ## 两个坑
 
-    直接 `find("前往")` 拿到的是**最上面那一个**，和你要刷的东西
-    没有任何关系 —— 会传送到错的副本。
+    ① **左栏是类别切换，不是行标签**。我原来把「专业挑战室」这个左侧
+       标签和右侧某个「前往」按 y 配对 —— 传到了实战模拟室。
 
-    ## 现在的定位法
+    ② **任务名和它那行的「前往」y 差约 80px**（79/85/84），
+       不是我原来假设的 ±18。
 
-    滚着找 `keyword`（材料名或副本名都行），找到之后取**同一行**的
-    「前往」（y 差 ≤ 18）点它。
+    ## 现在的规则
 
-    找不到就**什么都不点**并返回非零 —— 宁可不动，也不要去错副本。
-
-    ## **按「行名 + y 配对」是错的**（2026-11-28 真机事故）
-
-    我以为「左侧类别标签和右侧『前往』在同一 y」，于是按 y 差 ≤18 配对。
-    实测点「专业挑战室」那行的前往 (1475,722) —— **进了实战模拟室-代理人技能**
-    （传送后画面上是 风切测试/刚性测试/升温测试/冰结测试/电流测试）。
-
-    也就是说：左边那 4 个类别标签（y=489/597/707/814 固定不动）
-    和右边**可滚动内容**里的「前往」**不在同一行**，y 配对上就错了。
-
-    **所以默认只列不点。** 真要传，加 `--force`，并且自己盯着落地是不是对的。
-    正确做法应该是：点某个类别（左栏）让它成为选中态，再点它内容的「前往」——
-    但那条路我还没测过，不猜。
+    · `keyword` 命中**左栏类别** -> 切过去，然后**列出**该类别的任务，不点
+      （一个类别下有多个 boss，我不替你选）
+    · `keyword` 命中**任务名** -> 点它那一行（y+80）的「前往」
+    · 都没有 -> 什么都不点，返回非零
     """
     vs, inp = ui.vs, ui.inp
-    # **空关键词 = 只列出，不点任何东西**。
-    #
-    # 这个面板按「副本/任务」组织（代理人晋升 / 代理人技能 / 恶名·杜拉罕…），
-    # **不是按材料** —— 实测滚 13 屏只看到任务名和进度，没有「冰结芯片」。
-    # 所以让用户先看清有哪些，再指定一个。
     kw = (keyword or "").strip()
     if not kw:
-        print("  （没给副本名 —— 只列出面板上能去哪，不点任何东西）")
+        kv = _norm(kw)
+        print("  （没给关键词 —— 只列出面板上能去哪，不点任何东西）")
 
+    # 先回顶
     inp.move(1000, 700)
     time.sleep(0.25)
     for _ in range(15):
         inp.wheel(6, wait=0.22)
     vs.frame(force=True)
 
+    # **命中左栏类别就先切过去**（右边随之只剩该类别的任务）
+    if kw in LEFT_RAIL:
+        print(f"  左栏切到「{kw}」")
+        _pick_rail(vs, kw)
+        inp.move(1000, 700)
+        time.sleep(0.25)
+        for _ in range(12):
+            inp.wheel(6, wait=0.22)
+        vs.frame(force=True)
+
+    want = _norm(kw)
     seen: list[str] = []
+
+    def _scan_current(pages: int) -> tuple[bool, list[str]]:
+        """在当前类别里滚着找 `want`。找到就点并返回 (True, [])。"""
+        last = ""
+        for page in range(pages + 1):
+            if page > 0:
+                inp.move(1000, 700)
+                inp.wheel(-2, wait=1.1)
+                try:
+                    vs.wait_still(quiet=0.35, timeout=2.5)
+                except Exception:
+                    time.sleep(0.45)
+                vs.frame(force=True)
+
+            items = vs.items(PANEL)
+            sig = "|".join(i["text"] for i in items)
+            if page > 0 and sig == last:
+                break
+            last = sig
+
+            gos = sorted([i for i in items if "前往" in i["text"]],
+                         key=lambda x: x["cy"])
+            names = sorted([i for i in items
+                            if not i["text"].startswith("前往")
+                            and len(i["text"]) > 1
+                            and not re.fullmatch(r"[\d,]+(\s*/\s*[\d,]+)?", i["text"])
+                            and not re.fullmatch(r"\d+\s*-\s*\d+", i["text"])],
+                           key=lambda x: x["cy"])
+
+            if not kw:
+                for nm in names:
+                    g = next((g for g in gos
+                              if ROW_GO_LO <= g["cy"] - nm["cy"] <= ROW_GO_HI), None)
+                    if g:
+                        print(f"    {nm['text'][:22]:<24} 前往@({g['cx']},{g['cy']})")
+                seen.extend(n["text"] for n in names)
+                continue
+
+            hit = next((n for n in names if want and _norm(n["text"]) == want), None)
+            if hit is None:
+                seen.extend(n["text"] for n in names)
+                continue
+            g = next((g for g in gos
+                      if ROW_GO_LO <= g["cy"] - hit["cy"] <= ROW_GO_HI), None)
+            if g is None:
+                print(f"    找到「{hit['text']}」但没找到它那一行的「前往」")
+                return False, seen
+            print(f"    第 {page + 1} 屏找到「{hit['text']}」@({hit['cx']},{hit['cy']})")
+            print(f"    点它的「前往」@({g['cx']},{g['cy']})")
+            _click(vs, inp, g, wait=2.5)
+            vs.frame(force=True)
+            ok = vs.find("确认", (700, 550, 1300, 720))
+            if ok and vs.find("是否立即传送", (600, 450, 1400, 600)):
+                print(f"    点「确认」@({ok['cx']},{ok['cy']})（立即传送）")
+                _click(vs, inp, ok, wait=6.0)
+                vs.frame(force=True)
+                print("    已传送")
+            else:
+                print("    （没弹传送确认框）")
+            return True, seen
+        return False, seen
+
+    # **不是类别名 -> 在 4 个类别里逐个找**。
+    # 一个任务只属于一个类别，所以逐个切过去扫是最稳的；
+    # 一开始我在「特训目标」这个默认视图里滚，内容是混的、还滚不到底。
+    if kw and kw not in LEFT_RAIL:
+        for cat in ("实战模拟室", "区域巡防", "专业挑战室", "恶名狩猎"):
+            print(f"  在「{cat}」里找「{kw}」…")
+            _pick_rail(vs, cat)
+            inp.move(1000, 700)
+            time.sleep(0.25)
+            for _ in range(12):
+                inp.wheel(6, wait=0.22)
+            vs.frame(force=True)
+            found, seen2 = _scan_current(8)
+            seen.extend(seen2)
+            if found:
+                return 0
+        print(f"  ✘ 4 个类别都翻遍了也没找到「{kw}」—— **什么都没点**")
+        print(f"     看到过：{'、'.join(dict.fromkeys(seen))[:240]}")
+        return 4
+
     last = ""
     for page in range(max_pages + 1):
         if page > 0:
@@ -323,70 +449,63 @@ def go_to(ui: Ui, keyword: str, max_pages: int = 12,
             break
         last = sig
 
-        for y, group in _rows(items):
-            texts = [i["text"] for i in group]
-            go = next((i for i in group if "前往" in i["text"]), None)
+        gos = sorted([i for i in items if "前往" in i["text"]],
+                     key=lambda x: x["cy"])
+        names = sorted([i for i in items
+                        if not i["text"].startswith("前往")
+                        and len(i["text"]) > 1
+                        and not re.fullmatch(r"[\d,]+(\s*/\s*[\d,]+)?", i["text"])
+                        and not re.fullmatch(r"\d+\s*-\s*\d+", i["text"])],
+                       key=lambda x: x["cy"])
 
-            if not kw:
-                # 列出模式：只报「这一行有前往的，去的是哪个任务」
-                if go is not None:
-                    # **滤掉进度计数器**（13/37、0/50、2/5）和等级区间（20-100）
-                    # —— 它们不是副本名，混在输出里没法看。
-                    import re as _re
-                    names = [t for t in texts
-                             if not t.startswith("前往")
-                             and len(t) > 1
-                             and not _re.fullmatch(r"\d+\s*/\s*\d+", t)
-                             and not _re.fullmatch(r"\d+\s*-\s*\d+", t)
-                             and not _re.fullmatch(r"\d+", t)]
-                    if names:
-                        print(f"    y={y:>4}  {' / '.join(names[:3])}"
-                              f"      前往@({go['cx']},{go['cy']})")
-                continue
+        # ---- 只列不点 ----
+        if not kw:
+            for nm in names:
+                g = next((g for g in gos if ROW_GO_LO <= g["cy"] - nm["cy"] <= ROW_GO_HI), None)
+                if g:
+                    print(f"    {nm['text'][:22]:<24} 前往@({g['cx']},{g['cy']})")
+            seen.extend(n["text"] for n in names)
+            continue
 
-            if not any(kw in t for t in texts):
-                continue
-            if go is None:
-                # 这一行有名字但没有「前往」按钮（可能是标题行）
-                continue
+        # ---- 找任务 ----
+        # **类别名不参与任务匹配** —— 它是左栏的筛选按钮，不是任务
+        if kw not in LEFT_RAIL and want in {_norm(n["text"]) for n in names} and want:
+            nm = next(n for n in names if _norm(n["text"]) == want)
+            g = next((g for g in gos if ROW_GO_LO <= g["cy"] - nm["cy"] <= ROW_GO_HI), None)
+            if g is None:
+                print(f"    找到「{nm['text']}」但没找到它那一行的「前往」")
+                return 4
+            print(f"    第 {page + 1} 屏找到「{nm['text']}」@({nm['cx']},{nm['cy']})")
             if not allow_click:
-                # **默认绝不点** —— 行名和按钮对不齐，点了会去错副本。
-                print(f"    第 {page + 1} 屏：{texts[:3]}  前往@({go['cx']},{go['cy']})")
-                print(f"    ⚠ 只是**报告位置**，没有点 —— "
-                      f"行名和按钮不在同一 y，配不准（实测会去错副本）")
-                print(f"      确实知道是哪一个的话，加 --force 才会真的点")
+                print(f"    它那行的「前往」@({g['cx']},{g['cy']}) —— **没有点**")
                 return 0
-            print(f"    第 {page + 1} 屏找到「{kw}」那一行：{texts[:4]}")
-            print(f"    点它的「前往」@({go['cx']},{go['cy']})")
-            _click(vs, inp, go, wait=2.5)
+            print(f"    点它的「前往」@({g['cx']},{g['cy']})")
+            _click(vs, inp, g, wait=2.5)
             vs.frame(force=True)
-
-            # **还有一步「是否立即传送？」**（真机实测）。
-            # 不点确认就什么都没发生 —— 我第一版点完「前往」就报「已传送」，
-            # 实际游戏还停在确认框上。
             ok = vs.find("确认", (700, 550, 1300, 720))
             if ok and vs.find("是否立即传送", (600, 450, 1400, 600)):
                 print(f"    点「确认」@({ok['cx']},{ok['cy']})（立即传送）")
                 _click(vs, inp, ok, wait=6.0)
                 vs.frame(force=True)
-                print("    已传送（游戏会自己进对应的副本）")
+                print("    已传送")
             else:
-                print("    （没弹传送确认框，可能已经直接进了）")
+                print("    （没弹传送确认框）")
             return 0
 
-        seen.extend(t for t in (i["text"] for i in items) if t.strip())
+        seen.extend(n["text"] for n in names)
 
     if not kw:
-        print("\n  ↑ 这就是面板上所有的「前往」。")
-        print("    要真去某个，把它的名字传进来：")
-        print("      python tools/zzz_agent_plan.py 苍角 --go 代理人技能")
+        print("\n  ↑ 面板上能去的都在这。要真去某个，把**任务名**传进来：")
+        print("     python tools/zzz_agent_plan.py 苍角 --go 「征服者」")
+        return 0
+    if kw in LEFT_RAIL:
+        print(f"\n  「{kw}」下的任务：{'、'.join(dict.fromkeys(seen))[:180]}")
+        print("  一个类别下有多个 boss —— 指名一个才会点。")
         return 0
 
     print(f"  ✘ 滚了 {max_pages + 1} 屏都没找到「{kw}」—— **什么都没点**")
-    print(f"     面板上出现过的：{'、'.join(dict.fromkeys(seen))[:200]}")
-    print(f"     提示：关键词是**副本/任务名**，不是材料名")
+    print(f"     看到过：{'、'.join(dict.fromkeys(seen))[:200]}")
     return 4
-
 
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -397,10 +516,6 @@ def main() -> int:
                          "**给值**：滚着找这个副本名，点它那一行的「前往」传送。"
                          "关键词是**副本/任务名**（代理人晋升、代理人技能、"
                          "恶名·杜拉罕…），不是材料名 —— 这个面板按副本组织")
-    ap.add_argument("--force", action="store_true",
-                    help="**明知道自己在点哪一个**才加。"
-                         "默认 --go 只报告位置不点 —— 行名和按钮不在同一 y，"
-                         "实测按 y 配对点下去会去错副本（专业挑战室 → 实战模拟室）")
     ap.add_argument("--dry-run", action="store_true",
                     help="只走到更换特训目标面板，不真的设置")
     args = ap.parse_args()
@@ -424,7 +539,7 @@ def main() -> int:
         if vs.find(agent, (300, 250, 1200, 360)):
             print(f"  当前特训目标已经是「{agent}」，跳过设置")
             if args.go is not None:
-                return go_to(ui, args.go, allow_click=args.force)
+                return go_to(ui, args.go, allow_click=True)
             return 0
 
         if not open_target_grid(ui):
@@ -443,7 +558,7 @@ def main() -> int:
             print("⚠ 设置了但没能确认 —— 面板上没读到新目标名字")
 
         if args.go is not None:
-            return go_to(ui, args.go, allow_click=args.force)
+            return go_to(ui, args.go, allow_click=True)
         return 0
     finally:
         ui.stop()

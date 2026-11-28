@@ -7985,12 +7985,28 @@ class TestAgentPlanGoDoesNotClickBlindly(unittest.TestCase):
     def test_has_allow_click_switch(self):
         code = self._code_ap()
         self.assertIn("allow_click", code, "没有 allow_click 开关")
-        self.assertIn("args.force", code, "没接 --force")
 
-    def test_default_does_not_click(self):
+    def test_pairs_go_by_row_offset(self):
+        """任务名和它那行的「前往」y 差约 80px（实测 79/85/84/86）。
+
+        原来按 ≤18 配对 —— 永远配不上，配到别的行，传到错的副本
+        （点「专业挑战室」的结果进了实战模拟室-代理人技能）。
+        """
         code = self._code_ap()
-        self.assertIn("if not allow_click:", code,
-                      "没有「默认不点」的守卫 —— 会又去错副本")
+        self.assertIn("ROW_GO_LO", code, "没有配对容差常量")
+        self.assertIn("ROW_GO_DY = 80", code, "行内偏移不是 80")
+
+    def test_left_rail_is_category_switch(self):
+        """左栏是**类别切换**，不是行标签 —— 点它筛右边。"""
+        code = self._code_ap()
+        self.assertIn("LEFT_RAIL", code, "没有左栏坐标表")
+        self.assertIn("_pick_rail", code, "没有切类别的函数")
+
+    def test_searches_all_categories(self):
+        """不指名类别时，要**挨个类别翻** —— 只在一个视图里滚会漏。"""
+        code = self._code_ap()
+        for cat in ("实战模拟室", "区域巡防", "专业挑战室", "恶名狩猎"):
+            self.assertIn(cat, code)
 
     def test_teleport_has_confirm(self):
         """点「前往」之后还有一步「是否立即传送？」。"""
