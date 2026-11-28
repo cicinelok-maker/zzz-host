@@ -8012,3 +8012,40 @@ class TestAgentPlanGoDoesNotClickBlindly(unittest.TestCase):
         """点「前往」之后还有一步「是否立即传送？」。"""
         code = self._code_ap()
         self.assertIn("是否立即传送", code, "没等传送确认框")
+
+class TestAgentPlanCanListTargets(unittest.TestCase):
+    """`--list` 要能把 4 个类别下的所有目标全列出来，一下都不点。
+
+    ## 为什么需要
+
+    「哪个材料该去哪个 boss」这张对照表我们没有，但**游戏里有**。
+    与其维护一张会过期的表，不如先把可选目标列全，再按名字去 `--go`。
+
+    真机跑出来 41 个（去重前），带几个 OCR 碎片：
+    `诡步与` / `诡步与重壁`、`「霸主侵蚀体·庞培」` / `「霸主侵蚀体・庞培」`。
+    """
+
+    def _code_ap(self):
+        import pathlib
+        return _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_agent_plan.py").read_text(encoding="utf-8"))
+
+    def test_has_list_mode(self):
+        code = self._code_ap()
+        self.assertIn('"--list"', code, "没有 --list")
+        self.assertIn("def list_all", code, "没有 list_all")
+
+    def test_list_covers_all_categories(self):
+        code = self._code_ap()
+        for cat in ("实战模拟室", "区域巡防", "专业挑战室", "恶名狩猎"):
+            self.assertIn(cat, code)
+
+    def test_list_dedupes_fragments(self):
+        """碎片要去掉：`诡步与` 只是 `诡步与重壁` 的一截。"""
+        code = self._code_ap()
+        self.assertIn("_n(", code, "没有规范化函数")
+        self.assertIn("ni in norms[j]", code, "没做「只是别人的一截」的过滤")
+
+    def test_agent_is_optional(self):
+        code = self._code_ap()
+        self.assertIn('nargs="?"', code, "agent 还是必填的 —— --list 时没有角色")

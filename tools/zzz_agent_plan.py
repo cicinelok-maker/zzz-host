@@ -507,18 +507,119 @@ def go_to(ui: Ui, keyword: str, max_pages: int = 12,
     print(f"     看到过：{'、'.join(dict.fromkeys(seen))[:200]}")
     return 4
 
+def list_all(ui: Ui, max_pages: int = 10) -> int:
+    """**把 4 个类别下的所有目标全列出来**，一个都不点。
+
+    ## 为什么需要它
+
+    「哪个材料该去哪个 boss」这张对照表我们没有，但**游戏里有**。
+    与其去猜、去维护一张会过期的表，不如**先把可选目标列全**，
+    再按名字去 `--go`。
+
+    实现上是：逐个点左栏类别 -> 右侧滚一遍 -> 收任务名。
+    左栏是**类别切换**（点它右边只剩该类别），不是行标签 ——
+    这一点是截图看出来的，按 y 配对会传错副本。
+    """
+    vs, inp = ui.vs, ui.inp
+    total = 0
+    for cat in ("实战模拟室", "区域巡防", "专业挑战室", "恶名狩猎"):
+        print(f"\n【{cat}】")
+        _pick_rail(vs, cat)
+        inp.move(1000, 700)
+        time.sleep(0.25)
+        for _ in range(12):
+            inp.wheel(6, wait=0.2)
+        vs.frame(force=True)
+
+        seen: list[str] = []
+        last = ""
+        for page in range(max_pages + 1):
+            if page > 0:
+                inp.move(1000, 700)
+                inp.wheel(-2, wait=1.0)
+                try:
+                    vs.wait_still(quiet=0.35, timeout=2.5)
+                except Exception:
+                    time.sleep(0.4)
+                vs.frame(force=True)
+
+            items = vs.items(PANEL)
+            sig = "|".join(i["text"] for i in items)
+            if page > 0 and sig == last:
+                break
+            last = sig
+
+            names = [i["text"] for i in sorted(items, key=lambda x: x["cy"])
+                     if not i["text"].startswith("前往")
+                     and len(i["text"]) > 1
+                     and not re.fullmatch(r"[\d,]+(\s*/\s*[\d,]+)?", i["text"])
+                     and not re.fullmatch(r"\d+\s*-\s*\d+", i["text"])
+                     and i["text"] not in ("双倍", "燃竭", "OD", "EMPTY")]
+            for nm in names:
+                if nm not in seen:
+                    seen.append(nm)
+
+        # **去重 + 去碎片**：OCR 会把一个名字读成两截，
+        # 例如 `诡步与` / `诡步与重壁`，或者同一名字的两种间隔号
+        # `「霸主侵蚀体·庞培」` / `「霸主侵蚀体・庞培」`。
+        def _n(t: str) -> str:
+            return re.sub(r"[\s「」『』·・]", "", t)
+
+        keep: list[str] = []
+        norms = [_n(x) for x in seen]
+        for i, nm in enumerate(seen):
+            ni = norms[i]
+            if any(ni == norms[j] and j < i for j in range(len(seen))):
+                continue                      # 规范化后重复
+            if any(ni != norms[j] and ni in norms[j] for j in range(len(seen))):
+                continue                      # 只是别人的一截
+            keep.append(nm)
+        for nm in keep:
+            print(f"    {nm}")
+        total += len(keep)
+    print(f"\n  共 {total} 个目标。要真去某个："
+          f"\n    python tools/zzz_agent_plan.py <角色> --go <目标名>")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="设置「特训目标」，让游戏自己路由到要刷的副本")
-    ap.add_argument("agent", help="角色名，如 佩洛伊斯")
+    ap.add_argument("agent", nargs="?", default="",
+                    help="角色名，如 佩洛伊斯（--list 时可以不给）")
     ap.add_argument("--go", metavar="副本名", nargs="?", const="", default=None,
                     help="**不给值**：滚一遍面板，列出所有能去的副本（不点任何东西）。"
                          "**给值**：滚着找这个副本名，点它那一行的「前往」传送。"
                          "关键词是**副本/任务名**（代理人晋升、代理人技能、"
                          "恶名·杜拉罕…），不是材料名 —— 这个面板按副本组织")
+    ap.add_argument("--list", action="store_true",
+                    help="**把 4 个类别下的所有目标全列出来**，一下都不点。"
+                         "用来自己查「有哪些副本可去」，不用猜")
     ap.add_argument("--dry-run", action="store_true",
                     help="只走到更换特训目标面板，不真的设置")
     args = ap.parse_args()
+
+    if args.list:
+        vs0, inp0 = Vision(), Input()
+        ui0 = Ui(vs0, inp0)
+        ui0.start()
+        try:
+            for _ in range(8):
+                vs0.frame(force=True)
+                if anchors.describe(vs0) == "世界":
+                    break
+                inp0.key("esc", wait=1.3)
+            vs0.frame(force=True)
+            if anchors.describe(vs0) != "世界":
+                print(f"  ✘ 回不到大世界（当前 {anchors.describe(vs0)}）")
+                return 4
+            if not open_handbook(ui0):
+                return 4
+            if not open_train_tab(ui0):
+                return 4
+            return list_all(ui0)
+        finally:
+            ui0.stop()
 
     from core.agent_cfg import resolve_agent
     agent = resolve_agent(args.agent)

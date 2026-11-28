@@ -419,6 +419,9 @@
      "flag": "--go"
     },
     {
+     "flag": "--list"
+    },
+    {
      "flag": "--dry-run"
     }
    ],
