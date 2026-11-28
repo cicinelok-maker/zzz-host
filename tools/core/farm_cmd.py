@@ -34,10 +34,24 @@ TRAININGS = ("代理人晋升", "代理人技能", "音擎改装", "基础材料
 
 
 def farm_cmd(dungeon: str, times: int, run: bool = True,
-             python: str | None = None) -> list[str]:
+             python: str | None = None, mission: str = "") -> list[str]:
     """副本名 → od_material_farm 的完整命令行。
 
     `run=False` 时不带 `--run`（只出计划）。
+
+    ## `mission`：实战模拟室**必须**传
+
+    `od_material_farm` 对 实战模拟室 / 专业挑战室 / 恶名狩猎 强制要求
+    `--mission`，缺了直接 exit 2：
+
+        _NEED_MISSION = {"实战模拟室", "专业挑战室", "恶名狩猎"}
+
+    而这里原来**从来不传** —— 于是**所有**实战模拟室的刷本调用
+    都是 exit 2，一个都刷不了（芯片/认证章/音擎/经验全中）。
+
+    子任务名来自 `core/mission_map.py`（数据取自 OneDragon 的
+    `compendium_data.yml`）。调用方负责算好传进来 ——
+    只有 `where_to_farm` 同时知道材料、定位、属性。
     """
     import sys
     py = python or sys.executable
@@ -73,6 +87,9 @@ def farm_cmd(dungeon: str, times: int, run: bool = True,
         else:
             name = d.split("·", 1)[1] if d.startswith("区域巡防·") else d
             cmd += ["--patrol", name]
+
+    if mission:
+        cmd += ["--mission", mission]
 
     cmd += ["--times", str(max(1, int(times)))]
     if run:

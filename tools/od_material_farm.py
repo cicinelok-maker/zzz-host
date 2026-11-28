@@ -217,11 +217,28 @@ def main() -> int:
     # 空着写进 OneDragon 的计划里，**启动后会立刻失败**，而这里什么都不说。
     #
     # 现在：这些类别缺 `mission_name` 就直接拒绝，并说清楚该传什么。
-    _NEED_MISSION = {"实战模拟室", "专业挑战室", "恶名狩猎"}
+    # **只有实战模拟室需要 `--mission`**。
+    #
+    # 这个集合原来是 `{"实战模拟室", "专业挑战室", "恶名狩猎"}` —— 太宽了。
+    # 依据 OneDragon 的 `compendium_data.yml`：
+    #
+    #   实战模拟室    mission_type(代理人技能/晋升/音擎改装/基础材料)
+    #                 **下面还有 mission_list**（刚性测试/强攻演练/…）
+    #                 -> ChargePlanItem 必须给 mission_name
+    #   专业挑战室    mission_type_list 直接就是 boss 名（「征服者」/恶名·杜拉罕…）
+    #                 **没有 mission_list** -> 不需要 mission_name
+    #   恶名狩猎      同上（基塔布鲁/冥宁芙·双子…）
+    #                 **没有 mission_list** -> 不需要
+    #
+    # 所以原来那两条会**误拒**完全合法的 `--hunt 基塔布鲁` /
+    # `--challenge 「征服者」` —— 我自己的守卫把正常调用拦掉了。
+    _NEED_MISSION = {"实战模拟室"}
     _miss = [c for c, _n, _t in plans if c in _NEED_MISSION]
     if _miss and not getattr(args, "mission", ""):
         print(f"  ✘ {'、'.join(sorted(set(_miss)))} 需要子副本名，但没传 --mission")
-        print(f"     实战模拟室-代理人技能：--mission 要传**角色名**")
+        print(f"     实战模拟室-代理人技能：--mission 传**元素测试名**"
+              f"（刚性/升温/冰结/电流/风切/共鸣/琢光 + 测试）")
+        print(f"     依据 OneDragon 的 compendium_data.yml，见 core/mission_map.py")
         print(f"     其他：--mission 传具体关卡名")
         print(f"     例：python tools/{Path(__file__).name} "
               f"--training 代理人技能 --mission 佩洛伊斯 --times 2")

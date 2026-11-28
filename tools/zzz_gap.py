@@ -189,8 +189,11 @@ def where_to_farm(mat: str, role: str = "", attr: str = "") -> dict | None:
 
     # ---------- 认证章（三档同名系）----------
     if "认证章" in m:
+        # **实战模拟室必须带 `--mission`**（compendium 里它有 mission_list）
+        from core.mission_map import mission_for as _mf
         return {"副本": "实战模拟室·代理人晋升", "类型": "认证章",
-                "每次电量": RUN_BATTERY, "每次产出": PROD["认证章"], "周本": False}
+                "每次电量": RUN_BATTERY, "每次产出": PROD["认证章"], "周本": False,
+                "mission": _mf("代理人晋升", role=role, attr=attr)}
 
     # ---------- 技能芯片 ----------
     if m.endswith("芯片"):
@@ -211,23 +214,34 @@ def where_to_farm(mat: str, role: str = "", attr: str = "") -> dict | None:
         #
         # 后缀本身在 `farm_cmd` 里是**无害**的（它只做子串匹配 `代理人技能`），
         # 但它会误导人以为「有属性专用副本」。去掉。
+        from core.mission_map import mission_for as _mf
         return {"副本": "实战模拟室·代理人技能", "类型": "芯片",
-                "每次电量": RUN_BATTERY, "每次产出": PROD["芯片"], "周本": False}
+                "每次电量": RUN_BATTERY, "每次产出": PROD["芯片"], "周本": False,
+                # 元素测试名（共鸣测试/电流测试/…）——
+                # 不是角色名，也不是我之前臆造的「电击测试」
+                "mission": _mf("代理人技能", role=role, attr=attr,
+                               material=m)}
 
     # ---------- 音擎 ----------
     if ("组件" in m) or ("音擎" in m) or m.endswith("模块"):
+        from core.mission_map import mission_for as _mf
         return {"副本": "实战模拟室·音擎改装", "类型": "音擎组件",
-                "每次电量": RUN_BATTERY, "每次产出": PROD["音擎组件"], "周本": False}
+                "每次电量": RUN_BATTERY, "每次产出": PROD["音擎组件"], "周本": False,
+                "mission": _mf("音擎改装", role=role, attr=attr, material=m)}
 
     # ---------- 角色经验 ----------
     if "调查员记录" in m or "经验" in m:
+        from core.mission_map import mission_for as _mf
         return {"副本": "实战模拟室·基础材料", "类型": "角色经验",
-                "每次电量": RUN_BATTERY, "每次产出": PROD["角色经验"], "周本": False}
+                "每次电量": RUN_BATTERY, "每次产出": PROD["角色经验"], "周本": False,
+                "mission": _mf("基础材料", material=m)}
 
     # ---------- 镀剂 ----------
     if "镀剂" in m:
+        from core.mission_map import mission_for as _mf
         return {"副本": "实战模拟室·基础材料", "类型": "镀剂",
-                "每次电量": RUN_BATTERY, "每次产出": PROD["镀剂"], "周本": False}
+                "每次电量": RUN_BATTERY, "每次产出": PROD["镀剂"], "周本": False,
+                "mission": _mf("基础材料", material=m)}
 
     # ---------- boss 材料（恶名狩猎）----------
     #
@@ -372,6 +386,9 @@ def plan(agent: str) -> dict:
                 "节": sec.get("节", ""),
                 # 「专业挑战室」这种只有大类、没有具体副本名的，标出来
                 "缺子名": bool(w.get("缺子名")),
+                # **实战模拟室的子任务名**（元素测试 / 职业演练 / 专项）。
+                # 不传的话 `od_material_farm` 会 exit 2（它强制要求）。
+                "mission": w.get("mission") or "",
             })
 
     # 周本优先（次数有限），其次按电量从少到多
@@ -468,7 +485,8 @@ def do_farm(rows: list[dict], max_elec: int = 240, run_it: bool = False) -> int:
         # **路由统一在 core/farm_cmd.py** —— 不再在这里内联一份
         from core.farm_cmd import farm_cmd
         try:
-            cmd = farm_cmd(d, runs, run=True, python=sys.executable)
+            cmd = farm_cmd(d, runs, run=True, python=sys.executable,
+                           mission=t.get("mission") or "")
         except ValueError as e:
             # **子副本名缺失时别让整个工具崩**。
             #

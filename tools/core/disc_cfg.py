@@ -207,6 +207,17 @@ def effective(subs_raw, good, half) -> tuple[float, list]:
         bare = re.sub(r"\+\d+", "", nm).strip()
         if not bare:
             continue
+        # **「等级N/M」是盘的等级标签，不是副词条**（真机实测）。
+        #
+        # OCR 会把盘面上的等级（`等级15/15` / `等级0/` / `等级`）混进
+        # 副词条里。它既不该算分，也**不该进「未识别词条」告警** ——
+        # 因为那条告警的存在意义是「有真词条被白名单漏掉了」，
+        # 而实测一次 `zzz_plan` 的 91 行输出里有 **57 行**全是这条噪音，
+        # 真正的漏词条会被彻底淹掉。
+        #
+        # 判据：`等级` 开头、后面只跟数字和斜杠。
+        if re.match(r"^等级[\d/\s]*$", bare):
+            continue
         if _vb.stat_name_of(bare) not in _vb.STATS:
             # **不再静默** —— 记下来，上层能看见
             unrecognized.append(bare)

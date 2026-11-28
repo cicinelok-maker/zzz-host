@@ -7725,3 +7725,157 @@ class TestMaterialNameFragments(unittest.TestCase):
         self.assertEqual(join(["a", "高维数据：深蚀回路"]), "高维数据：深蚀回路")
         self.assertEqual(join(["CC", "「仓鼠笼」访问器"]), "「仓鼠笼」访问器")
         self.assertEqual(join(["刻命残蜕"]), "刻命残蜕")
+
+
+class TestTrainingRoomsGetAMission(unittest.TestCase):
+    """实战模拟室**必须**传 `--mission`，而且要是 compendium 里的真任务名。
+
+    ## 真发现（比我之前的判断更严重）
+
+    `farm_cmd` **从来不传 `--mission`**，而 `od_material_farm` 对
+    实战模拟室强制要求 —— 于是**所有**芯片/认证章/音擎/经验的刷本调用
+    都是 exit 2，一个都刷不了。
+
+    同时我自己的守卫写宽了：`_NEED_MISSION` 原来是
+    `{"实战模拟室", "专业挑战室", "恶名狩猎"}`，但按 OneDragon 的
+    `compendium_data.yml`，**只有实战模拟室有 mission_list**：
+
+        实战模拟室   代理人技能 -> 刚性/升温/冰结/电流/风切/共鸣/琢光 + 测试
+                     代理人晋升 -> {职业}演练
+                     音擎改装   -> 锋御耦合试验 / 命破共鸣试验 / …
+                     基础材料   -> 调查专项 / 音擎专项 / 赏金专项 / 镀剂专项
+        专业挑战室   mission_type 直接就是 boss 名（「征服者」/恶名·杜拉罕…）
+        恶名狩猎     同上（基塔布鲁 / 冥宁芙·双子…）
+
+    所以 `--hunt 基塔布鲁` / `--challenge 「征服者」` 原来会被**误拒**。
+
+    ## 我还判错过一次
+
+    审计 E23 说「OneDragon 用 `升温测试`/`电流测试`/`共鸣测试`」，
+    我当时只 grep 了 `*.py` 就说「本版没有这三个名字」—— **判错了**，
+    它们在 `.yml` 里。所以芯片的任务名是**元素测试名**，
+    不是角色名，也不是我臆造的「电击测试」。
+    """
+
+    def test_chip_test_names_match_compendium(self):
+        """芯片任务名必须是 compendium 里那七个测试名。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.mission_map import CHIP_TEST
+        want = {
+            "物理": "刚性测试", "火": "升温测试", "冰": "冰结测试",
+            "电": "电流测试", "风": "风切测试", "以太": "共鸣测试",
+            "流明": "琢光测试",
+        }
+        for attr, mission in want.items():
+            self.assertEqual(CHIP_TEST.get(attr), mission,
+                             f"{attr} 的测试名应该是 {mission}")
+
+    def test_farm_cmd_emits_mission(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        c = farm_cmd("实战模拟室·代理人技能", 3, mission="共鸣测试")
+        self.assertIn("--mission", c, "没拼 --mission —— od_material_farm 会 exit 2")
+        i = c.index("--mission")
+        self.assertEqual(c[i + 1], "共鸣测试")
+
+    def test_where_to_farm_gives_mission(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_gap as G
+        cases = [
+            ("特化以太芯片", "强攻", "以太", "共鸣测试"),
+            ("基础冰结芯片", "支援", "冰", "冰结测试"),
+            ("高阶强攻认证章", "强攻", "以太", "强攻演练"),
+            ("资深调查员记录", "强攻", "以太", "调查专项"),
+            ("镀剂", "强攻", "以太", "镀剂专项"),
+        ]
+        for m, r, a, want in cases:
+            w = G.where_to_farm(m, role=r, attr=a)
+            self.assertIsNotNone(w, f"{m} 应该能路由")
+            self.assertEqual(w.get("mission"), want,
+                             f"{m} 的 mission 应该是 {want}")
+
+    def test_need_mission_is_only_training_room(self):
+        """`_NEED_MISSION` 只能含实战模拟室 —— 另两类没有 mission_list。"""
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "od_material_farm.py").read_text(encoding="utf-8"))
+        self.assertIn('_NEED_MISSION = {"实战模拟室"}', code,
+                      "守卫又写宽了 —— 会误拒 --hunt / --challenge")
+        self.assertNotIn('"专业挑战室", "恶名狩猎"}', code,
+                         "守卫还在要求专业挑战室/恶名狩猎传 mission")
+
+    def test_boss_and_challenge_need_no_mission(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        for d in ("恶名狩猎·基塔布鲁", "专业挑战室·「征服者」"):
+            c = farm_cmd(d, 3)
+            self.assertNotIn("--mission", c,
+                             f"{d} 不需要 mission，不该拼")
+
+
+class TestLevelLabelIsNotASubStat(unittest.TestCase):
+    """盘的「等级N/M」不是副词条，不该进「未识别词条」告警。
+
+    ## 真机现象
+
+    一次 `zzz_plan` 的 **91 行**输出里有 **57 行**是：
+
+        [disc_cfg] 未识别的副词条 10 条：
+        ['等级15/15', '等级0/', '等级', '等级', ...]（未计入有效值）
+
+    OCR 把盘面上的等级标签混进了副词条。
+
+    ## 为什么必须修
+
+    分数**没受影响**（标注「未计入」），但那条告警的**存在意义**是
+    「有真词条被白名单漏掉了」—— 57 行噪音会把真正的漏词条彻底淹掉。
+    一个永远在响的警报等于没有警报。
+
+    ## 修法
+
+    `effective()` 里：`等级` 开头、后面只跟数字和斜杠的，直接跳过。
+    真·未知词条仍然告警。
+    """
+
+    def _eff(self, subs):
+        import sys
+        import pathlib
+        import io
+        import contextlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core import disc_cfg
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            eff, rows = disc_cfg.effective(
+                subs, ["攻击力百分比", "暴击率", "暴击伤害"], [])
+        return eff, rows, buf.getvalue()
+
+    def test_level_labels_are_silent(self):
+        eff, rows, out = self._eff([("等级15/15", "0"), ("等级0/", "0"),
+                                    ("等级", "0")])
+        self.assertEqual(out.strip(), "",
+                         f"等级标签还在告警：{out.strip()[:80]}")
+        self.assertEqual(rows, [])
+        self.assertEqual(eff, 0.0)
+
+    def test_level_plus_real_substat(self):
+        eff, rows, out = self._eff([("等级15/15", "0"),
+                                    ("攻击力百分比+2", "0"),
+                                    ("暴击率+1", "0")])
+        self.assertEqual(out.strip(), "", "有真词条时不该告警")
+        self.assertEqual(len(rows), 2, f"应该认出 2 条真词条，实际 {len(rows)}")
+        # 分数怎么算归别的测试管 —— 这条只证明「等级不告警、真词条仍被认出」
+
+    def test_real_unknown_still_warns(self):
+        """**真·未知词条必须仍然告警** —— 别把哨兵一起修没了。"""
+        eff, rows, out = self._eff([("完全没听过的词条", "+1")])
+        self.assertIn("未识别的副词条", out,
+                      "真未知词条不告警了 —— 白名单漏词条会再次变成静默")

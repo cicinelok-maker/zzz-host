@@ -317,7 +317,7 @@ def _diff(before: dict, after: dict) -> list[tuple[str, object, object]]:
     return out
 
 
-def _farm_cmd(dungeon: str, times: int) -> list[str]:
+def _farm_cmd(dungeon: str, times: int, mission: str = "") -> list[str]:
     """副本名 → od_material_farm 参数。
 
     **实现统一在 `core/farm_cmd.py`** —— 这里只做转发。
@@ -325,7 +325,7 @@ def _farm_cmd(dungeon: str, times: int) -> list[str]:
       而我这轮已经因为这类漂移踩了两次坑：属性表「感电/电击」、芯片副本名。）
     """
     from core.farm_cmd import farm_cmd
-    return farm_cmd(dungeon, times, run=True)
+    return farm_cmd(dungeon, times, run=True, mission=mission or "")
 
 
 def main() -> int:
