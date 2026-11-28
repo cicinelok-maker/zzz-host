@@ -8206,3 +8206,88 @@ class TestElementCoversWholeRoster(unittest.TestCase):
         for k, v in (("佩洛伊斯", "以太"), ("苍角", "冰"),
                      ("丽娜", "电"), ("简", "物理")):
             self.assertEqual(element_of(k), v, f"{k} 的属性退化了")
+
+class TestEveryAgentCanFarm(unittest.TestCase):
+    """**64 个角色 × 每种训练，`--mission` 都必须算得出来**。
+
+    ## 用户问的（2026-11-28）
+
+    「驱动盘也是全角色通用的吗」
+
+    ## 查的结果
+
+    驱动盘判定**是通用的**：
+    · 64 个角色一共用到 22 个词条名、30 个套装名，
+      全部能被 `vocab.STATS` / `canonical_set()` 识别 —— **0 个缺口**
+    · 七个职业（强攻18/异常14/击破12/支援8/防护6/命破5/**锋御1**）
+      在 `mission_map` 里都有对应的演练/试验任务名
+
+    但这条要**守住** —— 以后加角色（比如新的锋御角色）时，
+    如果 `mission_map` 没有那个职业，`--mission` 就会算成空，
+    而 `od_material_farm` 对实战模拟室强制要求它 -> **exit 2，一个都刷不了**。
+    这个失败是静默的（上层只看到「刷本失败」）。
+    """
+
+    def test_all_agents_have_missions(self):
+        import sys
+        import json
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root))
+        from core.mission_map import mission_for
+        from core.game_cfg import element_of
+        from core.agent_cfg import cfg_of
+        ch = json.loads((root / "disc_meta.json").read_text(
+            encoding="utf-8"))["角色"]
+        bad = []
+        for name in ch:
+            c = cfg_of(name)
+            role = (c.get("定位") or "").split("/")[0]
+            elem = element_of(name) or ""
+            for kind in ("代理人晋升", "代理人技能", "音擎改装"):
+                if not mission_for(kind, role=role, attr=elem):
+                    bad.append(f"{name}({role}/{elem}) 的 {kind}")
+        self.assertEqual(bad, [],
+                         "这些角色算不出 --mission -> 实战模拟室会 exit 2：\n  "
+                         + "\n  ".join(bad))
+
+    def test_base_materials_have_missions(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.mission_map import mission_for
+        for mat, want in (("资深调查员记录", "调查专项"), ("音擎经验", "音擎专项"),
+                          ("镀剂", "镀剂专项"), ("丁尼", "赏金专项")):
+            self.assertEqual(mission_for("基础材料", material=mat), want)
+
+    def test_disc_vocab_covers_roster(self):
+        """64 个角色用到的词条名/套装名，判盘逻辑都要认识。"""
+        import sys
+        import json
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root))
+        from core import vocab as vb
+        from core.zh import canonical_set
+        ch = json.loads((root / "disc_meta.json").read_text(
+            encoding="utf-8"))["角色"]
+        bad = []
+        for name, c in ch.items():
+            for field in ("有效副词条", "次选副词条"):
+                for st in (c.get(field) or []):
+                    if vb.stat_name_of(st) not in vb.STATS:
+                        bad.append(f"{name}/{field}/{st}")
+            for slot, lst in (c.get("主词条") or {}).items():
+                for st in (lst or []):
+                    # **5 号位的「X属性伤害加成」不走词表** ——
+                    # 它由 `disc_cfg` 按「角色属性 vs 主词条属性」单独判，
+                    # 所以这里一律豁免带「伤害」的。
+                    if "伤害" in st:
+                        continue
+                    if vb.stat_name_of(st) not in vb.STATS:
+                        bad.append(f"{name}/主词条{slot}/{st}")
+            for st in ([c.get("四件套")] + (c.get("两件套候选") or [])):
+                if st and canonical_set(st) != st and st not in str(canonical_set(st)):
+                    bad.append(f"{name}/套装/{st}")
+        self.assertEqual(bad, [], "这些词条/套装判盘不认识（会算 0 分）：\n  "
+                         + "\n  ".join(bad))
