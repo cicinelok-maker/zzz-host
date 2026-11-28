@@ -7879,3 +7879,81 @@ class TestLevelLabelIsNotASubStat(unittest.TestCase):
         eff, rows, out = self._eff([("完全没听过的词条", "+1")])
         self.assertIn("未识别的副词条", out,
                       "真未知词条不告警了 —— 白名单漏词条会再次变成静默")
+
+
+class TestAgentPlanTool(unittest.TestCase):
+    """`zzz_agent_plan`：设置「特训目标」，让游戏自己路由到副本。
+
+    ## 为什么要有这个工具
+
+    算「材料 → 副本」这条路走不通：
+    `高维数据：深蚀回路` 该去哪个专业挑战室 boss，`dungeon_data.json` 里没这张表。
+
+    **但游戏自己有这条路**：设好特训目标 → 点「前往」→ 游戏直接路由过去。
+    OneDragon 也支持（`mission_type_name == '代理人方案培养'` → `is_agent_plan`、
+    `STATUS_AGENT_PLAN_FINISHED = '特训目标已达成'`），
+    但它**只跟随、不设置**（全仓搜「更换特训目标」「设置为目标」一处都没有）。
+
+    ## 真机验证的流程（2026-11-28）
+
+    ```
+    大世界 → F2 → 快捷手册
+      → Tab 训练 (1173,180)
+      → 更换特训目标 (1391,354)
+      → 网格：点头像（名字上方 60px）
+      → 底部「清除目标」变成「设置为目标」(1143,830)
+      → 点它 → **弹确认框**「已将X设置为特训目标，是否替换？」
+      → 确认 (1129,679)
+      → 训练页「特训目标」块显示新名字（586,302）
+      → 「前往」直接路由到副本
+    ```
+    """
+
+    def _code_ap(self):
+        import pathlib
+        return _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_agent_plan.py").read_text(encoding="utf-8"))
+
+    def test_uses_f2_not_menu(self):
+        """**必须用 F2** —— 主菜单底部栏里没有「快捷手册」。"""
+        code = self._code_ap()
+        self.assertIn('inp.key("f2"', code, "不是用 F2 打开快捷手册")
+
+    def test_has_confirm_step(self):
+        """点完「设置为目标」还有一步「确认」—— 漏了就等于没设。"""
+        code = self._code_ap()
+        self.assertIn('find("确认"', code, "没有点「确认」这一步")
+        # 确认框的位置（实测 1128,679）
+        self.assertIn("(700, 600, 1300, 760)", code,
+                      "确认框的搜索区域不对 —— 实测确认按钮在 (1129,679)")
+
+    def test_grid_detector_does_not_match_title(self):
+        """判「还在网格上」不能用「特训目标」—— 网格标题「更换特训目标」包含它。"""
+        code = self._code_ap()
+        self.assertIn("_on_grid", code, "没有网格判据函数")
+        self.assertIn("特训方案", code,
+                      "网格判据应该用「特训方案」（网格独有），不是「特训目标」")
+
+    def test_avatar_offset(self):
+        """头像在名字**上方** 60px —— 点名字那行不行。"""
+        code = self._code_ap()
+        self.assertIn("AVATAR_DY", code)
+        self.assertIn("AVATAR_DY = -60", code, "头像偏移不是 -60")
+
+    def test_scroll_is_slow(self):
+        """网格滚动也要慢 —— 一次 4 格会跳过整行。"""
+        code = self._code_ap()
+        self.assertIn("inp.wheel(-2", code, "滚动步长不是 -2")
+        self.assertIn("wait_still", code, "滚完没等画面停稳")
+        self.assertNotIn("wheel(-4", code, "还有一次滚 4 格的地方")
+
+    def test_help_works(self):
+        import subprocess
+        import sys
+        import pathlib
+        f = pathlib.Path(__file__).resolve().parent.parent / "zzz_agent_plan.py"
+        r = subprocess.run([sys.executable, str(f), "--help"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("usage:", r.stdout)

@@ -409,6 +409,32 @@
    "destructive": false
   },
   {
+   "name": "zzz_agent_plan",
+   "cmd": "python tools/zzz_agent_plan.py",
+   "args": [
+    {
+     "pos": "agent"
+    },
+    {
+     "flag": "--go"
+    },
+    {
+     "flag": "--dry-run"
+    }
+   ],
+   "json_output": false,
+   "exit_codes": [
+    0,
+    3,
+    4
+   ],
+   "purpose": "设置「特训目标」，然后让游戏自己路由到要刷的副本",
+   "outputs": [],
+   "requires": [],
+   "idempotent": true,
+   "destructive": false
+  },
+  {
    "name": "zzz_calibrate",
    "cmd": "python tools/zzz_calibrate.py",
    "args": [
