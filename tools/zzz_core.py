@@ -208,8 +208,14 @@ def read_all(ui: Ui, m: Machine, agent: str, with_mat: bool) -> dict:
                                 "boss": _boss,
                                 "sources": d.get("sources") or [],
                             }
-                            _bm.write_text(_j3.dumps(_cur, ensure_ascii=False, indent=2),
-                                           encoding="utf-8")
+                            # **走 atomic**（BUG-064 的最后一处裸写）。
+                            #
+                            # 裸 `write_text` 中途被打断（Ctrl+C / 断电 /
+                            # 另一个进程同时写）会留下**半截 JSON**，
+                            # 下次读到就是「文件坏」，而这里外面套着
+                            # `except Exception: pass` —— 坏了也不会有人知道。
+                            from core import atomic as _aw
+                            _aw.write_json(_bm, _cur)
                     except Exception:
                         pass
                     # 顺手记库存 —— read_material 已经从弹窗读到「当前拥有 ×N」，
