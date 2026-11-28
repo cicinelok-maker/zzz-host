@@ -477,7 +477,7 @@ def reset_view(ui: Ui, verbose: bool = True) -> bool:
     return ok
 
 
-def select_agent(ui: Ui, name: str, max_scroll: int = 20) -> bool:
+def select_agent(ui: Ui, name: str, max_scroll: int = 40) -> bool:
     """在养成指南里切到指定角色。
 
     ## 实现：用 ⊞ 网格按名字点
@@ -494,8 +494,12 @@ def select_agent(ui: Ui, name: str, max_scroll: int = 20) -> bool:
     3. 逐屏找目标名字 → 找到就点
     4. 点完验证 `current_agent()` 变了
 
-    **养成指南只覆盖当期有攻略的角色（约 46 个）。**
-    找不到就是没有攻略 —— 明确返回 False，不要瞎猜。
+    ## 找不到的原因
+
+    **不要默认「这个角色没有攻略」** —— 用户实测：全部角色都有攻略，
+    找不到是**滚动漏读**（原来一次滚 4 格会跳过整行，而且截帧太早）。
+
+    现在步长减半 + 等画面停稳。真找不到才返回 False。
     """
     vs, inp = ui.vs, ui.inp
     vs.frame(force=True)
@@ -542,11 +546,31 @@ def select_agent(ui: Ui, name: str, max_scroll: int = 20) -> bool:
     vs.frame(force=True)
 
     # ---- 逐屏找目标名字 ----
+    #
+    # **一屏只滚 2 格，而且等画面停稳再读**（真机反馈：滑太快会漏）。
+    #
+    # 原来 `inp.wheel(-4, wait=1.0)`：
+    #   · 一次 4 格 —— 网格一行大概 2~3 格，**一次就跳过一整行**，
+    #     那一行里的角色**永远不会被读到**
+    #   · 只等 1.0 秒 —— 列表还在惯性滚动时 `frame()` 截到的是**花屏**，
+    #     OCR 出来是残字或噪音
+    #
+    # 用户实测：佩洛伊斯**在面板里**（全部角色都有攻略），
+    # 但工具报「网格里没找到」。就是这两条一起造成的。
+    #
+    # 现在：`-2`（和一行高度重叠，不会跳行）+ 等 `wait_still` 真的停住。
+    # `max_scroll` 从 20 提到 40 —— 步长减半，覆盖范围不变。
     last_sig = ""
     for k in range(max_scroll + 1):
         if k > 0:
             inp.move(900, 600)
-            inp.wheel(-4, wait=1.0)
+            inp.wheel(-2, wait=1.0)
+            # **等列表真的停住**再截帧。`wait_still` 失败就退回固定等待
+            # （老版本 OneDragon 上它可能抛）。
+            try:
+                vs.wait_still(quiet=0.35, timeout=2.5)
+            except Exception:
+                time.sleep(0.45)
             vs.frame(force=True)
 
         sig = vs.text((250, 250, 1650, 1000))
@@ -595,7 +619,9 @@ def select_agent(ui: Ui, name: str, max_scroll: int = 20) -> bool:
             print(f"    点了但读到的是「{got or '空'}」")
             return False
 
-    print(f"    ✘ 网格里没找到「{name}」（养成指南只覆盖当期有攻略的角色）")
+    print(f"    ✘ 滚了 {max_scroll + 1} 屏都没找到「{name}」")
+    print(f"      可能：① 名字 OCR 读残了 ② 面板还没加载完 ③ 真的没有攻略")
+    print(f"      重跑一次通常就好 —— 别据此判断这个角色没攻略")
     # 关掉网格，别把它留在打开状态
     inp.key("esc", wait=1.4)
     vs.frame(force=True)
@@ -767,17 +793,62 @@ def read_detail(ui: Ui) -> dict:
 
         # ---------- 材料行 ----------
         if nums and names:
-            _nm = txt(names[0])
-            # **OCR 别名** —— 实测「「仓鼠笼」访问器」被读成 `CC`。
-            # 这种「读成完全不相干的短串」只能靠显式表。
+            # **材料名要把碎片拼起来**（真机实测）。
+            #
+            # 原来只取 `names[0]` —— 而 OCR 会把一个名字拆成几段
+            # （图标里的碎字、名字被断成两截）。取第一个碎片就得到：
+            #
+            #     e     所需 90　已有 2　仍需 88
+            #     a     所需 45　已有 7　仍需 38
+            #
+            # 而 `e` 那行的数字和上面「特化以太芯片」**一模一样** ——
+            # 同一行被读成了两个名字，于是缺口里多一条查不到的材料。
+            #
+            # 现在按 x 从左到右拼。中间的空白用空串（中文名字本来就没空格）。
+            # **逐段处理：先查别名，再丢掉图标碎片，最后拼**。
+            #
+            # 真机实测（佩洛伊斯）看到的是：
+            #
+            #     e特化以太芯片   所需 90　已有 2　仍需 88
+            #     a高维数据：深蚀回路  所需 45　已有 7　仍需 38
+            #     CC「仓鼠笼」访问器   所需 2　已有 2　仍需 0
+            #
+            # 也就是：**名字左边粘着一个图标碎片**（`e` / `a` / `CC`）。
+            # 只拼不筛的话，`e特化以太芯片` 和 `特化以太芯片` 会被当成
+            # **两个材料**，同一个需求算两遍（电量直接翻倍）。
+            #
+            # 处理顺序很关键：
+            #   ① 先查 `OCR别名` —— `CC` 是「「仓鼠笼」访问器」的有效读法，
+            #      先丢碎片就会把这条映射丢掉
+            #   ② 映射后**仍是 1~3 个纯英文字母**的，才当图标碎片丢弃
+            #   ③ 剩下的按 x 顺序拼
             try:
                 import json as _j
                 from pathlib import Path as _P
                 _M = _j.loads((_P(__file__).parent / "materials.json")
                               .read_text(encoding="utf-8"))
-                _nm = (_M.get("OCR别名") or {}).get(_nm, _nm)
+                _ALIAS = _M.get("OCR别名") or {}
             except Exception:
-                pass
+                _ALIAS = {}
+
+            _parts = []
+            for _x in sorted(names, key=cx):
+                _t = txt(_x).strip()
+                if not _t:
+                    continue
+                _t = _ALIAS.get(_t, _t)          # ① 先查别名
+                if re.fullmatch(r"[A-Za-z]{1,3}", _t):
+                    continue                      # ② 还是纯字母碎片 -> 丢
+                _parts.append(_t)
+            # ③ **去重** —— 真机实测：
+            #
+            #     CC「仓鼠笼」访问器
+            #
+            # 图标碎片 `CC` 和真名 `「仓鼠笼」访问器` **都**映射成同一个字符串，
+            # 拼起来变成 `「仓鼠笼」访问器「仓鼠笼」访问器`。
+            # 同一行里不会有同名的两样东西，重复的一律丢掉。
+            _parts = list(dict.fromkeys(_parts))
+            _nm = "".join(_parts).strip()
             ent = {"材料": _nm}
             for c, v in nums:
                 ent[c] = int(v.replace(",", ""))
@@ -796,7 +867,7 @@ def read_detail(ui: Ui) -> dict:
 
 
 
-def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
+def read_detail_all(ui: Ui, max_scroll: int = 40) -> dict:
     """**滚着读完整个「养成材料明细」**（一节一节读到底）。
 
     实测：明细页一屏只放得下 1~2 节（代理人升级&晋升 / 技能升级 / …），
@@ -835,7 +906,19 @@ def read_detail_all(ui: Ui, max_scroll: int = 20) -> dict:
     for i in range(max_scroll + 1):
         if i > 0:
             inp.move(1200, 600)          # 每次都确保鼠标在面板内
-            inp.wheel(-4, wait=1.5)
+            # **和选角色一样：一屏只滚 2 格 + 等画面停稳**。
+            #
+            # 原来 `wheel(-4, wait=1.5)` —— 一次 4 格。材料明细页一行
+            # 高度也就 2~3 格，**一次就跳过一整行**，那一行的材料
+            # 永远不会出现在任何一帧里 —— 缺口就少算一样东西。
+            #
+            # 这个坑和 `select_agent` 是同一个（真机反馈「滑太快会漏」），
+            # 只是这里更隐蔽：漏了材料不会报错，只会让缺口看起来小一点。
+            inp.wheel(-2, wait=1.2)
+            try:
+                vs.wait_still(quiet=0.35, timeout=2.5)
+            except Exception:
+                time.sleep(0.45)
             vs.frame(force=True)
 
         vs.frame(force=True)

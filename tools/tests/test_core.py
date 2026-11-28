@@ -7587,3 +7587,141 @@ class TestMissingSubDungeonIsHandled(unittest.TestCase):
             self.assertIn("except ValueError", code,
                           f"{name} 没接住 farm_cmd 的 ValueError")
             self.assertIn("farm_cmd", code)
+
+
+class TestGuideScrollIsSlowEnough(unittest.TestCase):
+    """养成指南选角色时**一屏只滚 2 格，并等画面停稳**（真机反馈）。
+
+    ## 用户实测
+
+    「网格里没找到「佩洛伊斯」（养成指南只覆盖当期有攻略的角色）」
+    —— 用户说：**绝对有的，全部角色都有，你滑动得太快了**。
+
+    ## 根因（两处叠加）
+
+    ```python
+    inp.wheel(-4, wait=1.0)     # 一次 4 格；只等 1 秒
+    vs.frame(force=True)
+    ```
+
+    · 网格一行大约 2~3 格 —— **一次 4 格会跳过整行**，
+      那一行里的角色永远不会被读到
+    · 只等 1 秒 —— 列表还在惯性滚动时截帧，OCR 读到的是花屏
+
+    ## 现在
+
+    `wheel(-2)`（和一行高度重叠，不跳行）+ `wait_still` 等真的停住，
+    `max_scroll` 从 20 提到 40 保住覆盖范围。
+
+    实测：修后「第 2 屏找到「佩洛伊斯」名字 … ✔ 已切到「佩洛伊斯」」。
+    """
+
+    def _code_guide(self):
+        import pathlib
+        return _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_guide.py").read_text(encoding="utf-8"))
+
+    def test_scroll_step_is_two(self):
+        code = self._code_guide()
+        self.assertIn("inp.wheel(-2", code,
+                      "选角色的滚动步长不是 -2 —— 又会跳行")
+        # 全文（`select_agent` + `read_detail_all`）都不能再有一次滚 4 格
+        self.assertNotIn("wheel(-4", code,
+                         "还有一次滚 4 格的地方 —— 会跳过整行")
+
+    def test_waits_for_still_after_scroll(self):
+        code = self._code_guide()
+        i = code.find("inp.wheel(-2")
+        self.assertGreater(i, -1)
+        seg = code[i:i + 400]
+        self.assertIn("wait_still", seg,
+                      "滚完没等画面停稳 —— OCR 会读到花屏")
+
+    def test_failure_message_is_not_misleading(self):
+        """不能说「养成指南只覆盖约 46 个」—— 全部角色都有。"""
+        code = self._code_guide()
+        self.assertNotIn("只覆盖当期有攻略的角色（约 46 个）", code,
+                         "失败提示还在说是数据覆盖问题 —— 实际多数是漏读")
+
+
+class TestMaterialNameFragments(unittest.TestCase):
+    """材料名要把碎片拼起来，并且去重、去图标垃圾。
+
+    ## 真机实测（佩洛伊斯）
+
+    修前：
+
+        e        所需 90　已有 2　仍需 88      ← 和下面同一行，读成了两个名字
+        特化以太芯片  所需 90　已有 2　仍需 88
+        a        所需 45　已有 7　仍需 38
+        CC       所需  2　已有 2　仍需  0
+
+    只拼不筛时：
+
+        e特化以太芯片                         ← 碎片粘在真名前面
+        a高维数据：深蚀回路
+        CC「仓鼠笼」访问器
+
+    只筛不拼时，`e` 和 `特化以太芯片` 会被当**两个材料**，
+    同一需求算两遍 —— 电量从 800 虚高到 1100。
+
+    ## 正确顺序
+
+    ① 逐段查 `OCR别名`（`CC` 是「「仓鼠笼」访问器」的有效读法，
+       先丢碎片会把这条映射丢掉）
+    ② 映射后**仍是 1~3 个纯英文字母**的才当图标碎片丢弃
+    ③ 剩下的按 x 顺序拼
+    ④ **去重** —— `CC` 和真名会映射成同一个字符串
+
+    修后实测：
+
+        特化以太芯片        90 / 2 / 88
+        「仓鼠笼」访问器      2 / 2 /  0
+        刻命残蜕            7 / 1 /  6
+        高维数据：深蚀回路    45 / 7 / 38
+    """
+
+    def test_join_alias_dedupe_present(self):
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_guide.py").read_text(encoding="utf-8"))
+        self.assertIn("_parts", code, "没有分段处理")
+        self.assertIn("_ALIAS.get(_t, _t)", code, "没逐段查别名")
+        self.assertIn('re.fullmatch(r"[A-Za-z]{1,3}", _t)', code,
+                      "没丢纯字母图标碎片")
+        self.assertIn("dict.fromkeys(_parts)", code, "没去重")
+
+    def test_order_alias_before_drop(self):
+        """**先查别名再丢碎片** —— 反了会丢掉 `CC` 这条有效映射。"""
+        import pathlib
+        code = _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_guide.py").read_text(encoding="utf-8"))
+        i_alias = code.find("_ALIAS.get(_t, _t)")
+        i_drop = code.find('re.fullmatch(r"[A-Za-z]{1,3}", _t)')
+        self.assertGreater(i_alias, -1)
+        self.assertGreater(i_drop, -1)
+        self.assertLess(i_alias, i_drop,
+                        "顺序反了：先丢碎片会丢掉 `CC -> 「仓鼠笼」访问器` 这条映射")
+
+    def test_behavior(self):
+        """直接跑一遍拼接逻辑（把代码里的规则复刻出来验证语义）。"""
+        import re
+        ALIAS = {"CC": "「仓鼠笼」访问器"}
+
+        def join(names):
+            parts = []
+            for t in names:
+                t = t.strip()
+                if not t:
+                    continue
+                t = ALIAS.get(t, t)
+                if re.fullmatch(r"[A-Za-z]{1,3}", t):
+                    continue
+                parts.append(t)
+            parts = list(dict.fromkeys(parts))
+            return "".join(parts).strip()
+
+        self.assertEqual(join(["e", "特化以太芯片"]), "特化以太芯片")
+        self.assertEqual(join(["a", "高维数据：深蚀回路"]), "高维数据：深蚀回路")
+        self.assertEqual(join(["CC", "「仓鼠笼」访问器"]), "「仓鼠笼」访问器")
+        self.assertEqual(join(["刻命残蜕"]), "刻命残蜕")
