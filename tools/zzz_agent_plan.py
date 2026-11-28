@@ -61,6 +61,9 @@ AVATAR_DY = -60
 #: 网格区域（实测第一屏覆盖 x 460~1460, y 460~800）
 GRID = (440, 430, 1500, 830)
 
+#: 设好目标之后「特训目标」下面那块可滚动面板（实测 y 430~1010 是真的列表）
+PANEL = (250, 430, 1750, 1015)
+
 
 def _click(vs: Vision, inp: Input, hit: dict, wait: float = 2.0) -> None:
     inp.move(hit["cx"], hit["cy"])
@@ -179,7 +182,13 @@ def set_target(ui: Ui, agent: str) -> bool:
 
     btn = vs.find("设置为目标", (900, 760, 1400, 900))
     if not btn:
-        print("  ✘ 点了头像但底部没出现「设置为目标」")
+        # **已经是目标了**：底部会显示「清除目标」而不是「设置为目标」。
+        # 重复运行工具时必然走到这里 —— 原来直接报错退出，
+        # 于是「设成同一个角色」永远失败。
+        if vs.find("清除目标", (900, 760, 1400, 900)):
+            print(f"    「{agent}」本来就是特训目标，不用再设")
+            return True
+        print("  ✘ 点了头像但底部既没有「设置为目标」也没有「清除目标」")
         return False
     print(f"    点「设置为目标」@({btn['cx']},{btn['cy']})")
     _click(vs, inp, btn, wait=2.5)
@@ -230,12 +239,168 @@ def verify(ui: Ui, agent: str) -> bool:
     return bool(shown)
 
 
+def _rows(items: list[dict]) -> list[tuple[int, list[dict]]]:
+    """按 y 把 OCR 结果聚成行（同 y±18 算一行）。"""
+    rows: list[tuple[int, list[dict]]] = []
+    for it in sorted(items, key=lambda x: x["cy"]):
+        for i, (y, group) in enumerate(rows):
+            if abs(y - it["cy"]) <= 18:
+                rows[i][1].append(it)
+                break
+        else:
+            rows.append((it["cy"], [it]))
+    return rows
+
+
+def go_to(ui: Ui, keyword: str, max_pages: int = 12,
+          allow_click: bool = False) -> int:
+    """在「特训目标」面板里**滚着找** keyword，点它那一行的「前往」。
+
+    ## 为什么不能直接点第一个「前往」（真机教训）
+
+    这个面板是**可滚动**的，而且每屏同时有 2 个「前往」（不同 y）。
+    实测滚动过程：
+
+        没滚：  前往 (1475,652)   前往 (1475,910)
+        滚1次： 前往 (1475,559)   前往 (1475,816)
+        滚2次： 前往 (1474,465)   前往 (1475,722)
+        滚4次： 前往 (1475,534)   前往 (1475,750)
+
+    直接 `find("前往")` 拿到的是**最上面那一个**，和你要刷的东西
+    没有任何关系 —— 会传送到错的副本。
+
+    ## 现在的定位法
+
+    滚着找 `keyword`（材料名或副本名都行），找到之后取**同一行**的
+    「前往」（y 差 ≤ 18）点它。
+
+    找不到就**什么都不点**并返回非零 —— 宁可不动，也不要去错副本。
+
+    ## **按「行名 + y 配对」是错的**（2026-11-28 真机事故）
+
+    我以为「左侧类别标签和右侧『前往』在同一 y」，于是按 y 差 ≤18 配对。
+    实测点「专业挑战室」那行的前往 (1475,722) —— **进了实战模拟室-代理人技能**
+    （传送后画面上是 风切测试/刚性测试/升温测试/冰结测试/电流测试）。
+
+    也就是说：左边那 4 个类别标签（y=489/597/707/814 固定不动）
+    和右边**可滚动内容**里的「前往」**不在同一行**，y 配对上就错了。
+
+    **所以默认只列不点。** 真要传，加 `--force`，并且自己盯着落地是不是对的。
+    正确做法应该是：点某个类别（左栏）让它成为选中态，再点它内容的「前往」——
+    但那条路我还没测过，不猜。
+    """
+    vs, inp = ui.vs, ui.inp
+    # **空关键词 = 只列出，不点任何东西**。
+    #
+    # 这个面板按「副本/任务」组织（代理人晋升 / 代理人技能 / 恶名·杜拉罕…），
+    # **不是按材料** —— 实测滚 13 屏只看到任务名和进度，没有「冰结芯片」。
+    # 所以让用户先看清有哪些，再指定一个。
+    kw = (keyword or "").strip()
+    if not kw:
+        print("  （没给副本名 —— 只列出面板上能去哪，不点任何东西）")
+
+    inp.move(1000, 700)
+    time.sleep(0.25)
+    for _ in range(15):
+        inp.wheel(6, wait=0.22)
+    vs.frame(force=True)
+
+    seen: list[str] = []
+    last = ""
+    for page in range(max_pages + 1):
+        if page > 0:
+            inp.move(1000, 700)
+            inp.wheel(-2, wait=1.1)
+            try:
+                vs.wait_still(quiet=0.35, timeout=2.5)
+            except Exception:
+                time.sleep(0.45)
+            vs.frame(force=True)
+
+        items = vs.items(PANEL)
+        sig = "|".join(i["text"] for i in items)
+        if page > 0 and sig == last:
+            break
+        last = sig
+
+        for y, group in _rows(items):
+            texts = [i["text"] for i in group]
+            go = next((i for i in group if "前往" in i["text"]), None)
+
+            if not kw:
+                # 列出模式：只报「这一行有前往的，去的是哪个任务」
+                if go is not None:
+                    # **滤掉进度计数器**（13/37、0/50、2/5）和等级区间（20-100）
+                    # —— 它们不是副本名，混在输出里没法看。
+                    import re as _re
+                    names = [t for t in texts
+                             if not t.startswith("前往")
+                             and len(t) > 1
+                             and not _re.fullmatch(r"\d+\s*/\s*\d+", t)
+                             and not _re.fullmatch(r"\d+\s*-\s*\d+", t)
+                             and not _re.fullmatch(r"\d+", t)]
+                    if names:
+                        print(f"    y={y:>4}  {' / '.join(names[:3])}"
+                              f"      前往@({go['cx']},{go['cy']})")
+                continue
+
+            if not any(kw in t for t in texts):
+                continue
+            if go is None:
+                # 这一行有名字但没有「前往」按钮（可能是标题行）
+                continue
+            if not allow_click:
+                # **默认绝不点** —— 行名和按钮对不齐，点了会去错副本。
+                print(f"    第 {page + 1} 屏：{texts[:3]}  前往@({go['cx']},{go['cy']})")
+                print(f"    ⚠ 只是**报告位置**，没有点 —— "
+                      f"行名和按钮不在同一 y，配不准（实测会去错副本）")
+                print(f"      确实知道是哪一个的话，加 --force 才会真的点")
+                return 0
+            print(f"    第 {page + 1} 屏找到「{kw}」那一行：{texts[:4]}")
+            print(f"    点它的「前往」@({go['cx']},{go['cy']})")
+            _click(vs, inp, go, wait=2.5)
+            vs.frame(force=True)
+
+            # **还有一步「是否立即传送？」**（真机实测）。
+            # 不点确认就什么都没发生 —— 我第一版点完「前往」就报「已传送」，
+            # 实际游戏还停在确认框上。
+            ok = vs.find("确认", (700, 550, 1300, 720))
+            if ok and vs.find("是否立即传送", (600, 450, 1400, 600)):
+                print(f"    点「确认」@({ok['cx']},{ok['cy']})（立即传送）")
+                _click(vs, inp, ok, wait=6.0)
+                vs.frame(force=True)
+                print("    已传送（游戏会自己进对应的副本）")
+            else:
+                print("    （没弹传送确认框，可能已经直接进了）")
+            return 0
+
+        seen.extend(t for t in (i["text"] for i in items) if t.strip())
+
+    if not kw:
+        print("\n  ↑ 这就是面板上所有的「前往」。")
+        print("    要真去某个，把它的名字传进来：")
+        print("      python tools/zzz_agent_plan.py 苍角 --go 代理人技能")
+        return 0
+
+    print(f"  ✘ 滚了 {max_pages + 1} 屏都没找到「{kw}」—— **什么都没点**")
+    print(f"     面板上出现过的：{'、'.join(dict.fromkeys(seen))[:200]}")
+    print(f"     提示：关键词是**副本/任务名**，不是材料名")
+    return 4
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="设置「特训目标」，让游戏自己路由到要刷的副本")
     ap.add_argument("agent", help="角色名，如 佩洛伊斯")
-    ap.add_argument("--go", action="store_true",
-                    help="设完之后点「前往」直接传送到副本")
+    ap.add_argument("--go", metavar="副本名", nargs="?", const="", default=None,
+                    help="**不给值**：滚一遍面板，列出所有能去的副本（不点任何东西）。"
+                         "**给值**：滚着找这个副本名，点它那一行的「前往」传送。"
+                         "关键词是**副本/任务名**（代理人晋升、代理人技能、"
+                         "恶名·杜拉罕…），不是材料名 —— 这个面板按副本组织")
+    ap.add_argument("--force", action="store_true",
+                    help="**明知道自己在点哪一个**才加。"
+                         "默认 --go 只报告位置不点 —— 行名和按钮不在同一 y，"
+                         "实测按 y 配对点下去会去错副本（专业挑战室 → 实战模拟室）")
     ap.add_argument("--dry-run", action="store_true",
                     help="只走到更换特训目标面板，不真的设置")
     args = ap.parse_args()
@@ -254,12 +419,16 @@ def main() -> int:
             return 4
         if not open_train_tab(ui):
             return 4
+        # **先看当前目标是不是已经是它** —— 是就不用再走一遍网格。
+        # 训练页的「特训目标」块里显示当前目标名字（实测 x≈586, y≈302）。
+        if vs.find(agent, (300, 250, 1200, 360)):
+            print(f"  当前特训目标已经是「{agent}」，跳过设置")
+            if args.go is not None:
+                return go_to(ui, args.go, allow_click=args.force)
+            return 0
+
         if not open_target_grid(ui):
             return 4
-
-        cur = vs.find("特训目标", (0, 250, 900, 450))
-        if cur:
-            vs.frame(force=True)
 
         if args.dry_run:
             print("（--dry-run：停在更换特训目标面板，不设置）")
@@ -273,15 +442,8 @@ def main() -> int:
         else:
             print("⚠ 设置了但没能确认 —— 面板上没读到新目标名字")
 
-        if args.go:
-            h = vs.find("前往", (1200, 300, 1750, 750))
-            if h:
-                print(f"  点「前往」@({h['cx']},{h['cy']})")
-                _click(vs, inp, h, wait=4.0)
-                print("  已传送（游戏会自己进对应的副本）")
-            else:
-                print("  ✘ 面板上没找到「前往」")
-                return 4
+        if args.go is not None:
+            return go_to(ui, args.go, allow_click=args.force)
         return 0
     finally:
         ui.stop()

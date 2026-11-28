@@ -419,6 +419,9 @@
      "flag": "--go"
     },
     {
+     "flag": "--force"
+    },
+    {
      "flag": "--dry-run"
     }
    ],

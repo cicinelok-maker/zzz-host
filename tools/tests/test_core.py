@@ -7957,3 +7957,42 @@ class TestAgentPlanTool(unittest.TestCase):
                            errors="replace", timeout=60)
         self.assertEqual(r.returncode, 0)
         self.assertIn("usage:", r.stdout)
+
+class TestAgentPlanGoDoesNotClickBlindly(unittest.TestCase):
+    """`--go` 默认**只报告位置不点**（真机事故后的锁）。
+
+    ## 事故
+
+    我以为「左侧类别标签和右侧『前往』在同一 y」，按 y 差 ≤18 配对。
+    实测点「专业挑战室」那行的前往 (1475,722) ——
+    **进了实战模拟室-代理人技能**（传送后画面上是
+    风切测试/刚性测试/升温测试/冰结测试/电流测试）。
+
+    左栏 4 个类别标签 y=489/597/707/814 **固定不动**，
+    右边是**可滚动内容** —— 它们的「前往」不在同一行。
+
+    ## 现在
+
+    · 默认：滚一遍、把匹配到的行和「前往」位置**报出来**，一下都不点
+    · 加 `--force` 才真的点（并在 docstring 里写清风险）
+    """
+
+    def _code_ap(self):
+        import pathlib
+        return _code((pathlib.Path(__file__).resolve().parent.parent
+                      / "zzz_agent_plan.py").read_text(encoding="utf-8"))
+
+    def test_has_allow_click_switch(self):
+        code = self._code_ap()
+        self.assertIn("allow_click", code, "没有 allow_click 开关")
+        self.assertIn("args.force", code, "没接 --force")
+
+    def test_default_does_not_click(self):
+        code = self._code_ap()
+        self.assertIn("if not allow_click:", code,
+                      "没有「默认不点」的守卫 —— 会又去错副本")
+
+    def test_teleport_has_confirm(self):
+        """点「前往」之后还有一步「是否立即传送？」。"""
+        code = self._code_ap()
+        self.assertIn("是否立即传送", code, "没等传送确认框")
