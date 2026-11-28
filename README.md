@@ -155,11 +155,41 @@ python tools/zzz_daily.py 佩洛伊斯 --run            # 真跑
 | 只看驱动盘该做什么 | `zzz_disc_daily.py <角色>` |
 | 看角色当前状态 | `zzz_status.py <角色>` |
 | 看驱动盘换装建议 | `zzz_plan.py <角色>` |
+| **设特训目标让游戏自己路由副本** | `zzz_agent_plan.py <角色>` |
+| **看有哪些副本可去** | `zzz_agent_plan.py --list` |
 | 一直刷到毕业 | `zzz_grind.py <角色> --run` |
 | 检查配置/环境 | `check_config.py` |
 | 出 bug 自查 | `smoke_test.py` / `audit_*.py` |
 
 完整工具清单见 **[TOOLS.md](TOOLS.md)**，维护规则见 **[MAINTENANCE.md](MAINTENANCE.md)**。
+
+---
+
+## 特训目标：让游戏自己路由副本
+
+`zzz_gap` 那条路要维护「材料 → 副本」对照表，而表会随版本过期。
+**游戏自己有更可靠的入口**：设好「特训目标」，点「前往」就直接传送到该刷的副本。
+
+```bash
+python tools/zzz_agent_plan.py --list                    # 先看有哪些副本（4 个类别全列）
+python tools/zzz_agent_plan.py 佩洛伊斯                  # 把特训目标设成它
+python tools/zzz_agent_plan.py 佩洛伊斯 --go 「征服者」   # 设完直接传送过去
+```
+
+界面流程（真机 2026-11-28 实测）：
+
+```
+大世界 → F2 → 快捷手册 → 训练 Tab
+  → 更换特训目标 → 网格里点头像（名字上方 60px）
+  → 设置为目标 → **确认**（替换确认框，漏了就等于没设）
+  → 训练页「前往」→ 确认传送
+```
+
+> **F2 才是打开快捷手册的方式。** OneDragon 自带的 `OpenCompendium`
+> 走「菜单 → 底部列表找快捷手册」，但主菜单底部栏里没有这一项 —— 它那条路走不通。
+
+> 点「前往」之后**还有一步「确认传送」**；面板可滚动，
+> 任务名和它那行的「前往」y 差约 80px（不是同一 y）。
 
 ---
 

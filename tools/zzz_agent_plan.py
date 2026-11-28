@@ -388,7 +388,19 @@ def go_to(ui: Ui, keyword: str, max_pages: int = 12,
                 seen.extend(n["text"] for n in names)
                 continue
 
-            hit = next((n for n in names if want and _norm(n["text"]) == want), None)
+            # **包含匹配，不是精确匹配**。
+            #
+            # OCR 经常把名字读残：`怪兽与怪客` 读成 `与怪客`、
+            # `诡步与重壁` 读成 `诡步与`。精确匹配就找不到 ——
+            # 而用户输的是完整名字。所以两边互相包含都算命中。
+            #
+            # 长度 ≥2 才做包含，避免单字乱撞。
+            def _hit(a: str, b: str) -> bool:
+                if not a or not b:
+                    return False
+                return a == b or (len(b) >= 2 and b in a) or (len(a) >= 2 and a in b)
+
+            hit = next((x for x in names if _hit(_norm(x["text"]), want)), None)
             if hit is None:
                 seen.extend(n["text"] for n in names)
                 continue
@@ -554,7 +566,9 @@ def list_all(ui: Ui, max_pages: int = 10) -> int:
                      and len(i["text"]) > 1
                      and not re.fullmatch(r"[\d,]+(\s*/\s*[\d,]+)?", i["text"])
                      and not re.fullmatch(r"\d+\s*-\s*\d+", i["text"])
-                     and i["text"] not in ("双倍", "燃竭", "OD", "EMPTY")]
+                     and i["text"] not in ("双倍", "燃竭", "OD", "EMPTY")
+                     # 纯 ASCII 短串是界面标记（实测 `O.D`），不是副本名
+                     and not re.fullmatch(r"[A-Za-z.\s]{1,6}", i["text"])]
             for nm in names:
                 if nm not in seen:
                     seen.append(nm)

@@ -49,6 +49,7 @@
 |---|---|---|
 | `od_material_farm.py` | 350 | 刷本入口（--training/--challenge/--patrol）　`参数 --training --patrol --challenge --hunt --times --mission` |
 | `zzz_farm_plan.py` | 629 | 刷本计划：按材料缺口自动分配电量　`参数 --battery --convert --run` |
+| `zzz_agent_plan.py` | 470 | 设「特训目标」让游戏自己路由副本；`--list` 列全部可去目标　`参数 --list --go --dry-run` |
 
 ## 五、辅助（4 个）
 

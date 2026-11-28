@@ -187,3 +187,38 @@ python tools/zzz_daily.py 佩洛伊斯 --run
 删掉项目目录即可。没有安装到系统任何位置，没有注册表，没有后台服务。
 
 OneDragon 是独立安装的，本项目不改它任何文件（只读它的模块 + 写它自己的配置文件）。
+
+---
+
+## 飞书监听常驻（Windows 计划任务）
+
+`tools/feishu.py listen` 是**常驻进程**，只靠前台窗口起会随会话一起死。
+用计划任务让它开机自启、进程退了自动重来：
+
+```powershell
+# 1) 写一个带重启的启动脚本（放 state/，不进发布集）
+#    state/feishu_listen.cmd：
+#      @echo off
+#      chcp 65001 > nul
+#      set PYTHONIOENCODING=utf-8
+#      cd /d "%~dp0.."
+#      :loop
+#      "<python>" -u tools\feishu.py listen >> "od_test\feishu_listen.log" 2>&1
+#      timeout /t 10 /nobreak > nul
+#      goto loop
+
+# 2) 建任务
+schtasks /Create /F /SC ONLOGON /TN "zzz-host-feishu-listen" ^
+         /TR "\"<仓库>\state\feishu_listen.cmd\""
+
+# 3) 立刻起一次
+schtasks /Run /TN "zzz-host-feishu-listen"
+```
+
+**必须设 `chcp 65001` + `PYTHONIOENCODING=utf-8`** ——
+不然重定向的日志里中文全是乱码（实测 `璇达細缁х画`）。
+
+**别同时起两个监听** —— 两个长连接会重复收同一条消息。
+起计划任务之前先确认没有前台 `feishu.py listen` 在跑。
+
+验证：`state/feishu_inbox.jsonl` 的条数会涨。
