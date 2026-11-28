@@ -8136,3 +8136,73 @@ class TestHighDimensionalDataToBoss(unittest.TestCase):
             flag = "--challenge" if "挑战室" in d else "--hunt"
             self.assertEqual(c[c.index(flag) + 1], want,
                              f"{d} 的 {flag} 参数被切坏了")
+
+class TestElementCoversWholeRoster(unittest.TestCase):
+    """**属性查询必须覆盖角色库里的全部角色**，不是那 23 个手工表。
+
+    ## 用户问的（2026-11-28）
+
+    「你确定这个项目是全角色通用的吗，不是只基于我这个角色库」
+
+    ## 查出来的
+
+    `disc_meta.json` 的**名单是完整的 64 个**，不是账号里的 14 个 ——
+    这一点是通用的。
+
+    但属性查询有两条实现：
+
+        agent_cfg.element_of   disc_meta 优先（64 个）
+        game_cfg.element_of    只有 AGENT_ELEMENT（23 个）
+
+    而 7 个调用点里 **4 个走的是 game_cfg**，包括 `core/farm_gap.py`
+    （缺口模块）、`zzz_plan`、`zzz_status`。
+
+    于是另外 **41 个角色属性读成空串**，静默毁掉三件事：
+
+    · 芯片任务名算不出来 -> `--mission` 空 -> 实战模拟室 exit 2
+    · 主词条「属性伤害加成」判不了对错
+    · 盘点评分失真
+
+    ## 现在
+
+    `game_cfg.element_of` 的顺序改成：
+    `characters.local` -> **`disc_meta.属性`（64/64 都有）** -> `AGENT_ELEMENT` 兜底。
+
+    手工表不只**不全**，还有两条**是错的** —— 都被 disc_meta 盖住：
+
+        蕾米埃尔  手工表 "特殊"   disc_meta "流明"
+        雅        手工表 "冰"     disc_meta "烈霜"
+    """
+
+    def test_all_roster_agents_have_element(self):
+        import sys
+        import json
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(root))
+        from core.game_cfg import element_of
+        ch = json.loads((root / "disc_meta.json").read_text(
+            encoding="utf-8"))["角色"]
+        missing = [k for k in ch if not element_of(k)]
+        self.assertEqual(missing, [],
+                         f"这些角色属性读成空 -> 芯片任务/主词条判定会坏：{missing}")
+
+    def test_variant_elements_win_over_stale_table(self):
+        """手工表里的错值要被 disc_meta 盖住。"""
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.game_cfg import element_of
+        self.assertEqual(element_of("蕾米埃尔"), "流明",
+                         "蕾米埃尔应该是流明（手工表写的「特殊」是错的）")
+        self.assertEqual(element_of("雅"), "烈霜",
+                         "雅应该是烈霜（手工表写的「冰」是旧的）")
+
+    def test_old_agents_not_regressed(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.game_cfg import element_of
+        for k, v in (("佩洛伊斯", "以太"), ("苍角", "冰"),
+                     ("丽娜", "电"), ("简", "物理")):
+            self.assertEqual(element_of(k), v, f"{k} 的属性退化了")

@@ -162,8 +162,37 @@ ANY_ELEMENT_AGENTS = {"蕾米埃尔"}
 
 
 def element_of(agent: str) -> str:
-    """角色的属性伤害类型。查不到返回空串（不做属性判定）。"""
-    # 本地覆盖层优先（用户自己的角色，不改发布集）
+    """角色的属性伤害类型。查不到返回空串（不做属性判定）。
+
+    ## 查找顺序（2026-11-28 修正）
+
+    1. **`characters.local.json`** —— 用户自己的角色，不改发布集
+    2. **`disc_meta.json` 的 `属性` 字段** —— **64 个角色全都有**
+    3. `AGENT_ELEMENT` —— 只有 23 个的手工表，**只当兜底**
+
+    ## 为什么要把 disc_meta 提到前面来
+
+    原来只有 1 和 3 —— 于是**只有 23 个角色能拿到属性**，另外 41 个
+    （露西 / 青衣 / 席德 / 扳机 / 雨果 …）一律返回空串。
+
+    属性为空会静默地毁掉三件事：
+
+    · `core/farm_gap.py`：芯片任务名算不出来 -> `--mission` 空 ->
+      实战模拟室 exit 2，**一个都刷不了**
+    · `zzz_plan`：主词条「属性伤害加成」判不了对错 -> 可能留着错的主词条
+    · `zzz_status`：同上，盘点评分失真
+
+    而 `disc_meta.json` 的 `属性` **64/64 都有**，而且比手工表**更准**：
+
+        蕾米埃尔   AGENT_ELEMENT="特殊"   disc_meta="流明"   （流明是真实属性）
+        雅         AGENT_ELEMENT="冰"     disc_meta="烈霜"   （烈霜是冰的变体）
+
+    所以手工表不只是「不全」，它还有两条是**错的** —— 现在被 disc_meta 盖住。
+
+    注：`AGENT_ELEMENT` 留着是为了「角色库还没收录、但手工表里有」的极端情况，
+    不再承担主力。
+    """
+    # 1) 本地覆盖层优先（用户自己的角色，不改发布集）
     try:
         from core import characters as _chars
         _loc = _chars.get(str(agent))
@@ -171,4 +200,20 @@ def element_of(agent: str) -> str:
             return _loc["属性"]
     except Exception:
         pass
+
+    # 2) **disc_meta 的「属性」字段**（64/64 都有，且更准）
+    #
+    # 懒加载：`agent_cfg` 在函数里 import `game_cfg`，这里反过来 import
+    # `agent_cfg` 会不会循环？—— 都在函数体内，import 时才解析，没问题。
+    try:
+        from core.agent_cfg import meta as _meta
+        from core.agent_name import canonical_agent as _canon
+        _c = (_meta().get("角色") or {}).get(_canon(str(agent))) or {}
+        e = _c.get("属性") or _c.get("元素") or ""
+        if e:
+            return e
+    except Exception:
+        pass
+
+    # 3) 手工表兜底
     return AGENT_ELEMENT.get(agent, "")
