@@ -593,7 +593,15 @@ def main() -> int:
             # **传 --again**：额度已经在本函数上面查过了（`_already`），
             # 而 `od_material_farm` 自己也有一道闸门（E31）。
             # 不传的话会因为「今天已刷」被自己拦下来。
-            _ok_farm = run("刷本", _farm_cmd(dungeon, times) + ["--again"], 3600)
+            # **子副本名缺失时别让整轮崩掉**（同 zzz_gap）。
+            try:
+                _fcmd = _farm_cmd(dungeon, times)
+            except ValueError as _fe:
+                print(f"  ✘ 跳过刷本「{dungeon}」×{times}：{str(_fe).splitlines()[0]}")
+                print(f"     这是**数据缺失**（不知道具体是哪个副本），不是刷本失败。")
+                _fcmd = None
+            _ok_farm = (run("刷本", _fcmd + ["--again"], 3600)
+                        if _fcmd else (False, ""))
             if _ok_farm[0]:
                 # **不在这里记账**（E31）：`od_material_farm` 刷成功后会自己记。
                 # 两边都记会双计 —— 那样「今天刷了几次」直接翻倍，

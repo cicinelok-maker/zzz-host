@@ -2770,6 +2770,8 @@ class TestNoUndefinedVariables(unittest.TestCase):
                     GLOBALS.add(node.name)
                 elif isinstance(node, _ast.alias):
                     GLOBALS.add((node.asname or node.name).split(".")[0])
+                elif isinstance(node, _ast.ExceptHandler) and node.name:
+                    GLOBALS.add(node.name)
         import builtins
         # **`self` / `cls` 永远算「已定义」**：它们是方法接收者。
         # 而嵌套函数（比如 `Ui.start()` 里的信号处理函数）会用到外层的 `self` ——
@@ -2797,6 +2799,15 @@ class TestNoUndefinedVariables(unittest.TestCase):
                             loaded.setdefault(node.id, node.lineno)
                     elif isinstance(node, _ast.arg):
                         stored.add(node.arg)
+                    elif isinstance(node, _ast.ExceptHandler) and node.name:
+                        # **`except ValueError as e:` 也是绑定**。
+                        #
+                        # 这条原来漏了，于是 `zzz_daily.py` 里
+                        # `except ValueError as _fe:` 之后用 `_fe` 被报成
+                        # 「变量 '_fe' 未定义」—— 假阳性。
+                        #
+                        # （我自己刚写的那段就撞上了。）
+                        stored.add(node.name)
                 for v, ln in loaded.items():
                     if v not in stored and v not in BUILTIN and v not in GLOBALS:
                         bad.append(f"{f.name}:{fn.name} 变量 {v!r} (L{ln})")
@@ -7517,3 +7528,62 @@ class TestNoGameAccessBeforeArgs(unittest.TestCase):
         self.assertEqual(bad, [],
                          "这些工具在解析参数之前就可能碰游戏：\n  "
                          + "\n  ".join(bad))
+
+
+class TestMissingSubDungeonIsHandled(unittest.TestCase):
+    """缺具体副本名时**不能崩**，也不能拼残缺命令（真机实测发现的回归）。
+
+    ## 背景
+
+    P0-3 修了 `farm_cmd("专业挑战室")` 拼出 `--challenge --times 12`
+    的 bug（argparse 会把 `--times` 当成 `--challenge` 的参数吞掉）。
+    修法是**缺子名就抛 `ValueError`**，这本身是对的。
+
+    ## 但真机实测发现：调用方没人接
+
+    `zzz_gap.py:458` 是 `cmd = farm_cmd(d, runs, ...)` —— 没有 try。
+    而 `where_to_farm("高维数据：凶刑讣告")` 返回的正是**裸** `专业挑战室`
+    （`dungeon_data.json` 里没有「材料 → 具体挑战」的对照表）。
+
+    所以 `zzz_gap --run` 会在刷到那一项时 **traceback 退出**，
+    前面已经刷成功的几项白刷。
+
+    ## 现在
+
+    · `farm_cmd` 仍然抛（保持严格，不拼残缺命令）
+    · `zzz_gap` / `zzz_daily` 都接住，跳过该项并说清是「数据缺失」
+    · `where_to_farm` 返回 `缺子名: True`，计划表里显示
+      `专业挑战室 ⚠缺副本名`，并有汇总说明
+    """
+
+    def test_farm_cmd_still_strict(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        from core.farm_cmd import farm_cmd
+        with self.assertRaises(ValueError):
+            farm_cmd("专业挑战室", 12)
+        # 带子名照常
+        c = farm_cmd("专业挑战室·深蚀回路", 12)
+        self.assertIn("--challenge", c)
+        self.assertIn("深蚀回路", c)
+
+    def test_where_to_farm_marks_missing_name(self):
+        import sys
+        import pathlib
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+        import zzz_gap as G
+        w = G.where_to_farm("高维数据：凶刑讣告", role="支援", attr="冰")
+        self.assertIsNotNone(w, "高维数据应该有路由")
+        self.assertTrue(w.get("缺子名"),
+                        "裸「专业挑战室」没有标 缺子名 —— 用户会以为能自动刷")
+
+    def test_callers_catch_value_error(self):
+        """两个调用方都要接住 ValueError，不能让整轮崩。"""
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for name in ("zzz_gap.py", "zzz_daily.py"):
+            code = _code((root / name).read_text(encoding="utf-8"))
+            self.assertIn("except ValueError", code,
+                          f"{name} 没接住 farm_cmd 的 ValueError")
+            self.assertIn("farm_cmd", code)

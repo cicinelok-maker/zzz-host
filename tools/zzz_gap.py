@@ -260,8 +260,18 @@ def where_to_farm(mat: str, role: str = "", attr: str = "") -> dict | None:
 
     # ---------- 高维数据 / 专业挑战室 ----------
     if "高维数据" in m:
+        # **这里只能给出「专业挑战室」这个大类，给不出具体是哪个挑战**。
+        #
+        # 真要刷必须先有「材料 → 具体挑战」的对照表，而
+        # `dungeon_data.json` 里**没有**这张表（查过）。
+        #
+        # 后果：`farm_cmd("专业挑战室", n)` 会raise ValueError（P0-3 之后
+        # 它会对缺子名的情况大声报错，而不是拼个残缺命令去刷错本）。
+        # 调用方（`zzz_gap --run` / `zzz_daily`）已经接住并跳过，
+        # 但**计划表里应该提前标出来**，而不是等刷的时候才发现。
         return {"副本": "专业挑战室", "类型": "高维数据",
-                "每次电量": 40, "每次产出": 5, "周本": False}
+                "每次电量": 40, "每次产出": 5, "周本": False,
+                "缺子名": True}
 
 
     # ---------- 驱动盘套装 ----------
@@ -360,6 +370,8 @@ def plan(agent: str) -> dict:
                 "类型": w["类型"], "次数": runs,
                 "电量": runs * w["每次电量"], "周本": w["周本"],
                 "节": sec.get("节", ""),
+                # 「专业挑战室」这种只有大类、没有具体副本名的，标出来
+                "缺子名": bool(w.get("缺子名")),
             })
 
     # 周本优先（次数有限），其次按电量从少到多
@@ -455,7 +467,25 @@ def do_farm(rows: list[dict], max_elec: int = 240, run_it: bool = False) -> int:
         d = t["副本"]
         # **路由统一在 core/farm_cmd.py** —— 不再在这里内联一份
         from core.farm_cmd import farm_cmd
-        cmd = farm_cmd(d, runs, run=True, python=sys.executable)
+        try:
+            cmd = farm_cmd(d, runs, run=True, python=sys.executable)
+        except ValueError as e:
+            # **子副本名缺失时别让整个工具崩**。
+            #
+            # `farm_cmd` 对「专业挑战室」这种**必须有子名**的副本会抛
+            # ValueError（P0-3 修的：以前会拼出 `--challenge --times 12`
+            # 让 argparse 把 `--times` 当参数吞掉，静默刷错）。
+            #
+            # 但抛出来之后**调用方没人接** —— `zzz_gap --run` 会直接
+            # traceback 退出，前面已经刷成功的那几项白刷。
+            #
+            # 这里接住，跳过这一项，最后汇总时说明。真正要补的是
+            # `where_to_farm()` 的返回值：它得带上具体副本名。
+            print()
+            print(f"  ✘ 跳过「{d}」×{runs}：{str(e).splitlines()[0]}")
+            print(f"     这是**数据缺失**（不知道具体是哪个副本），不是刷本失败。")
+            _fl.append(dungeon=d, times=runs, ok=False, source="zzz_gap")
+            continue
 
         print()
         print(f"  ▶ {' '.join(cmd[1:])}")
@@ -518,15 +548,31 @@ def main() -> int:
         print("  缺口是空的 —— 这个角色已经养满了？")
         return 0
     print(f"  {'材料':<18}{'仍需':>6}  {'副本':<26}{'次数':>4}{'电量':>6}")
+    _缺少 = 0
     for r in d["行"]:
         mark = "周" if r["周本"] else "  "
-        print(f"  {r['材料']:<18}{r['仍需']:>6}  {r['副本']:<26}"
+        # **缺具体副本名的要标出来**（数据缺口）。
+        # `专业挑战室` 这种只有大类的，`farm_cmd` 会拒绝拼命令
+        # （它需要子名），刷的时候会跳过 —— 提前在这里说清楚，
+        # 别让用户以为这一项会自动刷。
+        show = r["副本"]
+        if r.get("缺子名"):
+            show = f"{r['副本']} ⚠缺副本名"
+            _缺少 += 1
+        print(f"  {r['材料']:<18}{r['仍需']:>6}  {show:<26}"
               f"{r['次数']:>4}{r['电量']:>6} {mark}")
 
     print()
     print(f"  合计电量 {d['总电量']}　按 240/轮算 {(d['总电量'] + 239) // 240} 轮")
     print()
     print("  「周」= 恶名狩猎，每周 3 次免费（免费时电量记 0）")
+    if _缺少:
+        print()
+        print(f"  ⚠ 有 {_缺少} 项**不知道具体是哪个副本**（只有大类）。")
+        print(f"     这些**不会自动刷** —— `farm_cmd` 需要子副本名，")
+        print(f"     缺了它会拒绝拼命令（而不是拼个残缺命令去刷错本）。")
+        print(f"     补法：在 `tools/dungeon_data.json` 里加一张"
+              f"「材料 → 具体挑战」的对照表。")
     return do_farm(d["行"], max_elec=args.max_elec, run_it=args.run)
 
 
